@@ -185,7 +185,8 @@ uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
 uniform vec3 uThread[NT];  // the way we came, as a polyline, nearest end first
 uniform int uThreadN;
-uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance
+uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float
+uniform float uStride;     // draw only every this many pixels (see Renderer.look)
 
 out vec4 outColor;
 
@@ -406,7 +407,7 @@ vec3 openSky(vec3 col, vec3 rd) {
 }
 
 void main() {
-  vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
+  vec2 uv = (gl_FragCoord.xy * uStride * 2.0 - uRes) / uRes.y;
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
   float pix = 2.0 * uTan / uRes.y;
 
@@ -428,6 +429,10 @@ void main() {
   }
   if (t <= uMaxT) hit = true;
 #endif
+  if (uDebug == 5) {
+    outColor = vec4(hit ? t : -1.0, 0.0, 0.0, 1.0);
+    return;
+  }
   if (uDebug == 4) {
     // Distance to what was hit, on a log scale, in 24 bits.
     float v = hit ? clamp((log2(max(t, 1e-30)) + 64.0) / 96.0, 0.0, 1.0) : 1.0;

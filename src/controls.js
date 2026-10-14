@@ -16,6 +16,7 @@ export class Controls {
     this.pitch = -0.05;
     this.speed = 1;
     this.thread = false;
+    this.turned = -Infinity; // when the view was last turned by hand
     this.slide = [0, 0]; // dragged sideways and up, not yet travelled (radians)
     this.dolly = 0; // wheeled forward, not yet travelled (clearances)
 
@@ -79,6 +80,7 @@ export class Controls {
   }
 
   turn(dyaw, dpitch) {
+    if (dyaw || dpitch) this.turned = performance.now();
     this.yaw += dyaw;
     this.pitch = Math.min(PITCH_MAX, Math.max(-PITCH_MAX, this.pitch + dpitch));
   }

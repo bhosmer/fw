@@ -40,7 +40,7 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uDebug', 'uThread', 'uThreadN',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uStride', 'uDebug', 'uThread', 'uThreadN',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
     // The older way of finding what each pixel sees, to check the above against.
@@ -129,13 +129,81 @@ export class Renderer {
 
   draw(recs, view) {
     const gl = this.gl;
-    const p = view.reference ? this.refProg : this.viewProg;
-    const n = this.nView;
     // (Distances for comparison are data, not a picture: no smoothing.)
     const raw = view.debug === 4;
     if (raw) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     else this.viewTarget();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    this.setView(recs, view, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (raw) return;
+
+    const q = this.smoothProg;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(q.prog);
+    gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
+    gl.uniform1i(q.u.uTex, 0);
+    gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // What the view sees, sparsely: for every stride-th pixel of the canvas
+  // (each drawn in as much detail as on screen), the distance to what it hits,
+  // or -1 for nothing. It is read back without waiting for the GPU; seen()
+  // hands it over once it has arrived. One at a time.
+  look(recs, view, stride) {
+    const gl = this.gl;
+    if (this.lookSync) return false;
+    const w = Math.ceil(this.canvas.width / stride), h = Math.ceil(this.canvas.height / stride);
+    if (!this.lookTex || this.lookSize[0] !== w || this.lookSize[1] !== h) {
+      if (this.lookTex) gl.deleteTexture(this.lookTex);
+      this.lookTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.lookTex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, w, h);
+      this.lookFbo ??= gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.lookFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.lookTex, 0);
+      this.lookPbo ??= gl.createBuffer();
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 16, gl.STREAM_READ);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      this.lookSize = [w, h];
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.lookFbo);
+    gl.viewport(0, 0, w, h);
+    this.setView(recs, { ...view, debug: 5, reference: false }, stride);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.lookSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    return true;
+  }
+
+  seen() {
+    const gl = this.gl;
+    if (!this.lookSync) return null;
+    const s = gl.clientWaitSync(this.lookSync, 0, 0);
+    if (s !== gl.ALREADY_SIGNALED && s !== gl.CONDITION_SATISFIED) return null;
+    gl.deleteSync(this.lookSync);
+    this.lookSync = null;
+    const [w, h] = this.lookSize;
+    const px = new Float32Array(w * h * 4);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const dist = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) dist[i] = px[i * 4];
+    return { w, h, dist };
+  }
+
+  // Everything the view program needs to draw recs as view describes.
+  setView(recs, view, stride) {
+    const gl = this.gl;
+    const p = view.reference ? this.refProg : this.viewProg;
+    const n = this.nView;
     gl.useProgram(p.prog);
     this.setLevels(p, recs, n);
     const wall = new Float32Array(n * 3);
@@ -170,18 +238,10 @@ export class Renderer {
       gl.uniform3fv(p.u.uOuterFloor, c.floor);
     } else gl.uniform4f(p.u.uOuter, 0, 0, 0, -1);
     gl.uniform1i(p.u.uDebug, view.debug | 0);
+    gl.uniform1f(p.u.uStride, stride);
     gl.uniform1i(p.u.uThreadN, view.thread ? view.thread.length / 3 : 0);
     if (view.thread?.length) gl.uniform3fv(p.u.uThread, view.thread);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    if (raw) return;
-
-    const q = this.smoothProg;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.useProgram(q.prog);
-    gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
-    gl.uniform1i(q.u.uTex, 0);
-    gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    return p;
   }
 
   // GPU milliseconds taken by whatever fn draws (null if it cannot be timed).

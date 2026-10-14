@@ -4,6 +4,7 @@ import { Controls } from './controls.js';
 import halls from './spaces/halls.js';
 import { levelSeed } from './util.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
+import { Pilot } from './pilot.js';
 
 const space = halls;
 const R = space.R;
@@ -46,6 +47,7 @@ try {
 }
 const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN));
 const pos = new Position(R, space.ancestorDigit, space.start);
+const pilot = new Pilot(R);
 
 let debug = 0;
 let reference = false; // draw with the old ray stepping, to compare
@@ -130,6 +132,23 @@ function ahead(dir) {
   return Math.min(t, far());
 }
 
+// The way directly away from the nearest built surface (for the tour). Out in
+// the open, none: there is nothing to keep off.
+function awayFrom() {
+  if (!(clearance > sky)) return [0, 0, 0];
+  const h = 0.25 * clearance;
+  const at = (v) => Math.max(sky + v[1], ...here.map((r) => -airAt(r, v) / r.sig));
+  const g = [0, 1, 2].map((a) => {
+    const v = [0, 0, 0];
+    v[a] = h;
+    const up = at(v);
+    v[a] = -h;
+    return up - at(v);
+  });
+  const l = Math.hypot(...g);
+  return l > 0 ? g.map((x) => x / l) : [0, 0, 0];
+}
+
 // Find our clearance, and move the working level to suit it.
 function sense() {
   for (let i = 0; i < 8; i++) {
@@ -206,7 +225,9 @@ const TRAIL_MAX = 200000;
 
 // wish is a velocity (from the keys) and nudge a displacement (from the mouse),
 // both in clearances.
+let lastMove = [0, 0, 0]; // what step() last moved us by, in level-F cells
 function step(dt, wish, nudge = [0, 0, 0]) {
+  lastMove = [0, 0, 0];
   // Standing still with nothing left to settle: there is nothing to do.
   if (wish.every((x) => x === 0) && nudge.every((x) => x === 0) && settled()) return 0;
   sense();
@@ -228,6 +249,7 @@ function step(dt, wish, nudge = [0, 0, 0]) {
   if (len <= 0) return 0;
   const delta = asked.map((x) => (x * len) / want);
   pos.move(delta);
+  lastMove = delta;
   trail.length = travelled;
   trail.push({ delta, F: pos.F, dt, yaw: controls.yaw, pitch: controls.pitch });
   if (trail.length > TRAIL_MAX) trail.splice(0, TRAIL_MAX / 10);
@@ -311,7 +333,7 @@ function mostVisible(recs) {
   return recs.filter((r) => keep.has(r.level));
 }
 
-function draw(moved) {
+function viewNow(moved) {
   const fogLen = fog;
   const maxT = 4 * fogLen;
   // How far away each level's nearest air is.
@@ -323,7 +345,7 @@ function draw(moved) {
   if (recs.length > N_VIEW) recs = mostVisible(recs);
   for (const r of recs) r.near = near.get(r.level);
   const { fwd, right, up } = controls.basis();
-  renderer.draw(recs, {
+  const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
     tan: FOV_TAN,
     scale,
@@ -335,8 +357,29 @@ function draw(moved) {
     outer: outerAir(all),
     sky: skyHeight(),
     thread: controls.thread ? thread(50 * maxT) : null,
-  });
+  };
+  return { recs, view };
+}
+
+function draw(moved) {
+  const { recs, view } = viewNow(moved);
+  renderer.draw(recs, view);
   return recs.length;
+}
+
+// The tour's eyes: a sparse picture of distances, a few times a second, read
+// back without holding anything up.
+let lookAt = null, lookedAt = 0;
+function look(now) {
+  const got = renderer.seen();
+  if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, { F: pos.F, scale, sky });
+  if (renderer.lookSync || now - lookedAt < 250) return;
+  const stride = Math.max(4, Math.round(canvas.width / 100));
+  const { recs, view } = viewNow(0);
+  if (renderer.look(recs, view, stride)) {
+    lookAt = { basis: controls.basis(), F: pos.F, res: [canvas.width, canvas.height], stride };
+    lookedAt = now;
+  }
 }
 
 // Resolution follows frame time.
@@ -379,10 +422,16 @@ function loadLocation() {
 }
 
 // X switches between the two ways of stepping rays, to compare them by eye;
-// L between lighting schemes.
+// L between lighting schemes; P starts and stops the tour, M picks its mood.
 addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'KeyX') reference = !reference;
+  if (e.code === 'KeyP') {
+    if (pilot.on) pilot.stop();
+    else pilot.start(pos.F);
+    controls.drop();
+  }
+  if (e.code === 'KeyM' && pilot.on) pilot.choose(pos.F);
   if (e.code === 'KeyL') {
     scheme = (scheme + 1) % SCHEMES.length;
     saveScheme(scheme);
@@ -431,9 +480,21 @@ function frame(now) {
   controls.update(dt);
   const way = controls.retracing();
   if (way) controls.drop();
-  const moved = way ? retrace(dt, way) : step(dt, controls.wish(), controls.nudge(dt));
+  let moved;
+  if (way) moved = retrace(dt, way);
+  else if (pilot.on) {
+    // Flying by hand during the tour steers it: turning takes the view (the
+    // tour picks its way on from wherever we end up facing), and the keys
+    // and the wheel add their own travel to its.
+    const steered = now - controls.turned < 800;
+    const tour = pilot.fly(dt, controls, scale, awayFrom, steered).map((x) => x * controls.boost());
+    const hand = controls.wish();
+    moved = step(dt, tour.map((x, a) => x + hand[a]), controls.nudge(dt));
+    pilot.moved(lastMove, pos.F);
+  } else moved = step(dt, controls.wish(), controls.nudge(dt));
 
   const drew = present(moved);
+  if (pilot.on) look(now);
   if (drew && raw < 0.25) {
     // Resolution gives way quickly when frames run long and returns slowly.
     fps += (1 / raw - fps) * 0.1;
@@ -456,7 +517,7 @@ function frame(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   lighting: ${SCHEMES[scheme].name}` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   lighting: ${SCHEMES[scheme].name}` : ''}${pilot.on ? `   touring (${pilot.mood === 'dive' ? 'diving' : 'drifting'}${pilot.held ? ' only' : ''}, M)` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -511,6 +572,36 @@ window.fw = {
     for (let i = 0; i < seconds * 60; i++) step(1 / 60, wish);
     return this.state;
   },
+  // Tour for a while of simulated time, looking every quarter second (and
+  // waiting for each look), calling each(t) after every look.
+  async tour(seconds, each) {
+    if (!pilot.on) pilot.start(pos.F);
+    const log = [];
+    for (let i = 0; i < seconds * 60; i++) {
+      if (i % 15 === 0) {
+        const stride = Math.max(4, Math.round(canvas.width / 100));
+        const { recs, view } = viewNow(0);
+        renderer.look(recs, view, stride);
+        // (A fence's state only changes between tasks.)
+        let got = null;
+        for (let k = 0; k < 50 && !got; k++) {
+          await new Promise((r) => {
+            const c = new MessageChannel();
+            c.port1.onmessage = r;
+            c.port2.postMessage(0);
+          });
+          got = renderer.seen();
+        }
+        if (got) pilot.see(got, controls.basis(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, { F: pos.F, scale, sky });
+        log.push({ t: i / 60, F: pos.F, mood: pilot.mood, clear: +clearance.toPrecision(3), sky: +sky.toPrecision(3), aim: !!pilot.target });
+        if (each) await each(i / 60);
+      }
+      step(1 / 60, pilot.fly(1 / 60, controls, scale, awayFrom));
+      pilot.moved(lastMove, pos.F);
+    }
+    return log;
+  },
+  pilot,
   // Draw the current view at a small size and return its pixels.
   snap(w = 480, h = 360) {
     canvas.width = w;
