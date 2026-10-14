@@ -40,7 +40,7 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uDebug', 'uThread', 'uThreadN',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uDebug', 'uThread', 'uThreadN',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
     // The older way of finding what each pixel sees, to check the above against.
@@ -158,6 +158,11 @@ export class Renderer {
     gl.uniform1f(p.u.uFogLen, view.fogLen);
     gl.uniform1f(p.u.uMaxT, view.maxT);
     gl.uniform3fv(p.u.uSky, this.space.sky);
+    gl.uniform1f(p.u.uSkyH, view.sky);
+    gl.uniform3fv(p.u.uZenith, this.space.zenith);
+    gl.uniform3fv(p.u.uGround, this.space.roof);
+    gl.uniform1f(p.u.uFill, view.scheme.fill);
+    gl.uniform1f(p.u.uSunK, view.scheme.sun);
     if (view.outer) {
       const c = this.space.palette(view.outer.level);
       gl.uniform4f(p.u.uOuter, ...view.outer.normal, view.outer.dist);

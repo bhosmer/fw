@@ -3,6 +3,7 @@ import { Renderer } from './renderer.js';
 import { Controls } from './controls.js';
 import halls from './spaces/halls.js';
 import { levelSeed } from './util.js';
+import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 
 const space = halls;
 const R = space.R;
@@ -48,6 +49,8 @@ const pos = new Position(R, space.ancestorDigit, space.start);
 
 let debug = 0;
 let reference = false; // draw with the old ray stepping, to compare
+let scheme = loadScheme(); // index into SCHEMES
+let schemeShown = 0; // when the scheme last changed, to name it for a moment
 let scale = 0.25; // smoothed clearance, level-F cells
 let pace = 0.25; // smoothed open distance the way we are going, level-F cells
 let fog = 0; // smoothed visibility, level-F cells
@@ -86,25 +89,45 @@ function airAt(rec, v = [0, 0, 0]) {
   return space.cellAir(L, f, wrapId(id), levelSeed(rec.level), wrapId, dg);
 }
 
+// How far we are above the ground: the one plane over which there is only
+// sky (see ground in spaces/halls.js). In level-F cells, negative below it.
+// Our height and the plane's are compared digit by digit from the coarsest
+// level at which we have ever been anywhere but the default, so that close to
+// the plane what is left is a small whole number plus our offset in the cell.
+const SKY_SEE = 150; // how far we see from up there, in heights above the ground
+let sky = -1e30;
+function skyHeight() {
+  const plane = (j) => (j < 0 ? space.ancestorDigit(j)[1] : j === 0 ? space.ground : 0);
+  let acc = 0;
+  for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) acc = acc * R + pos.digit(j)[1] - plane(j);
+  // (Working coarser than level 0, the plane is part of the way up our cell.)
+  for (let j = pos.F + 1; j <= 0; j++) acc -= plane(j) * Math.pow(R, pos.F - j);
+  return Math.max(acc + pos.frac[1], -1e30);
+}
+
 // How far the way is open in direction dir, in level-F cells, looking no
 // further than LOOK times the width of the way. Each stride is the clearance
 // where it starts, so everything up to the distance returned is air. The
 // width is the most clearance met on the way, not the clearance here: that
 // dips wherever one piece of air hands over to the next (a room to its
-// doorway), though nothing there is in the way.
+// doorway), though nothing there is in the way. The open sky has no width:
+// there, how high we are is how big the space is.
 const LOOK = 5;
+const SKY_LOOK = 2;
 let here = []; // the levels around us, as sense() last found them
 let opened = 0; // what ahead() last found, for fw.state
 function ahead(dir) {
   let t = 0, width = 0;
-  for (let i = 0; i < 10 && t < LOOK * width + 1e-30; i++) {
+  const far = () => Math.max(LOOK * width, SKY_LOOK * sky);
+  for (let i = 0; i < 10 && t < far() + 1e-30; i++) {
     const v = dir.map((x) => x * t);
-    const c = Math.max(...here.map((r) => -airAt(r, v) / r.sig));
+    const built = Math.max(...here.map((r) => -airAt(r, v) / r.sig));
+    const c = Math.max(sky + v[1], built);
     if (c <= 0.02 * t) break;
-    width = Math.max(width, c);
+    width = Math.max(width, built);
     t += c;
   }
-  return Math.min(t, LOOK * width);
+  return Math.min(t, far());
 }
 
 // Find our clearance, and move the working level to suit it.
@@ -113,7 +136,8 @@ function sense() {
     here = pos.levels(pos.F - UP - FAR, pos.F + DOWN);
     here = here.filter((r) => r.level >= pos.F - UP || airAt(r) < 0);
     sensed = here.map((r) => ({ level: r.level, air: airAt(r), sig: r.sig }));
-    clearance = Math.max(...sensed.map((s) => -s.air / s.sig));
+    sky = skyHeight();
+    clearance = Math.max(sky, ...sensed.map((s) => -s.air / s.sig));
     if (clearance > 0 && clearance < REFINE_BELOW) {
       pos.refine();
       scale *= R;
@@ -131,8 +155,10 @@ function sense() {
   // (Of the spaces that can be drawn: failing any, as far as those go.)
   const drawn = sensed.filter((s) => s.level >= pos.F - UP);
   const within = drawn.find((s) => s.air < 0);
-  if (within) fogTarget = (space.fogK * R) / within.sig;
-  else if (drawn.length < sensed.length) fogTarget = (space.fogK * R) / drawn[0].sig;
+  let see = within ? (space.fogK * R) / within.sig : drawn.length < sensed.length ? (space.fogK * R) / drawn[0].sig : 0;
+  // Out in the open, by how high up we are.
+  if (sky > 0) see = Math.max(see, SKY_SEE * sky);
+  if (see > 0) fogTarget = see;
 }
 
 // The air of a level too coarse to draw, as the shader is to see it: the
@@ -305,7 +331,9 @@ function draw(moved) {
     maxT,
     debug,
     reference,
+    scheme: SCHEMES[scheme],
     outer: outerAir(all),
+    sky: skyHeight(),
     thread: controls.thread ? thread(50 * maxT) : null,
   });
   return recs.length;
@@ -350,9 +378,16 @@ function loadLocation() {
   }
 }
 
-// X switches between the two ways of stepping rays, to compare them by eye.
+// X switches between the two ways of stepping rays, to compare them by eye;
+// L between lighting schemes.
 addEventListener('keydown', (e) => {
-  if (e.code === 'KeyX' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) reference = !reference;
+  if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.code === 'KeyX') reference = !reference;
+  if (e.code === 'KeyL') {
+    scheme = (scheme + 1) % SCHEMES.length;
+    saveScheme(scheme);
+    schemeShown = performance.now();
+  }
 });
 
 addEventListener('hashchange', () => {
@@ -380,7 +415,7 @@ fog = fogTarget;
 let shown = '';
 function present(moved) {
   resize();
-  const key = [pos.F, pos.frac, controls.yaw, controls.pitch, scale.toPrecision(3), fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference].join();
+  const key = [pos.F, pos.frac, controls.yaw, controls.pitch, scale.toPrecision(3), fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference, scheme].join();
   if (key === shown) return false;
   shown = key;
   levelsDrawn = draw(moved);
@@ -421,7 +456,7 @@ function frame(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   lighting: ${SCHEMES[scheme].name}` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -468,7 +503,7 @@ window.fw = {
     return { off: off / (w * h), newNearer: newNearer / (w * h), where };
   },
   get state() {
-    return { F: pos.F, frac: pos.frac.slice(), clearance, scale, pace, opened, fog, pixelRatio, fps, levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, pixelRatio, fps, levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = controls.basis();

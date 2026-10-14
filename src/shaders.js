@@ -174,6 +174,13 @@ uniform vec3 uSky;
 // this stands in for it: the surface as a plane, air on the side its normal
 // (xyz) points to, the camera w from it. Off when w < 0.
 uniform vec4 uOuter;
+// How far the camera is above the plane over which there is only sky
+// (negative: below it).
+uniform float uSkyH;
+uniform vec3 uZenith;
+uniform vec3 uGround;
+uniform float uFill;       // lighting scheme: see schemes.js
+uniform float uSunK;
 uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
 uniform vec3 uThread[NT];  // the way we came, as a polyline, nearest end first
@@ -194,6 +201,12 @@ const float LOD_HI = 24.0;
 const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
 // The longest way through any one piece of a cell's air, in cells.
 const float REACH = 1.4;
+const vec3 SUN = vec3(0.4657, 0.8279, 0.3105);
+const vec3 SUNLIGHT = vec3(1.0, 0.88, 0.7);
+// A sun ray is tried only from at most this many fog lengths under the
+// ground, and gets at most this many steps to come out.
+const float SUN_DEPTH = 1.0;
+const int SUN_STEPS = 48;
 
 // Per ray: for each level, how far along the ray it is known to stay solid.
 float gSolid[NLEV];
@@ -211,6 +224,10 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
   if (uOuter.w >= 0.0) {
     d = dot(uOuter.xyz, v) + uOuter.w;
     slot = -1;
+  }
+  if (v.y + uSkyH > d) {
+    d = v.y + uSkyH;
+    slot = -2;
   }
   for (int i = 0; i < NLEV; i++) {
     if (i >= uN) break;
@@ -239,7 +256,7 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
 // surface as texture, which the real geometry later grows into. Smaller
 // still, the texture dissolves into the average tone it would have had.
 vec3 detail(vec3 base, vec3 v, float foot, int slot) {
-  for (int i = slot + 1; i < NLEV; i++) {
+  for (int i = max(slot + 1, 0); i < NLEV; i++) {
     if (i >= uN) break;
     float px = float(R) / uSig[i] / foot;
     if (px < 0.5) break;
@@ -256,35 +273,48 @@ vec3 detail(vec3 base, vec3 v, float foot, int slot) {
   return base;
 }
 
-void main() {
-  vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
-  vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
-  float pix = 2.0 * uTan / uRes.y;
-
-  float t = 0.0, d = 0.0;
-  int slot = 0, steps = 0;
-  bool hit = false;
-  vec3 n = -rd;
-  for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
-#if EXACT
-  // Wherever the ray is, it is in some level's air, inside one convex piece
-  // of it, and stays in air at least until it leaves that piece. So: go
-  // straight to the furthest such way out, and look again. If no level has
-  // air there, that way out was a surface.
-  gDir = rd;
-  for (int k = 0; k < STEPS; k++) {
+// Wherever a ray is, it is in some level's air, inside one convex piece of
+// it, and stays in air at least until it leaves that piece. So: go straight
+// to the furthest such way out, and look again. If no level has air there,
+// that way out was a surface.
+// The ray sets out from o (camera-relative) along dir, and goes at most maxT
+// in at most most steps. Levels fade with distance as for a ray that set out
+// t0 before o: the camera's own rays have t0 = 0. Returns how far it went;
+// hit: it met a surface (or ran out of steps), of level slot, facing n;
+// open: it went up into the sky. gSolid must be set beforehand.
+float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most,
+            out bool hit, out bool open, inout int slot, inout vec3 n, inout int steps) {
+  float t = 0.0;
+  hit = false;
+  open = false;
+  gDir = dir;
+  for (int k = 0; k < most; k++) {
     steps++;
-    float foot = max(t * pix, 1e-12);
+    float far = t0 + t;
+    float foot = max(far * pix, 1e-12);
+    vec3 v = o + dir * t;
     float best = -1.0;
     int from = slot;
     vec3 bn = n;
     if (uOuter.w >= 0.0) {
-      float above = dot(uOuter.xyz, rd) * t + uOuter.w;
+      float above = dot(uOuter.xyz, v) + uOuter.w;
       if (above > 0.0) {
-        float fall = -dot(uOuter.xyz, rd);
-        best = fall > 0.0 ? above / fall : 2.0 * uMaxT;
+        float fall = -dot(uOuter.xyz, dir);
+        best = fall > 0.0 ? above / fall : 2.0 * maxT;
         from = -1;
         bn = uOuter.xyz;
+      }
+    }
+    // Above the ground there is nothing: a ray going up is gone, and one
+    // coming down has a clear run to the ground.
+    float high = v.y + uSkyH;
+    if (high > 0.0) {
+      if (dir.y >= 0.0) { open = true; break; }
+      float e = high / -dir.y;
+      if (e > best) {
+        best = e;
+        from = -2;
+        bn = vec3(0.0, 1.0, 0.0);
       }
     }
     for (int i = 0; i < NLEV; i++) {
@@ -299,12 +329,12 @@ void main() {
       gRay = true;
       float reach;
       vec3 nn;
-      float a = levelRay(i, rd * t, reach, nn);
+      float a = levelRay(i, v, reach, nn);
       if (reach >= 0.0) {
         // The shrinking changes pace where the level starts to fade and
         // where it is gone: go no further than that in one step.
         float turn = cell / ((rel > 0.0 ? LOD_LO : LOD_HI) * pix);
-        float e = min(reach / uSig[i], max(turn - t, 0.0));
+        float e = min(reach / uSig[i], max(turn - far, 0.0));
         if (e > best) {
           // The surface takes its colour from the level whose air we are
           // leaving; a finer level has to be clearly the one.
@@ -319,10 +349,74 @@ void main() {
     n = bn;
     // Step just past the way out, so as to be inside whatever comes next.
     t += best;
-    t += 0.02 * pix * t;
-    if (t > uMaxT) break;
+    t += 0.02 * pix * (t0 + t);
+    if (t > maxT) break;
   }
-  if (t <= uMaxT) hit = true;
+  if (t <= maxT && !open) hit = true;
+  return t;
+}
+
+// Value noise, for the sky.
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise2(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x),
+             mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) {
+    s += a * noise2(p);
+    p = p * 2.03 + vec2(1.7, 9.2);
+    a *= 0.5;
+  }
+  return s;
+}
+
+// Open sky, seen along rd from col (the haze at the horizon): bluer overhead,
+// a sun, clouds, and hills along the horizon. All of it is infinitely far
+// off, as befits a world with no size.
+vec3 openSky(vec3 col, vec3 rd) {
+  float up = max(rd.y, 0.0);
+  col = mix(col, uZenith, pow(up, 0.55));
+  float sun = max(dot(rd, SUN), 0.0);
+  col += vec3(1.0, 0.9, 0.7) * (0.3 * pow(sun, 16.0) + 6.0 * pow(sun, 1500.0));
+
+  // Clouds: a layer overhead, thinning out toward the horizon.
+  vec2 q = rd.xz / (up + 0.06) * 0.9;
+  float c = fbm(q + vec2(3.1, 7.7));
+  float cover = smoothstep(0.52, 0.78, c) * smoothstep(0.02, 0.25, up);
+  float shade = smoothstep(0.5, 0.9, fbm(q * 1.7 + vec2(0.4, 2.3) + 0.6 * SUN.xz));
+  vec3 cloud = mix(vec3(1.0, 0.98, 0.95), mix(uSky, uZenith, 0.3) * 0.95, 0.55 * shade);
+  col = mix(col, cloud, 0.85 * cover);
+
+  // Hills: two ranges, the further one higher and paler. Sampled round a
+  // circle so that they join up behind us.
+  vec2 ring = normalize(rd.xz + vec2(1e-6, 0.0));
+  float lit = 0.5 + 0.5 * dot(ring, normalize(SUN.xz));
+  float far = 0.012 + 0.07 * smoothstep(0.38, 0.8, fbm(ring * 2.6 + vec2(11.0, 4.0)));
+  float near = 0.004 + 0.035 * smoothstep(0.35, 0.85, fbm(ring * 6.0 + vec2(3.0, 8.0)));
+  vec3 farCol = mix(uSky, uZenith, 0.5) * mix(0.82, 0.95, lit);
+  vec3 nearCol = mix(uSky, uZenith, 0.35) * mix(0.62, 0.78, lit);
+  float rise = smoothstep(0.0, 0.015, rd.y);   // their feet are lost in the haze
+  col = mix(col, farCol, (1.0 - smoothstep(far - 0.001, far + 0.001, rd.y)) * rise * 0.8);
+  col = mix(col, nearCol, (1.0 - smoothstep(near - 0.001, near + 0.001, rd.y)) * rise * 0.85);
+  return col;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
+  vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
+  float pix = 2.0 * uTan / uRes.y;
+
+  float t = 0.0, d = 0.0;
+  int slot = 0, steps = 0;
+  bool hit = false, open = false;
+  vec3 n = -rd;
+  for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
+#if EXACT
+  t = march(vec3(0.0), rd, 0.0, pix, uMaxT, STEPS, hit, open, slot, n, steps);
 #else
   for (int i = 0; i < STEPS; i++) {
     float foot = max(t * pix, 1e-12);
@@ -354,6 +448,9 @@ void main() {
     return;
   }
   vec3 col = uSky * (1.0 + 0.15 * rd.y);
+  if (open) {
+    col = openSky(col, rd);
+  }
   if (hit) {
     vec3 p = rd * t;
     float foot = max(t * pix, 1e-5 * uScale);
@@ -380,17 +477,36 @@ void main() {
     }
     ao = clamp(ao / 0.96, 0.0, 1.0);
 
-    vec3 base = slot < 0 ? mix(uOuterWall, uOuterFloor, smoothstep(0.5, 0.9, abs(n.y)))
+    vec3 base = slot == -2 ? uGround
+              : slot < 0 ? mix(uOuterWall, uOuterFloor, smoothstep(0.5, 0.9, abs(n.y)))
                          : mix(uWall[slot], uFloor[slot], smoothstep(0.5, 0.9, abs(n.y)));
     base = detail(base, p, foot, slot);
 
     float hemi = 0.5 + 0.5 * n.y;
-    float key = max(dot(n, normalize(vec3(0.45, 0.8, 0.3))), 0.0);
-    float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (8.0 * uScale), 2.0));
-    vec3 light = (0.15 + 0.85 * ao) * (uSky * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * 0.55)
-               + vec3(1.0, 0.9, 0.75) * lamp * 0.35;
+    float key = max(dot(n, SUN), 0.0);
 
-    col = mix(col, base * light, exp(-t / uFogLen));
+    // Sunlight: does a ray from here toward the sun get out into the sky?
+    // Not tried from too far below the ground for any to come in.
+    float sunlit = 0.0;
+    float below = -(p.y + uSkyH);
+    if (key > 0.0 && below < SUN_DEPTH * uFogLen) {
+      for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
+      bool sh, so;
+      int ss = slot, st = 0;
+      vec3 sn = n;
+      march(p + n * foot, SUN, t, pix, 1e30, SUN_STEPS, sh, so, ss, sn, st);
+      sunlit = so ? 1.0 : 0.0;
+    }
+    float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (8.0 * uScale), 2.0));
+    vec3 light = (0.15 + 0.85 * ao) * (uSky * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * uFill)
+               + vec3(1.0, 0.9, 0.75) * lamp * 0.35
+               + SUNLIGHT * uSunK * key * sunlit;
+
+    // Where sunlight adds to what was already bright, roll off gently
+    // instead of clipping (nothing under 0.8 changes).
+    vec3 lit = base * light;
+    lit = mix(lit, 0.8 + 0.2 * (1.0 - exp(-(lit - 0.8) / 0.2)), step(0.8, lit));
+    col = mix(col, lit, exp(-t / uFogLen));
   }
 
   // The thread: for each stretch of it, how close this pixel's ray passes.

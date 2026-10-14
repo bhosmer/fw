@@ -24,6 +24,13 @@
 //   ancestorDigit  where a cell sits inside its parent when nothing says
 //                  otherwise (must be somewhere solid in the parent)
 //   palette, sky, fogK, start
+//   ground         the world has a top: above one horizontal plane there is
+//                  only open sky. This says where: the plane is this many
+//                  level-0 cells up from the floor of the level -1 cell that
+//                  ancestorDigit leads to. Being on a cell boundary of level
+//                  0, it leaves the rooms under it their roofs.
+//   zenith, roof   the sky's colour overhead; the colour of the ground seen
+//                  from above
 //
 // Rules for cellAir that keep the world exact at any depth:
 //   - put every feature on integer lattice coordinates, with faces that are
@@ -513,5 +520,11 @@ export default {
   },
 
   sky: [0.72, 0.8, 0.9],
+  zenith: [0.3, 0.5, 0.82],
+  roof: hsv(0.09, 0.16, 0.6),
+  // The room we start in is in the top storey.
+  get ground() {
+    return this.ancestorDigit(0)[1] + 1;
+  },
   fogK: 250, // visibility, in cells of the room we are in
 };
