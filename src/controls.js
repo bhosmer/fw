@@ -88,8 +88,7 @@ export class Controls {
   }
 
   update(dt) {
-    // Trying flight-stick pitch (up arrow tips the nose down); swap back if not.
-    this.turn(this.axis('ArrowRight', 'ArrowLeft') * 1.6 * dt, this.axis('ArrowDown', 'ArrowUp') * 1.6 * dt);
+    this.turn(this.axis('ArrowRight', 'ArrowLeft') * 1.6 * dt, this.axis('ArrowUp', 'ArrowDown') * 1.6 * dt);
   }
 
   basis() {
