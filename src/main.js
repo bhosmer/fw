@@ -36,6 +36,17 @@ const MIN_PIXEL_RATIO = 0.35;
 const canvas = document.getElementById('view');
 const hud = document.getElementById('hud');
 const help = document.getElementById('help');
+// Whether the legend is hidden is remembered (H shows and hides it).
+const HELP_KEY = 'fw.help';
+try {
+  if (localStorage.getItem(HELP_KEY) === 'hidden') help.classList.add('hidden');
+} catch {}
+function toggleHelp() {
+  const hidden = help.classList.toggle('hidden');
+  try {
+    localStorage.setItem(HELP_KEY, hidden ? 'hidden' : 'shown');
+  } catch {}
+}
 
 let renderer;
 try {
@@ -341,9 +352,7 @@ function viewNow(moved) {
   const near = new Map(sensed.map((s) => [s.level, Math.max(0, (s.air - 0.05) / s.sig - moved)]));
   // (Where we are now, which is a step on from where sense() looked.)
   const all = pos.levels(pos.F - UP - FAR, pos.F + DOWN);
-  // (Out in the open, a ray into a cavity can go further: see the shader.)
-  const reach = sky > 0 ? Infinity : maxT;
-  let recs = all.filter((r) => r.level >= pos.F - UP && near.get(r.level) < reach);
+  let recs = all.filter((r) => r.level >= pos.F - UP && near.get(r.level) < maxT);
   if (recs.length > N_VIEW) recs = mostVisible(recs);
   for (const r of recs) r.near = near.get(r.level);
   const { fwd, right, up } = controls.basis();
@@ -408,7 +417,10 @@ function saveLocation() {
   // (Only the digits that are not what they would be anyway.)
   const digits = [...pos.digits].filter(([j, d]) => space.ancestorDigit(j).some((x, a) => x !== d[a]));
   const at = { F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch };
-  history.replaceState(null, '', '#' + btoa(JSON.stringify(at)));
+  // (Where the page is framed, this may not be allowed: then it is not kept.)
+  try {
+    history.replaceState(null, '', '#' + btoa(JSON.stringify(at)));
+  } catch {}
 }
 function loadLocation() {
   try {
@@ -425,22 +437,44 @@ function loadLocation() {
 }
 
 // X switches between the two ways of stepping rays, to compare them by eye;
-// L between schemes (shift-L back); P starts and stops the tour, M picks its mood.
+// L between schemes (shift-L back); P starts and stops the tour, M picks its
+// mood; H hides and shows the legend.
+function toggleTour() {
+  if (pilot.on) pilot.stop();
+  else pilot.start(pos.F);
+  controls.drop();
+}
+function nextScheme(by) {
+  scheme = (scheme + by + SCHEMES.length) % SCHEMES.length;
+  saveScheme(scheme);
+  schemeShown = performance.now();
+  showScheme();
+}
+function showScheme() {
+  for (const el of document.querySelectorAll('.scheme')) el.textContent = SCHEMES[scheme].name;
+}
+showScheme();
 addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'KeyX') reference = !reference;
-  if (e.code === 'KeyP') {
-    if (pilot.on) pilot.stop();
-    else pilot.start(pos.F);
-    controls.drop();
-  }
+  if (e.code === 'KeyP') toggleTour();
   if (e.code === 'KeyM' && pilot.on) pilot.choose(pos.F);
-  if (e.code === 'KeyL') {
-    scheme = (scheme + (e.shiftKey ? SCHEMES.length - 1 : 1)) % SCHEMES.length;
-    saveScheme(scheme);
-    schemeShown = performance.now();
-  }
+  if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
+  if (e.code === 'KeyH') toggleHelp();
 });
+// The same, by buttons, for touch screens.
+const BUTTONS = {
+  tour: toggleTour,
+  mood: () => (pilot.on ? pilot.choose(pos.F) : toggleTour()),
+  scheme: () => nextScheme(1),
+  help: toggleHelp,
+};
+for (const [name, act] of Object.entries(BUTTONS)) {
+  document.getElementById(name + '-button')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    act();
+  });
+}
 
 addEventListener('hashchange', () => {
   if (!loadLocation()) return;
@@ -605,6 +639,11 @@ window.fw = {
     return log;
   },
   pilot,
+  // The link to where we are now.
+  get where() {
+    saveLocation();
+    return location.href;
+  },
   // Draw the current view at a small size and return its pixels.
   snap(w = 480, h = 360) {
     canvas.width = w;

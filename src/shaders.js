@@ -191,7 +191,6 @@ uniform float uMirror;
 uniform float uDisc;
 uniform float uClouds;
 uniform float uStars;
-uniform float uRipple;
 uniform float uShafts;
 uniform float uInlay;
 uniform vec3 uSun;         // toward the sun
@@ -199,7 +198,9 @@ uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
 uniform vec3 uThread[NT];  // the way we came, as a polyline, nearest end first
 uniform int uThreadN;
-uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float
+uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float;
+                          // 6: the light the haze catches, alone (see shafts())
+uniform sampler2D uShaftTex; // that light, drawn coarser (see Renderer.draw)
 uniform float uStride;     // draw only every this many pixels (see Renderer.look)
 
 out vec4 outColor;
@@ -224,7 +225,7 @@ const int SUN_STEPS = 48;
 const int MIRROR_STEPS = 64;
 // Shafts of light: how many points along a ray are tried for sunlight, and
 // how many steps each gets to reach the sky.
-const int SHAFT_SAMPLES = 8;
+const int SHAFT_SAMPLES = 16;
 const int SHAFT_STEPS = 32;
 
 // Per ray: for each level, how far along the ray it is known to stay solid.
@@ -435,21 +436,6 @@ vec3 openSky(vec3 col, vec3 rd) {
   return col;
 }
 
-// The slope of the ripples on a floor of level slot at v, which are fixed to
-// that level's lattice, and smoothed away where they would be under a pixel.
-vec2 ripple(vec3 v, int slot, float foot) {
-  int i = max(slot, 0);
-  const float K = 0.8;   // ripples per lattice unit, roughly
-  float fade = 1.0 - smoothstep(0.03, 0.2, foot * K * uSig[i]);
-  if (fade <= 0.0) return vec2(0.0);
-  vec2 q = (vec2(uL[i].xz & 255) + uFr[i].xz + v.xz * uSig[i]) * K;
-  const float E = 0.05;
-  float h0 = noise2(q) + 0.5 * noise2(q * 2.3 + 5.1);
-  float hx = noise2(q + vec2(E, 0.0)) + 0.5 * noise2((q + vec2(E, 0.0)) * 2.3 + 5.1);
-  float hz = noise2(q + vec2(0.0, E)) + 0.5 * noise2((q + vec2(0.0, E)) * 2.3 + 5.1);
-  return vec2(hx - h0, hz - h0) / E * fade;
-}
-
 // What is seen along rd where nothing is hit: the haze, or the open sky.
 vec3 beyond(vec3 rd, bool open) {
   vec3 col = uSky * (1.0 + 0.15 * rd.y);
@@ -508,6 +494,50 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
   return mix(lit, 0.8 + 0.2 * (1.0 - exp(-(lit - 0.8) / 0.2)), step(0.8, lit));
 }
 
+// Shafts of light: how much of the haze in front of what we see (end away)
+// is in sunlight, tried at points along the ray (from a different start in
+// each pixel, so what falls between them shows as fine noise, not bands).
+float shafts(vec3 rd, float end, float pix, int slot, vec3 n) {
+  end = min(end, 2.0 * uFogLen);
+  float j = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  float sum = 0.0;
+  for (int k = 0; k < SHAFT_SAMPLES; k++) {
+    float s = end * (float(k) + j) / float(SHAFT_SAMPLES);
+    vec3 q = rd * s;
+    if (-(q.y + uSkyH) > SUN_DEPTH * uFogLen) continue;
+    for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
+    bool sh, so;
+    int ss = slot, st = 0;
+    vec3 sn = n;
+    march(q, uSun, s, pix, 1e30, SHAFT_STEPS, sh, so, ss, sn, st);
+    if (so) sum += exp(-s / uFogLen);
+  }
+  float phase = 0.4 + 1.6 * pow(max(dot(rd, uSun), 0.0), 6.0);
+  return phase * sum * end / (uFogLen * float(SHAFT_SAMPLES));
+}
+
+// The shafts of light drawn coarser (see Renderer.draw), here: from the four
+// nearest of those, weighted by nearness and also by how near they ended to
+// where this pixel's ray does, so that light in the haze behind an edge does
+// not spill over onto what stands in front of it.
+float shaftsHere(float end) {
+  ivec2 size = textureSize(uShaftTex, 0);
+  vec2 at = gl_FragCoord.xy * vec2(size) / uRes - 0.5;
+  ivec2 c = ivec2(floor(at));
+  vec2 f = at - vec2(c);
+  float here = log2(max(end, 1e-30));
+  float sum = 0.0, wsum = 1e-6;
+  for (int k = 0; k < 4; k++) {
+    ivec2 o = ivec2(k & 1, k >> 1);
+    vec2 s = texelFetch(uShaftTex, clamp(c + o, ivec2(0), size - 1), 0).rg;
+    float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+    w *= 1.0 / (0.05 + abs(s.g - here));
+    sum += w * s.r;
+    wsum += w;
+  }
+  return sum / wsum;
+}
+
 void main() {
   vec2 uv = (gl_FragCoord.xy * uStride * 2.0 - uRes) / uRes.y;
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
@@ -552,6 +582,11 @@ void main() {
     outColor = vec4(hit ? t : -1.0, 0.0, 0.0, 1.0);
     return;
   }
+  if (uDebug == 6) {
+    float end = hit ? t : maxT;
+    outColor = vec4(shafts(rd, end, pix, slot, n), log2(max(end, 1e-30)), 0.0, 1.0);
+    return;
+  }
   if (uDebug == 4) {
     // Distance to what was hit, on a log scale, in 24 bits.
     float v = hit ? clamp((log2(max(t, 1e-30)) + 64.0) / 96.0, 0.0, 1.0) : 1.0;
@@ -592,13 +627,7 @@ void main() {
     // Mirror floors: what they reflect, more of it the more glancing the
     // look (and none of the sun's shadows, which would cost another ray).
     if (uMirror > 0.0 && n.y > 0.9) {
-      vec3 nm = n;
-      if (uRipple > 0.0) {
-        vec2 g = ripple(p, slot, max(t * pix, 1e-5 * uScale)) * uRipple;
-        nm = normalize(vec3(-g.x, 1.0, -g.y));
-      }
-      vec3 rr = reflect(rd, nm);
-      rr.y = abs(rr.y);
+      vec3 rr = reflect(rd, n);
       for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
       bool rh, ro;
       int rs = slot, rst = 0;
@@ -607,34 +636,15 @@ void main() {
       float rt = march(o, rr, t, pix, uMaxT, MIRROR_STEPS, rh, ro, rs, rn, rst);
       vec3 rc = beyond(rr, ro);
       if (rh) rc = mix(rc, shade(o + rr * rt, rn, rr, t + rt, rs, pix, false), exp(-rt / uFogLen));
-      float glance = pow(1.0 - max(dot(nm, -rd), 0.0), 3.0);
+      float glance = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
       lit = mix(lit, rc, uMirror * mix(0.35, 1.0, glance));
     }
 
     col = mix(col, lit, exp(-min(t, down) / uFogLen - max(t - down, 0.0) / fogIn));
   }
 
-  // Shafts of light: how much of the haze in front of what we see is in
-  // sunlight, tried at points along the ray (from a different start in each
-  // pixel, so what falls between them shows as fine noise, not bands).
-  if (uShafts > 0.0) {
-    float end = min(hit ? t : maxT, 2.0 * uFogLen);
-    float j = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float sum = 0.0;
-    for (int k = 0; k < SHAFT_SAMPLES; k++) {
-      float s = end * (float(k) + j) / float(SHAFT_SAMPLES);
-      vec3 q = rd * s;
-      if (-(q.y + uSkyH) > SUN_DEPTH * uFogLen) continue;
-      for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
-      bool sh, so;
-      int ss = slot, st = 0;
-      vec3 sn = n;
-      march(q, uSun, s, pix, 1e30, SHAFT_STEPS, sh, so, ss, sn, st);
-      if (so) sum += exp(-s / uFogLen);
-    }
-    float phase = 0.4 + 1.6 * pow(max(dot(rd, uSun), 0.0), 6.0);
-    col += uSunCol * uShafts * phase * sum * end / (uFogLen * float(SHAFT_SAMPLES));
-  }
+  // Shafts of light: drawn coarser beforehand, since they are soft anyway.
+  if (uShafts > 0.0) col += uSunCol * uShafts * shaftsHere(hit ? t : maxT);
 
   // The thread: for each stretch of it, how close this pixel's ray passes.
   // It shows through walls, dimmed, so it can be followed out of sight.
@@ -678,7 +688,6 @@ export const SMOOTH_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uRes;
-uniform float uInk;        // draw only edges, as pale lines on blue
 out vec4 outColor;
 
 const int SEARCH = 16;
@@ -700,15 +709,6 @@ void main() {
   float lMin = min(lC, min(min(lD, lU), min(lL, lR)));
   float lMax = max(lC, max(max(lD, lU), max(lL, lR)));
   float range = lMax - lMin;
-  if (uInk > 0.0) {
-    float a = luma(textureOffset(uTex, uv, ivec2(-1, 1)).rgb), b = luma(textureOffset(uTex, uv, ivec2(1, 1)).rgb);
-    float c = luma(textureOffset(uTex, uv, ivec2(-1, -1)).rgb), d = luma(textureOffset(uTex, uv, ivec2(1, -1)).rgb);
-    float gx = (b + 2.0 * lR + d) - (a + 2.0 * lL + c);
-    float gy = (a + 2.0 * lU + b) - (c + 2.0 * lD + d);
-    float edge = smoothstep(0.05, 0.18, length(vec2(gx, gy)));
-    outColor = vec4(mix(vec3(0.06, 0.14, 0.32) + 0.06 * lC, vec3(0.82, 0.9, 1.0), edge * uInk), 1.0);
-    return;
-  }
   outColor = vec4(colour, 1.0);
   if (range < max(0.0312, lMax * 0.125)) return;
 

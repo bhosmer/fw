@@ -15,19 +15,17 @@
 //   sunDir   toward the sun (need not be of unit length)
 //   disc     how bright the sun's disc is in the sky; clouds, how much cloud;
 //            stars, how bright the stars are
-//   ripple   how rippled the mirror floors are
 //   shafts   how much sunlight the haze catches, showing shafts of light
 //   inlay    how strongly finer levels show as coloured inlay, before they
 //            open up (else they show as shadowed recesses)
-//   ink      draw only edges, as lines, as in a blueprint
 //   stone    level => { wall, floor }: the colours of each level, or none
 //            to keep the space's palette
 import { hash32, hsv } from './util.js';
 
 const DEFAULTS = {
   fill: 0.25, sun: 1.0, sunCol: [1.0, 0.88, 0.7], sunDir: [0.4657, 0.8279, 0.3105],
-  ambient: 1, lamp: 0.35, reach: 8, glow: 0, mirror: 0, ripple: 0, fog: 1,
-  disc: 1, clouds: 1, stars: 0, shafts: 0, inlay: 0, ink: 0,
+  ambient: 1, lamp: 0.35, reach: 8, glow: 0, mirror: 0, fog: 1,
+  disc: 1, clouds: 1, stars: 0, shafts: 0, inlay: 0,
 };
 
 const jitter = (level, k) => ((hash32(level * 7 + k) & 0xffff) / 0xffff) * 2 - 1;
@@ -42,7 +40,6 @@ const turn = (colours, floorK) => (level) => {
 
 export const SCHEMES = [
   { name: 'sunlit' },
-  { name: 'classic', fill: 0.55, sun: 0.9 },
 
   // Piranesi's Carceri: brown stone in a smoky dusk, lit from far above by
   // hard light that only some openings let in.
@@ -163,27 +160,6 @@ export const SCHEMES = [
     stone: turn([hsv(0.07, 0.42, 0.84), hsv(0.11, 0.22, 0.92), hsv(0.04, 0.48, 0.74), hsv(0.09, 0.3, 0.88)], 0.7),
   },
 
-  // A cistern: dim stone over dark rippled water, lamplit, with a little
-  // light falling from above.
-  {
-    name: 'cistern',
-    fill: 0.08,
-    sun: 0.9,
-    ambient: 0.2,
-    lamp: 1.1,
-    reach: 4,
-    mirror: 0.7,
-    ripple: 0.04,
-    fog: 0.7,
-    sky: [0.13, 0.12, 0.1],
-    zenith: [0.3, 0.32, 0.36],
-    ground: hsv(0.5, 0.3, 0.1),
-    clouds: 1.3,
-    stone(level) {
-      return { wall: hsv(0.08 + 0.02 * jitter(level, 1), 0.18, 0.6 + 0.1 * jitter(level, 2)), floor: hsv(0.5, 0.3, 0.08) };
-    },
-  },
-
   // The Alhambra: tilework in jewel colours, each level's openings inlaid
   // in the walls of the one above before they open up.
   {
@@ -191,22 +167,6 @@ export const SCHEMES = [
     fill: 0.35,
     inlay: 1,
     stone: turn([hsv(0.6, 0.6, 0.72), hsv(0.12, 0.12, 0.93), hsv(0.42, 0.5, 0.62), hsv(0.11, 0.55, 0.86), hsv(0.5, 0.5, 0.75), hsv(0.03, 0.55, 0.72)], 0.75),
-  },
-
-  // A blueprint: edges only, pale lines on blue.
-  {
-    name: 'blueprint',
-    fill: 0.7,
-    sun: 0,
-    ambient: 0.6,
-    lamp: 0,
-    ink: 1,
-    sky: [0.5, 0.5, 0.5],
-    zenith: [0.5, 0.5, 0.5],
-    ground: [0.6, 0.6, 0.6],
-    disc: 0,
-    clouds: 0,
-    stone: () => ({ wall: [0.8, 0.8, 0.8], floor: [0.55, 0.55, 0.55] }),
   },
 ].map((s) => ({ ...DEFAULTS, ...s }));
 

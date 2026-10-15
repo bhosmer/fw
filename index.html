@@ -6,7 +6,7 @@
     <title>fractal world</title>
     <style>
       html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
-      #view { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+      #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
       #hud, #help {
         position: fixed; left: 16px; margin: 0; pointer-events: none; white-space: pre;
         font: 12px/1.5 ui-monospace, Menlo, monospace; color: #fff;
@@ -15,18 +15,46 @@
       #hud { bottom: 14px; opacity: 0.8; }
       #help { top: 14px; opacity: 0.8; }
       #help.error { color: #f88; white-space: pre-wrap; }
+      #help.hidden { display: none; }
+      #help pre { margin: 0; font: inherit; }
+      .touch, #buttons { display: none; }
+      @media (pointer: coarse) {
+        .keys { display: none; }
+        .touch { display: block; }
+        #buttons { display: flex; }
+        #hud { bottom: 64px; }
+      }
+      #buttons { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+      #buttons button {
+        font: 14px ui-monospace, Menlo, monospace; color: #fff; background: rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 8px; padding: 10px 12px;
+        -webkit-tap-highlight-color: transparent;
+      }
     </style>
   </head>
   <body>
     <canvas id="view"></canvas>
-    <pre id="help">drag         look            W A S D     fly
+    <div id="help"><pre class="keys">drag         look            W A S D     fly
 right-drag   slide           space / C   up / down
 wheel        forward / back  shift       faster
 R / F        rewind / replay             - / =   travel speed
 T            thread
-L / shift-L  next / previous scheme
+L / shift-L  scheme: <span class="scheme"></span> (next / previous)
 P            tour (fly as usual to steer it)
-M            tour: by turns / drift / dive</pre>
+M            tour: by turns / drift / dive
+H            hide this</pre><pre class="touch">one finger    look
+two fingers   slide
+pinch         forward / back
+tour          start / stop the tour
+mood          tour: by turns / drift / dive
+scheme        next scheme: <span class="scheme"></span>
+?             hide this</pre></div>
+    <div id="buttons">
+      <button id="tour-button">tour</button>
+      <button id="mood-button">mood</button>
+      <button id="scheme-button">scheme</button>
+      <button id="help-button">?</button>
+    </div>
     <pre id="hud"></pre>
     <script type="module" src="src/main.js"></script>
   </body>

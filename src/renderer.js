@@ -26,6 +26,9 @@ function link(gl, frag, names) {
 
 const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uSeed', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm'];
 
+// Shafts of light are drawn for one pixel in this many each way (see draw).
+const SHAFT_STRIDE = 6;
+
 export class Renderer {
   // nProbe: levels examined at the camera each frame. nView: levels drawn.
   constructor(canvas, space, nProbe, nView, nThread) {
@@ -40,13 +43,18 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uReach', 'uGlow', 'uMirror', 'uRipple', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
     // The older way of finding what each pixel sees, to check the above against.
     this.refProg = link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
-    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes', 'uInk']);
+    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
+    // Shafts of light are drawn into this, coarser than the picture (see draw).
+    this.shaftTex = null;
+    this.shaftFbo = gl.createFramebuffer();
+    this.shaftSize = [-1, -1];
+    this.shaftTarget(1, 1);
     this.viewTex = null;
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];
@@ -127,14 +135,50 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
   }
 
+  shaftTarget(w, h) {
+    const gl = this.gl;
+    if (this.shaftSize[0] !== w || this.shaftSize[1] !== h) {
+      if (this.shaftTex) gl.deleteTexture(this.shaftTex);
+      this.shaftTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.shaftTex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.shaftFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.shaftTex, 0);
+      this.shaftSize = [w, h];
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shaftFbo);
+  }
+
   draw(recs, view) {
     const gl = this.gl;
+    // Shafts of light are soft, and costly (a ray toward the sun from each of
+    // many points along every ray): drawn first, for every SHAFT_STRIDE-th
+    // pixel each way, and spread over the rest by the texture's filtering.
+    if (view.scheme.shafts > 0 && !view.debug) {
+      const w = Math.ceil(this.canvas.width / SHAFT_STRIDE), h = Math.ceil(this.canvas.height / SHAFT_STRIDE);
+      this.shaftTarget(w, h);
+      gl.viewport(0, 0, w, h);
+      const p = this.setView(recs, view, SHAFT_STRIDE);
+      gl.uniform1i(p.u.uDebug, 6);
+      gl.activeTexture(gl.TEXTURE1); // (not the texture being drawn into)
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
     // (Distances for comparison are data, not a picture: no smoothing.)
     const raw = view.debug === 4;
     if (raw) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     else this.viewTarget();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    this.setView(recs, view, 1);
+    const p = this.setView(recs, view, 1);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.shaftTex);
+    gl.uniform1i(p.u.uShaftTex, 1);
+    gl.activeTexture(gl.TEXTURE0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (raw) return;
 
@@ -144,7 +188,6 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
     gl.uniform1i(q.u.uTex, 0);
     gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
-    gl.uniform1f(q.u.uInk, view.scheme.ink);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -244,7 +287,6 @@ export class Renderer {
     gl.uniform1f(p.u.uDisc, sc.disc);
     gl.uniform1f(p.u.uClouds, sc.clouds);
     gl.uniform1f(p.u.uStars, sc.stars);
-    gl.uniform1f(p.u.uRipple, sc.ripple);
     gl.uniform1f(p.u.uShafts, sc.shafts);
     gl.uniform1f(p.u.uInlay, sc.inlay);
     const d = Math.hypot(...sc.sunDir);

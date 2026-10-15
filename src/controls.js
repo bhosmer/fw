@@ -1,12 +1,13 @@
 // Free flight, by mouse alone or with keys: dragging looks, dragging with the
 // right button (or with ctrl or cmd held) slides sideways and up and down, the
-// wheel travels forward and back. There is no body, so no gravity and no
+// wheel travels forward and back. Or by touch (see below). There is no body, so no gravity and no
 // collision; the only thing scale does is set how fast we travel (see main.js).
 
 const PITCH_MAX = 1.55;
 const WHEEL = 0.004; // clearances travelled per unit of wheel
 const WHEEL_EASE = 0.08; // seconds over which a turn of the wheel is spent
 const GRIP = 3; // how far off, in clearances, a dragged scene is taken to be
+const PINCH = 4; // clearances travelled for spreading two fingers e times as far apart
 
 export class Controls {
   constructor(el, fovY) {
@@ -43,6 +44,31 @@ export class Controls {
       if (e.code === 'Space' || e.code === 'Backspace' || e.code.startsWith('Arrow')) e.preventDefault();
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
+
+    // On a touch screen: one finger looks, two slide, and spreading or
+    // pinching them travels forward or back.
+    let touches = null; // where each finger was, by id
+    const spread = (t) => (t.length > 1 ? Math.hypot(t[0].x - t[1].x, t[0].y - t[1].y) : 0);
+    const read = (e) => [...e.touches].map((t) => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
+    const touch = (e) => {
+      e.preventDefault();
+      const now = read(e);
+      if (touches && now.length === touches.length && now.every((t, i) => t.id === touches[i].id)) {
+        const k = fovY / el.clientHeight;
+        const n = now.length;
+        const dx = now.reduce((s, t, i) => s + t.x - touches[i].x, 0) / n;
+        const dy = now.reduce((s, t, i) => s + t.y - touches[i].y, 0) / n;
+        if (n === 1) this.turn(-dx * k, dy * k);
+        else {
+          this.slide[0] -= dx * k;
+          this.slide[1] += dy * k;
+          const a = spread(touches), b = spread(now);
+          if (a > 0 && b > 0) this.dolly += Math.log(b / a) * PINCH;
+        }
+      }
+      touches = now.length ? now : null;
+    };
+    for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) el.addEventListener(type, touch, { passive: false });
     addEventListener('blur', () => {
       this.keys.clear();
       dragging = 0;
