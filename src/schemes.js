@@ -172,12 +172,15 @@ export const SCHEMES = [
 
 const KEY = 'fw.scheme';
 
+// The scheme a first visit starts in.
+const FIRST = SCHEMES.findIndex((s) => s.name === 'alhambra');
+
 export function loadScheme() {
   try {
     const i = SCHEMES.findIndex((s) => s.name === localStorage.getItem(KEY));
-    return Math.max(i, 0);
+    return i >= 0 ? i : FIRST;
   } catch {
-    return 0;
+    return FIRST;
   }
 }
 
