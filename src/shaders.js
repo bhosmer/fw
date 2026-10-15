@@ -212,9 +212,18 @@ const int STEPS = EXACT == 1 ? 96 : 160;
 // In between, its air is shrunk back from its surfaces, by an amount that
 // grows evenly with distance (so that a ray's way out of a piece of air is
 // still where a straight line crosses a plane).
+// Sizes are as seen. An opening in a surface seen at a slant is foreshortened
+// across it by the cosine between the surface and the line of sight (a pit
+// in the ground far off is a wide, thin sliver), and what counts is its area
+// on screen: so it goes by its size face on times lean(), the root of that
+// cosine. The surface is, for a ray that has met one, the one it met; while
+// marching, the one the ray is about to cross (its way out of the coarser
+// air it is in) or, where no coarser level has air, the one it has just
+// crossed: either way, the surface that finer levels cut their openings into.
 const float LOD_LO = 8.0;
 const float LOD_HI = 24.0;
 const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
+float lean(vec3 n, vec3 dir) { return sqrt(max(abs(dot(n, dir)), 1e-6)); }
 // The longest way through any one piece of a cell's air, in cells.
 const float REACH = 1.4;
 // A sun ray is tried only from at most this many fog lengths under the
@@ -301,8 +310,10 @@ vec3 detail(vec3 base, vec3 v, float foot, int slot) {
 // in at most most steps. Levels fade with distance as for a ray that set out
 // t0 before o: the camera's own rays have t0 = 0. Returns how far it went;
 // hit: it met a surface (or ran out of steps), of level slot, facing n;
-// open: it went up into the sky. gSolid must be set beforehand.
-float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most,
+// open: it went up into the sky. seen: this ray is a line of sight, so sizes
+// are as foreshortened along it (the sun's rays leave them as they are).
+// gSolid must be set beforehand.
+float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool seen,
             out bool hit, out bool open, inout int slot, inout vec3 n, inout int steps) {
   float t = 0.0;
   hit = false;
@@ -342,10 +353,12 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most,
       if (t < gSolid[i]) continue;        // nothing but solid at this level yet
       float cell = float(R) / uSig[i];
       if (best > REACH * cell) break;     // already going further than this level could take us
-      float rel = (foot / cell - 1.0 / LOD_HI) * LOD_K;
-      if (rel >= 1.0) break;              // too small to see: leave it solid
+      if ((foot / cell - 1.0 / LOD_HI) * LOD_K >= 1.0) break; // too small to see even face on: leave it solid
+      float slant = seen ? lean(bn, dir) : 1.0;
+      float rel = (foot / (slant * cell) - 1.0 / LOD_HI) * LOD_K;
+      if (rel >= 1.0) continue;           // too foreshortened to see
       gO = CLOSE * float(R) * max(rel, 0.0);
-      gA = rel > 0.0 ? CLOSE * LOD_K * pix : 0.0;
+      gA = rel > 0.0 ? CLOSE * LOD_K * pix / slant : 0.0;
       gRay = true;
       float reach;
       vec3 nn;
@@ -353,7 +366,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most,
       if (reach >= 0.0) {
         // The shrinking changes pace where the level starts to fade and
         // where it is gone: go no further than that in one step.
-        float turn = cell / ((rel > 0.0 ? LOD_LO : LOD_HI) * pix);
+        float turn = slant * cell / ((rel > 0.0 ? LOD_LO : LOD_HI) * pix);
         float e = min(reach / uSig[i], max(turn - far, 0.0));
         if (e > best) {
           // The surface takes its colour from the level whose air we are
@@ -447,6 +460,7 @@ vec3 beyond(vec3 rd, bool open) {
 // sun to see whether it is in sunlight (else it is taken to be in shade).
 vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) {
   float foot = max(t * pix, 1e-5 * uScale);
+  float seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
   int s2;
 
   // How open is it in front of this surface, at a spread of scales?
@@ -454,7 +468,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
   float h = max(2.0 * foot, 0.004 * uScale);
   float wt = 0.4;
   for (int i = 0; i < 4; i++) {
-    ao += wt * clamp(map(p + n * h, foot, t + h, false, s2) / h, 0.0, 1.0);
+    ao += wt * clamp(map(p + n * h, seenFoot, t + h, false, s2) / h, 0.0, 1.0);
     h *= 4.7;
     wt *= 0.7;
   }
@@ -465,7 +479,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
   vec3 base = slot == -2 ? uGround
             : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
                        : mix(uWall[slot], uFloor[slot], flatness);
-  base = detail(base, p, foot, slot);
+  base = detail(base, p, seenFoot, slot);
 
   float hemi = 0.5 + 0.5 * n.y;
   float key = max(dot(n, uSun), 0.0);
@@ -479,7 +493,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
     bool sh, so;
     int ss = slot, st = 0;
     vec3 sn = n;
-    march(p + n * foot, uSun, t, pix, 1e30, SUN_STEPS, sh, so, ss, sn, st);
+    march(p + n * foot, uSun, t, pix, 1e30, SUN_STEPS, false, sh, so, ss, sn, st);
     sunlit = so ? 1.0 : 0.0;
   }
   float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uReach * uScale), 2.0));
@@ -509,7 +523,7 @@ float shafts(vec3 rd, float end, float pix, int slot, vec3 n) {
     bool sh, so;
     int ss = slot, st = 0;
     vec3 sn = n;
-    march(q, uSun, s, pix, 1e30, SHAFT_STEPS, sh, so, ss, sn, st);
+    march(q, uSun, s, pix, 1e30, SHAFT_STEPS, false, sh, so, ss, sn, st);
     if (so) sum += exp(-s / uFogLen);
   }
   float phase = 0.4 + 1.6 * pow(max(dot(rd, uSun), 0.0), 6.0);
@@ -566,7 +580,7 @@ void main() {
 
   for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
 #if EXACT
-  t = march(vec3(0.0), rd, 0.0, pix, maxT, STEPS, hit, open, slot, n, steps);
+  t = march(vec3(0.0), rd, 0.0, pix, maxT, STEPS, true, hit, open, slot, n, steps);
 #else
   for (int i = 0; i < STEPS; i++) {
     float foot = max(t * pix, 1e-12);
@@ -633,7 +647,7 @@ void main() {
       int rs = slot, rst = 0;
       vec3 rn = n;
       vec3 o = p + n * max(t * pix, 1e-5 * uScale);
-      float rt = march(o, rr, t, pix, uMaxT, MIRROR_STEPS, rh, ro, rs, rn, rst);
+      float rt = march(o, rr, t, pix, uMaxT, MIRROR_STEPS, false, rh, ro, rs, rn, rst);
       vec3 rc = beyond(rr, ro);
       if (rh) rc = mix(rc, shade(o + rr * rt, rn, rr, t + rt, rs, pix, false), exp(-rt / uFogLen));
       float glance = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
