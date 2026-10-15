@@ -250,9 +250,11 @@ function step(dt, wish, nudge = [0, 0, 0]) {
   // covers more than half of that, so nothing is ever reached, only
   // approached. Going by what is ahead and not by what is nearest means a
   // doorway or a wall alongside does not slow us, only a wall in front.
-  // (Slowing down is immediate; only speeding up is eased.)
+  // (Slowing down is immediate; only speeding up is eased, over about a
+  // second, and always from the speed we are actually going.)
   const open = (opened = clearance > 0 ? ahead(aim.map((x) => x / size)) : 0);
-  pace *= Math.pow(Math.max(open, 1e-6) / pace, 1 - Math.exp(-dt / 0.3));
+  pace *= Math.pow(Math.max(open, 1e-6) / pace, 1 - Math.exp(-dt / 1.0));
+  pace = Math.min(pace, Math.max(open, 0.05 * scale));
   const unit = Math.min(pace, Math.max(open, 0.05 * scale));
   const asked = aim.map((x) => x * unit);
   const want = size * unit;
@@ -510,7 +512,45 @@ function present(moved) {
 
 let last = performance.now();
 let slow = 0, quick = 0, fps = 0, levelsDrawn = 0, unsaved = 0;
+// A frame the GPU takes longer over than one refresh is shown a refresh
+// late, and nothing here sees it: frames are still asked for on time, but
+// what is shown jumps (in a turn, the whole view). So on a fast display,
+// when frames run long, we draw only every other refresh: each frame then
+// has two, every step covers the same time, and the picture stays sharp.
+// Which it should be goes by the GPU's own times for recent frames, where
+// they can be had; it changes only after holding for a while either way.
+const HEAVY = 0.7, LIGHT = 0.45; // shares of a refresh: GPU p90 above / below
+const gpuMs = []; // the GPU's times for recent frames
+const intervals = []; // recent intervals between refreshes, ms
+let every = 1; // draw every this many refreshes
+let since = 0; // when every last changed
+let lastCall = last, skip = 0;
+function cadence(now) {
+  intervals.push(now - lastCall);
+  lastCall = now;
+  if (intervals.length > 60) intervals.shift();
+  for (const ms of renderer.timed()) {
+    gpuMs.push(ms);
+    if (gpuMs.length > 60) gpuMs.shift();
+  }
+  if (gpuMs.length < 30 || intervals.length < 30) return;
+  // (A low percentile: refreshes come no faster than the display's.)
+  const refresh = intervals.slice().sort((a, b) => a - b)[6];
+  const p90 = gpuMs.slice().sort((a, b) => a - b)[Math.floor(gpuMs.length * 0.9)];
+  if (now - since < (every === 1 ? 500 : 3000)) return;
+  // (Only on a display fast enough that half its rate is still smooth.)
+  const want = refresh < 12 && p90 > HEAVY * refresh ? 2 : p90 < LIGHT * refresh ? 1 : every;
+  if (want !== every) {
+    every = want;
+    since = now;
+  }
+}
 function frame(now) {
+  cadence(now);
+  if (every > 1 && ++skip % every) {
+    requestAnimationFrame(frame);
+    return;
+  }
   const raw = (now - last) / 1000;
   last = now;
   const dt = Math.min(raw, 0.1);
@@ -532,8 +572,9 @@ function frame(now) {
 
   const drew = present(moved);
   if (pilot.on) look(now);
-  if (drew && raw < 0.25) {
-    // Resolution gives way quickly when frames run long and returns slowly.
+  if (drew && moved && raw < 0.25) {
+    // Resolution gives way quickly when frames run long and returns slowly
+    // (and only while we move: at rest, the picture should stay as it is).
     fps += (1 / raw - fps) * 0.1;
     if (raw > 1 / 45) slow++;
     else slow = 0;
@@ -601,7 +642,7 @@ window.fw = {
     return { off: off / (w * h), newNearer: newNearer / (w * h), where };
   },
   get state() {
-    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, pixelRatio, fps, levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, pixelRatio, every, fps, levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = controls.basis();

@@ -59,6 +59,13 @@ export class Renderer {
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];
 
+    // How long the GPU takes over each frame, where that can be timed: a
+    // frame the GPU takes longer over than the display allows is shown late,
+    // which nothing on this side can see.
+    this.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    this.timing = []; // queries not yet answered
+    this.timingPaused = false;
+
     this.probeTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.probeTex);
     gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, nProbe, 1);
@@ -155,6 +162,32 @@ export class Renderer {
 
   draw(recs, view) {
     const gl = this.gl;
+    const timed = this.timer && !this.timingPaused && !view.debug && this.timing.length < 8;
+    if (timed) {
+      const q = gl.createQuery();
+      gl.beginQuery(this.timer.TIME_ELAPSED_EXT, q);
+      this.timing.push(q);
+    }
+    this.drawFrame(recs, view);
+    if (timed) gl.endQuery(this.timer.TIME_ELAPSED_EXT);
+  }
+
+  // GPU milliseconds for each frame timed since last asked whose time has
+  // come back, oldest first. (When the GPU reports that timings were
+  // disturbed, those are dropped.)
+  timed() {
+    const gl = this.gl, done = [];
+    while (this.timing.length && gl.getQueryParameter(this.timing[0], gl.QUERY_RESULT_AVAILABLE)) {
+      const q = this.timing.shift();
+      const ns = gl.getQueryParameter(q, gl.QUERY_RESULT);
+      gl.deleteQuery(q);
+      if (!gl.getParameter(this.timer.GPU_DISJOINT_EXT)) done.push(ns / 1e6);
+    }
+    return done;
+  }
+
+  drawFrame(recs, view) {
+    const gl = this.gl;
     // Shafts of light are soft, and costly (a ray toward the sun from each of
     // many points along every ray): drawn first, for every SHAFT_STRIDE-th
     // pixel each way, and spread over the rest by the texture's filtering.
@@ -231,13 +264,13 @@ export class Renderer {
     if (!this.lookSync) return null;
     const s = gl.clientWaitSync(this.lookSync, 0, 0);
     if (s !== gl.ALREADY_SIGNALED && s !== gl.CONDITION_SATISFIED) return null;
-    gl.deleteSync(this.lookSync);
-    this.lookSync = null;
     const [w, h] = this.lookSize;
     const px = new Float32Array(w * h * 4);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
     gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.deleteSync(this.lookSync);
+    this.lookSync = null;
     const dist = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) dist[i] = px[i * 4];
     return { w, h, dist };
@@ -310,9 +343,11 @@ export class Renderer {
     const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     if (!ext) return null;
     const q = gl.createQuery();
+    this.timingPaused = true; // (only one timing at a time)
     gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
     fn();
     gl.endQuery(ext.TIME_ELAPSED_EXT);
+    this.timingPaused = false;
     gl.flush();
     for (let i = 0; i < 500 && !gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE); i++) {
       await new Promise((r) => setTimeout(r, 4));
