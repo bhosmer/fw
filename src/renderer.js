@@ -40,13 +40,13 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uStride', 'uDebug', 'uThread', 'uThreadN',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uReach', 'uGlow', 'uMirror', 'uRipple', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
     // The older way of finding what each pixel sees, to check the above against.
     this.refProg = link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
-    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
+    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes', 'uInk']);
     this.viewTex = null;
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];
@@ -144,6 +144,7 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
     gl.uniform1i(q.u.uTex, 0);
     gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
+    gl.uniform1f(q.u.uInk, view.scheme.ink);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -209,9 +210,11 @@ export class Renderer {
     const wall = new Float32Array(n * 3);
     const floor = new Float32Array(n * 3);
     const near = new Float32Array(n);
+    const sc = view.scheme;
+    const colours = (level) => sc.stone?.(level) ?? this.space.palette(level);
     recs.forEach((r, i) => {
       near[i] = r.near;
-      const c = this.space.palette(r.level);
+      const c = colours(r.level);
       wall.set(c.wall, i * 3);
       floor.set(c.floor, i * 3);
     });
@@ -225,14 +228,29 @@ export class Renderer {
     gl.uniform1f(p.u.uScale, view.scale);
     gl.uniform1f(p.u.uFogLen, view.fogLen);
     gl.uniform1f(p.u.uMaxT, view.maxT);
-    gl.uniform3fv(p.u.uSky, this.space.sky);
+    gl.uniform1f(p.u.uFogK, view.fogK);
+    gl.uniform3fv(p.u.uSky, sc.sky ?? this.space.sky);
     gl.uniform1f(p.u.uSkyH, view.sky);
-    gl.uniform3fv(p.u.uZenith, this.space.zenith);
-    gl.uniform3fv(p.u.uGround, this.space.roof);
-    gl.uniform1f(p.u.uFill, view.scheme.fill);
-    gl.uniform1f(p.u.uSunK, view.scheme.sun);
+    gl.uniform3fv(p.u.uZenith, sc.zenith ?? this.space.zenith);
+    gl.uniform3fv(p.u.uGround, sc.ground ?? this.space.roof);
+    gl.uniform1f(p.u.uFill, sc.fill);
+    gl.uniform1f(p.u.uSunK, sc.sun);
+    gl.uniform3fv(p.u.uSunCol, sc.sunCol);
+    gl.uniform1f(p.u.uAmbient, sc.ambient);
+    gl.uniform1f(p.u.uLamp, sc.lamp);
+    gl.uniform1f(p.u.uReach, sc.reach);
+    gl.uniform1f(p.u.uGlow, sc.glow);
+    gl.uniform1f(p.u.uMirror, sc.mirror);
+    gl.uniform1f(p.u.uDisc, sc.disc);
+    gl.uniform1f(p.u.uClouds, sc.clouds);
+    gl.uniform1f(p.u.uStars, sc.stars);
+    gl.uniform1f(p.u.uRipple, sc.ripple);
+    gl.uniform1f(p.u.uShafts, sc.shafts);
+    gl.uniform1f(p.u.uInlay, sc.inlay);
+    const d = Math.hypot(...sc.sunDir);
+    gl.uniform3fv(p.u.uSun, sc.sunDir.map((x) => x / d));
     if (view.outer) {
-      const c = this.space.palette(view.outer.level);
+      const c = colours(view.outer.level);
       gl.uniform4f(p.u.uOuter, ...view.outer.normal, view.outer.dist);
       gl.uniform3fv(p.u.uOuterWall, c.wall);
       gl.uniform3fv(p.u.uOuterFloor, c.floor);

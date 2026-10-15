@@ -334,14 +334,16 @@ function mostVisible(recs) {
 }
 
 function viewNow(moved) {
-  const fogLen = fog;
-  const maxT = 4 * fogLen;
+  const fogLen = fog * SCHEMES[scheme].fog;
+  const maxT = 4 * Math.max(fog, fogLen);
   // How far away each level's nearest air is.
   // A level with none in sight is solid as far as this frame is concerned.
   const near = new Map(sensed.map((s) => [s.level, Math.max(0, (s.air - 0.05) / s.sig - moved)]));
   // (Where we are now, which is a step on from where sense() looked.)
   const all = pos.levels(pos.F - UP - FAR, pos.F + DOWN);
-  let recs = all.filter((r) => r.level >= pos.F - UP && near.get(r.level) < maxT);
+  // (Out in the open, a ray into a cavity can go further: see the shader.)
+  const reach = sky > 0 ? Infinity : maxT;
+  let recs = all.filter((r) => r.level >= pos.F - UP && near.get(r.level) < reach);
   if (recs.length > N_VIEW) recs = mostVisible(recs);
   for (const r of recs) r.near = near.get(r.level);
   const { fwd, right, up } = controls.basis();
@@ -351,6 +353,7 @@ function viewNow(moved) {
     scale,
     fogLen,
     maxT,
+    fogK: space.fogK * R * SCHEMES[scheme].fog,
     debug,
     reference,
     scheme: SCHEMES[scheme],
@@ -422,7 +425,7 @@ function loadLocation() {
 }
 
 // X switches between the two ways of stepping rays, to compare them by eye;
-// L between lighting schemes; P starts and stops the tour, M picks its mood.
+// L between schemes (shift-L back); P starts and stops the tour, M picks its mood.
 addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'KeyX') reference = !reference;
@@ -433,7 +436,7 @@ addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyM' && pilot.on) pilot.choose(pos.F);
   if (e.code === 'KeyL') {
-    scheme = (scheme + 1) % SCHEMES.length;
+    scheme = (scheme + (e.shiftKey ? SCHEMES.length - 1 : 1)) % SCHEMES.length;
     saveScheme(scheme);
     schemeShown = performance.now();
   }
@@ -517,7 +520,7 @@ function frame(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   lighting: ${SCHEMES[scheme].name}` : ''}${pilot.on ? `   touring (${pilot.mood === 'dive' ? 'diving' : 'drifting'}${pilot.held ? ' only' : ''}, M)` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${pilot.on ? `   touring (${pilot.mood === 'dive' ? 'diving' : 'drifting'}${pilot.held ? ' only' : ''}, M)` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
