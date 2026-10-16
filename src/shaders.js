@@ -575,8 +575,9 @@ void main() {
     down = uSkyH / -rd.y;
     if (down < 4.0 * uFogLen) {
       vec3 c = rd * down - vec3(0.0, 0.01 * uScale, 0.0);
+      // (Not as far as levels too small to see from here, as with drawing.)
       for (int i = 0; i < NLEV; i++) {
-        if (i >= uN) break;
+        if (i >= uN || float(R) / uSig[i] < LOD_LO * down * pix) break;
         if (levelAir(i, c) < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
       }
       maxT = max(maxT, down + (4.0 - down / uFogLen) * fogIn);
