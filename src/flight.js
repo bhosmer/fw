@@ -227,6 +227,43 @@ export class Flight {
     this.fog = this.fogTarget;
   }
 
+  // Start somewhere new: a first visit is somewhere different each time,
+  // in the same world. Across, not up or down (which would take us out of
+  // the storey under the ground, or into the sky): our cell and its parent
+  // are anywhere in theirs. rand() gives numbers in [0, 1).
+  elsewhere(rand) {
+    const { pos, R } = this;
+    const reset = () => {
+      pos.F = 0;
+      pos.digits.clear();
+      pos.frac = this.space.start.slice();
+    };
+    for (let tries = 0; tries < 10; tries++) {
+      reset();
+      for (const j of [-1, 0]) {
+        const d = pos.digit(j);
+        d[0] = Math.floor(rand() * R);
+        d[2] = Math.floor(rand() * R);
+      }
+      this.begin(true);
+      if (this.clearance >= 0.08) return this.faceOpen();
+    }
+    // (Failing that, where a first visit always began.)
+    reset();
+    this.begin(true);
+  }
+
+  // Turn level, to whichever of eight ways is open furthest.
+  faceOpen() {
+    let best = -1;
+    for (let k = 0; k < 8; k++) {
+      const yaw = (k * Math.PI) / 4;
+      const open = this.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
+      if (open > best) (best = open), (this.controls.yaw = yaw);
+    }
+    this.controls.pitch = 0;
+  }
+
   // Ease the things that should not jump: travel speed, and how far we can
   // see. (Until we have been somewhere with air in sight, there is no telling
   // how far we should see, and so nothing to ease toward.)

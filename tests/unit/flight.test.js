@@ -126,3 +126,17 @@ test('sent somewhere deep, we find the room we are in', () => {
   there.begin();
   assert.ok(there.clearance > 0 && there.room < F - 72, `clearance ${there.clearance}, room ${there.room} at ${F}`);
 });
+
+test('a first visit begins somewhere different each time, with room ahead', () => {
+  const rnd = rand(9);
+  const places = new Set();
+  for (let i = 0; i < 30; i++) {
+    const flight = new Flight(halls, controls());
+    flight.elsewhere(rnd);
+    assert.ok(flight.clearance >= 0.08 && flight.sky < 0, `clearance ${flight.clearance}, sky ${flight.sky}`);
+    const c = flight.controls;
+    assert.ok(flight.ahead([Math.sin(c.yaw), 0, -Math.cos(c.yaw)]) > 2 * flight.clearance, 'facing a wall');
+    places.add(JSON.stringify([flight.pos.F, [...flight.pos.digits].sort()]));
+  }
+  assert.ok(places.size >= 25, `only ${places.size} different places in 30`);
+});

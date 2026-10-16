@@ -187,7 +187,8 @@ for (const [name, act] of Object.entries(BUTTONS)) {
 addEventListener('hashchange', () => {
   if (loadLocation()) flight.begin();
 });
-flight.begin(!(location.hash.length > 1 && loadLocation()));
+if (location.hash.length > 1 && loadLocation()) flight.begin();
+else flight.elsewhere(Math.random);
 
 // Draw only when the picture would differ from the one already showing.
 let shown = '';
