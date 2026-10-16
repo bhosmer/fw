@@ -238,6 +238,15 @@ check('rewinding retraces the way we came', async () => {
   for (let a = 0; a < 3; a++) assert(Math.abs(back.frac[a] - before.frac[a]) < 1e-6, `came back at ${back.frac}, not ${before.frac}`);
 });
 
+check('N goes somewhere new, with room to stand', async () => {
+  await load('court');
+  const was = await page.eval('fw.where');
+  await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN' }))`);
+  const now = await page.eval('fw.where');
+  const clear = await page.eval('fw.state.clearance');
+  assert(now !== was && clear >= 0.08, `still at ${was === now ? 'the same place' : now}, clearance ${clear}`);
+});
+
 check('a place survives a reload', async () => {
   await load('court');
   await page.eval(`(fw.controls.yaw += 0.3, fw.fly(0.7, { f: 1 }))`);

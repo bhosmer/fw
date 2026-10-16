@@ -146,7 +146,15 @@ function loadLocation() {
 
 // X switches between the two ways of stepping rays, to compare them by eye;
 // L between schemes (shift-L back); P starts and stops the tour, M picks its
-// mood; H hides and shows the legend.
+// mood; N goes somewhere new; H hides and shows the legend.
+
+// Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
+function respawn() {
+  flight.elsewhere(Math.random);
+  if (pilot.on) pilot.start(pos.F);
+  controls.drop();
+  saveLocation();
+}
 function toggleTour() {
   if (pilot.on) pilot.stop();
   else pilot.start(pos.F);
@@ -169,6 +177,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && pilot.on) pilot.choose(pos.F);
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
+  if (e.code === 'KeyN') respawn();
 });
 // The same, by buttons, for touch screens.
 const BUTTONS = {
@@ -176,6 +185,7 @@ const BUTTONS = {
   mood: () => (pilot.on ? pilot.choose(pos.F) : toggleTour()),
   scheme: () => nextScheme(1),
   help: toggleHelp,
+  new: respawn,
 };
 for (const [name, act] of Object.entries(BUTTONS)) {
   document.getElementById(name + '-button')?.addEventListener('click', (e) => {
