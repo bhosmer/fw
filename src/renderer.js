@@ -242,7 +242,10 @@ export class Renderer {
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.lookTex, 0);
       this.lookPbo ??= gl.createBuffer();
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
-      gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 16, gl.STREAM_READ);
+      // (Not STREAM_READ, though it is read back: for a buffer said to be for
+      // reading, Chrome copies it aside at every fence, for a way of reading
+      // that WebGL never takes, and warns each time that the copy was wasted.)
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 16, gl.STREAM_COPY);
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       this.lookSize = [w, h];
     }
