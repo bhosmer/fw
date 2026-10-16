@@ -134,8 +134,10 @@ test('a first visit begins somewhere different each time, with room ahead', () =
     const flight = new Flight(halls, controls());
     flight.elsewhere(rnd);
     assert.ok(flight.clearance >= 0.08 && flight.sky < 0, `clearance ${flight.clearance}, sky ${flight.sky}`);
-    const c = flight.controls;
-    assert.ok(flight.ahead([Math.sin(c.yaw), 0, -Math.cos(c.yaw)]) > 2 * flight.clearance, 'facing a wall');
+    // (Facing the most open of the four ways along the walls.)
+    const open = (yaw) => flight.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
+    const most = Math.max(...[0, 1, 2, 3].map((k) => open((k * Math.PI) / 2)));
+    assert.ok(open(flight.controls.yaw) >= most && flight.controls.pitch === 0, 'not facing the most open way');
     places.add(JSON.stringify([flight.pos.F, [...flight.pos.digits].sort()]));
   }
   assert.ok(places.size >= 25, `only ${places.size} different places in 30`);

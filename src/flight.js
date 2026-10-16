@@ -253,11 +253,13 @@ export class Flight {
     this.begin(true);
   }
 
-  // Turn level, to whichever of eight ways is open furthest.
+  // Turn level, to whichever of the four ways along the walls is open
+  // furthest. (Not the diagonals: in a closed room, the furthest of all is
+  // into a corner.)
   faceOpen() {
     let best = -1;
-    for (let k = 0; k < 8; k++) {
-      const yaw = (k * Math.PI) / 4;
+    for (let k = 0; k < 4; k++) {
+      const yaw = (k * Math.PI) / 2;
       const open = this.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
       if (open > best) (best = open), (this.controls.yaw = yaw);
     }
