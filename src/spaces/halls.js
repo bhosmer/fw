@@ -45,13 +45,14 @@
 // A feature aligned this way also never slices a child cell in half, so every
 // surface of a room is a clean facade of the rooms one level down.
 //
-// Rays. A cell's air is a union of convex pieces (the room, a tunnel through
-// each face) less some convex solids (furniture). For a ray, each piece the
-// point is in lists its faces with face(), which finds where the ray leaves
-// it, and each solid in the way lists its faces between solidBegin() and
-// solidEnd(), which finds where the ray strikes it. The engine provides those
-// and shrinks or grows everything with distance. Rules:
-//   - a piece's faces must be the same planes its distance is made from
+// Pieces. A cell's air is a union of convex pieces (the room, a tunnel
+// through each face) less some convex solids (furniture). Each piece is
+// written once, as the planes that bound it: airPiece() then airPlane() for
+// each (or solidPiece(), solidPlane() and solidDone() for a solid). From
+// those the engine has both the piece's distance and, for a ray, where it
+// leaves the piece or strikes the solid, so the two always agree; and it
+// shrinks or grows everything with distance. The JavaScript below is the
+// same, piece for piece, with each plane only a distance. Rules:
 //   - pieces of one cell that join must overlap, not just touch
 //   - a solid may only stand in the room piece, clear of every tunnel
 //   - a tunnel may run on into the next cell, where that cell's own
@@ -71,6 +72,7 @@ const int M = ${M};
 const int HLO = ${HLO};
 const int HHI = R - 2 * M;
 const int C = R / 2;
+const vec3 EX = vec3(1.0, 0.0, 0.0), EY = vec3(0.0, 1.0, 0.0), EZ = vec3(0.0, 0.0, 1.0);
 
 float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 
@@ -81,185 +83,128 @@ bool built(ivec3 id, uint seed) { return h01(hashCell(id, seed ^ ${BUILT_SALT}u)
 // Which of three bays, each six units wide, holds u (integer division is slow).
 int bay(int u, float fu) { return int(clamp(floor((float(u - M) + fu) * (1.0 / 6.0)), 0.0, 2.0)); }
 
-int sgn(int x, float f) { return (x > 0 || (x == 0 && f >= 0.0)) ? 1 : -1; }
-
 // Is the point x + f on the upper side of c? (L alone is rounded, and can
 // put a point half a unit on the wrong side.)
 bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 
-// Inside when x0 <= x <= x1.
-float span(int x, float f, int x0, int x1) {
-  return max(float(x0 - x) - f, float(x - x1) + f);
-}
-
-// Opening with vertical sides to height sp and a 45-degree gable above:
-// |x| <= hw, y >= 0, |x| + y <= sp + hw. x and y are measured from (cu, cy)
-// along the axes of pair p, which diag() needs for the gable.
-float gable(int p, int cu, int cy, int x, float fx, int y, float fy, int hw, int sp) {
-  int s = sgn(x, fx);
-  float sf = float(s);
-  float side = float(s * x - hw) + sf * fx;
-  float sill = float(-y) - fy;
-  float roof = diag(p, s, 1, cu, cy, sp + hw) * 0.70710678;
-  return max(max(side, sill), roof);
-}
-
-// An opening through the wall on one horizontal side of the cell.
-// a runs along the wall normal, u across the wall, y up. Faces are shared, so
-// the two cells either side hash the same owner and agree on what is there.
-float wallOpening(int p, int a, float fa, int u, float fu, int y, float fy, bool high, uint h) {
+// The opening, if any, through the wall on one horizontal side of the cell.
+// One shape covers every kind: centred at cu along the wall, half width hw,
+// its sill y0 above the floor, its sides rising sp before a 45-degree gable,
+// and a flat top (each out of the way where a kind has none). Faces are
+// shared, so the two cells either side hash the same owner (h) and agree on
+// what is there.
+bool wallShape(uint h, int u, float fu, out int cu, out int hw, out int y0, out int sp, out int top) {
   float t = h01(h);
-  if (t < 0.24) return 1e9;
-  // Reaches one unit into our own room, and stops at the neighbour's room.
-  float along = high ? span(a, fa, R - M - 1, R + M) : span(a, fa, -M, M + 1);
-  int yy = y - M;
-  float prof;
-  if (t < 0.52) {
-    // door, in one of three positions
-    int cu = C + (int(float(h & 255u) * (3.0 / 256.0)) - 1) * 5;
-    prof = gable(p, cu, M, u - cu, fu, yy, fy, 2, 5);
-  } else if (t < 0.68) {
-    // row of three windows
-    int cu = M + 3 + 6 * bay(u, fu);
-    prof = gable(p, cu, M + 4, u - cu, fu, yy - 4, fy, 1, 3);
-  } else if (t < 0.84) {
-    // arcade of three arches
-    int cu = M + 3 + 6 * bay(u, fu);
-    prof = gable(p, cu, M, u - cu, fu, yy, fy, 2, 6);
-  } else {
-    // no wall at all: the two rooms run together
-    prof = max(span(u, fu, M, R - M), span(yy, fy, 0, HLO));
-  }
-  return max(prof, along);
+  if (t < 0.24) return false;
+  // No wall at all: the two rooms run together.
+  cu = C; hw = C - M; y0 = 0; sp = 1000; top = HLO;
+  // A door, in one of three positions.
+  if (t < 0.52) { cu = C + (int(float(h & 255u) * (3.0 / 256.0)) - 1) * 5; hw = 2; sp = 5; top = 1000; }
+  // A row of three windows.
+  else if (t < 0.68) { cu = M + 3 + 6 * bay(u, fu); hw = 1; y0 = 4; sp = 3; top = 1000; }
+  // An arcade of three arches.
+  else if (t < 0.84) { cu = M + 3 + 6 * bay(u, fu); hw = 2; sp = 6; top = 1000; }
+  return true;
 }
 
-// An opening through the slab above (up) or below the room.
+// That opening as a piece of air: a tunnel along a (the wall's normal, ea),
+// u across the wall (eu) and y up, which reaches one unit into our own room
+// and stops at the neighbour's. p is the pair of axes (u, y), for diag().
+float wallOpening(int p, int a, float fa, int u, float fu, int y, float fy, bool high, uint h, vec3 ea, vec3 eu) {
+  int cu, hw, y0, sp, top;
+  if (!wallShape(h, u, fu, cu, hw, y0, sp, top)) return 1e9;
+  int x = u - cu, yy = y - M - y0;
+  airPiece();
+  airSpan(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1, ea);
+  airSpan(x, fu, -hw, hw, eu);
+  airSpan(yy, fy, 0, top, EY);
+  airPlane(diag(p, 1, 1, cu, M + y0, sp + hw) * 0.70710678, (eu + EY) * 0.70710678);
+  airPlane(diag(p, -1, 1, cu, M + y0, sp + hw) * 0.70710678, (EY - eu) * 0.70710678);
+  return gD;
+}
+
+// An opening through the slab above (up) or below the room: an octagonal
+// oculus, or a square light well (the oculus's diagonals out of its way).
 float slabOpening(ivec3 L, vec3 f, bool up, int H, uint h) {
   float t = h01(h);
   if (t < 0.66) return 1e9;
-  float along = up ? span(L.y, f.y, M + H - 1, R + M) : span(L.y, f.y, -M, M + 1);
-  int x = L.x - C, z = L.z - C;
-  int sx = sgn(x, f.x), sz = sgn(z, f.z);
-  float fx = float(sx) * f.x, fz = float(sz) * f.z;
-  float prof;
-  if (t < 0.88) {
-    // octagonal oculus
-    prof = max(max(float(sx * x - 3) + fx, float(sz * z - 3) + fz),
-               diag(2, sx, sz, C, C, 4) * 0.70710678);
-  } else {
-    // square light well
-    prof = max(float(sx * x - 6) + fx, float(sz * z - 6) + fz);
+  bool oculus = t < 0.88;
+  int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
+  airPiece();
+  airSpan(L.y, f.y, up ? M + H - 1 : -M, up ? R + M : M + 1, EY);
+  airSpan(L.x - C, f.x, -w, w, EX);
+  airSpan(L.z - C, f.z, -w, w, EZ);
+  for (int j = 0; j < 4; j++) {
+    int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
+    airPlane(diag(2, sx, sz, C, C, dg) * 0.70710678, vec3(float(sx), 0.0, float(sz)) * 0.70710678);
   }
-  return max(prof, along);
+  return gD;
 }
 
-// Solid things standing in the room (negative inside the solid). under and
-// over are what picks the openings in the floor and the ceiling: nothing
-// stands over a hole in the floor, and a pier keeps clear of a light well at
-// either end. (An opening reaches a unit into the room so that the two join
-// cleanly; furniture in the way would leave a skin where they meet.)
+// Solid things standing in the room: the distance to the nearest (negative
+// inside it). under and over are what picks the openings in the floor and
+// the ceiling: nothing stands over a hole in the floor, and a pier keeps
+// clear of a light well at either end. (An opening reaches a unit into the
+// room so that the two join cleanly; furniture in the way would leave a skin
+// where they meet.) A ray may strike any of a set of them, so then all are
+// asked; otherwise the one in our quarter of the room is the nearest.
 float furniture(ivec3 L, vec3 f, uint h, float under, float over) {
   float t = h01(h);
   if (t < 0.40) return 1e9;
+  float d = 1e9;
   if (t < 0.62) {
     if (max(under, over) >= 0.88) return 1e9;
-    // four diamond piers, floor to ceiling
-    int cx = beyond(L.x, f.x, C) ? 17 : 7, cz = beyond(L.z, f.z, C) ? 17 : 7;
-    return diag(2, sgn(L.x - cx, f.x), sgn(L.z - cz, f.z), cx, cz, 2) * 0.70710678;
+    // Four diamond piers, floor to ceiling.
+    int nx = beyond(L.x, f.x, C) ? 1 : 0, nz = beyond(L.z, f.z, C) ? 1 : 0;
+    for (int k = 0; k < 4; k++) {
+      int kx = k & 1, kz = k >> 1;
+      if (!gRay && (kx != nx || kz != nz)) continue;
+      int cx = kx == 1 ? 17 : 7, cz = kz == 1 ? 17 : 7;
+      solidPiece();
+      for (int j = 0; j < 4; j++) {
+        int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
+        solidPlane(diag(2, sx, sz, cx, cz, 2) * 0.70710678, vec3(float(sx), 0.0, float(sz)) * 0.70710678);
+      }
+      d = min(d, solidDone());
+    }
+    return d;
   }
   if (under >= 0.66) return 1e9;
   if (t < 0.82) {
-    // two rows of benches, running along x or z
+    // Two rows of benches, running along x or z (p, across q).
     bool turn = ((h >> 5) & 1u) == 1u;
     int p = turn ? L.z : L.x, q = turn ? L.x : L.z;
     float fp = turn ? f.z : f.x, fq = turn ? f.x : f.z;
-    int p0 = beyond(p, fp, C) ? 13 : 6, q0 = beyond(q, fq, C) ? 15 : 8;
-    return max(max(span(p, fp, p0, p0 + 5), span(q, fq, q0, q0 + 1)), span(L.y, f.y, M - 1, M + 1));
-  }
-  // a kiosk in the middle of the floor
-  return max(max(span(L.x, f.x, C - 2, C + 2), span(L.z, f.z, C - 2, C + 2)), span(L.y, f.y, M - 1, M + 3));
-}
-
-// Where the ray leaves the room, or strikes something standing in it.
-void roomReach(ivec3 L, vec3 f, int H, uint h, float under, float over) {
-  face(float(M - L.x) - f.x, vec3(-1.0, 0.0, 0.0));
-  face(float(L.x - (R - M)) + f.x, vec3(1.0, 0.0, 0.0));
-  face(float(M - L.z) - f.z, vec3(0.0, 0.0, -1.0));
-  face(float(L.z - (R - M)) + f.z, vec3(0.0, 0.0, 1.0));
-  face(float(M - L.y) - f.y, vec3(0.0, -1.0, 0.0));
-  face(float(L.y - (M + H)) + f.y, vec3(0.0, 1.0, 0.0));
-
-  // The same choices as furniture().
-  float t = h01(h);
-  if (t < 0.40) return;
-  if (t < 0.62) {
-    if (max(under, over) >= 0.88) return;
+    vec3 ep = turn ? EZ : EX, eq = turn ? EX : EZ;
+    int np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;
     for (int k = 0; k < 4; k++) {
-      int cx = (k & 1) == 1 ? 17 : 7, cz = (k & 2) == 2 ? 17 : 7;
-      solidBegin();
-      for (int j = 0; j < 4; j++) {
-        int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
-        solidFace(diag(2, sx, sz, cx, cz, 2) * 0.70710678,
-                  vec3(float(sx), 0.0, float(sz)) * 0.70710678);
-      }
-      solidEnd();
+      int kp = k & 1, kq = k >> 1;
+      if (!gRay && (kp != np || kq != nq)) continue;
+      int p0 = kp == 1 ? 13 : 6, q0 = kq == 1 ? 15 : 8;
+      solidPiece();
+      solidSpan(p, fp, p0, p0 + 5, ep);
+      solidSpan(q, fq, q0, q0 + 1, eq);
+      solidSpan(L.y, f.y, M - 1, M + 1, EY);
+      d = min(d, solidDone());
     }
-    return;
+    return d;
   }
-  if (under >= 0.66) return;
-  if (t < 0.82) {
-    bool turn = ((h >> 5) & 1u) == 1u;
-    for (int k = 0; k < 4; k++) {
-      int p0 = (k & 1) == 1 ? 13 : 6, q0 = (k & 2) == 2 ? 15 : 8;
-      ivec3 lo = turn ? ivec3(q0, M - 1, p0) : ivec3(p0, M - 1, q0);
-      ivec3 hi = turn ? ivec3(q0 + 1, M + 1, p0 + 5) : ivec3(p0 + 5, M + 1, q0 + 1);
-      solidBox(L, f, lo, hi);
-    }
-    return;
-  }
-  solidBox(L, f, ivec3(C - 2, M - 1, C - 2), ivec3(C + 2, M + 3, C + 2));
+  // A kiosk in the middle of the floor.
+  solidPiece();
+  solidSpan(L.x, f.x, C - 2, C + 2, EX);
+  solidSpan(L.z, f.z, C - 2, C + 2, EZ);
+  solidSpan(L.y, f.y, M - 1, M + 3, EY);
+  return solidDone();
 }
 
-// Where the ray leaves the tunnel that wallOpening() describes. ea and eu are
-// the directions a and u run in.
-void wallReach(int p, int a, float fa, int u, float fu, int y, float fy, bool high, uint h, vec3 ea, vec3 eu) {
-  float t = h01(h);
-  // One shape covers every kind: centre, half width, sill, height the sides
-  // rise to before the gable, and a flat top (out of the way when unused).
-  int cu = C, hw = C - M, y0 = 0, sp = 1000, top = HLO;
-  if (t < 0.52) { cu = C + (int(float(h & 255u) * (3.0 / 256.0)) - 1) * 5; hw = 2; sp = 5; top = 1000; }
-  else if (t < 0.68) { cu = M + 3 + 6 * bay(u, fu); hw = 1; y0 = 4; sp = 3; top = 1000; }
-  else if (t < 0.84) { cu = M + 3 + 6 * bay(u, fu); hw = 2; sp = 6; top = 1000; }
-  int a0 = high ? R - M - 1 : -M, a1 = high ? R + M : M + 1;
-  face(float(a0 - a) - fa, -ea);
-  face(float(a - a1) + fa, ea);
-  int x = u - cu, yy = y - M - y0;
-  vec3 ey = vec3(0.0, 1.0, 0.0);
-  face(float(x - hw) + fu, eu);
-  face(float(-x - hw) - fu, -eu);
-  face(float(-yy) - fy, -ey);
-  face(float(yy - top) + fy, ey);
-  face(diag(p, 1, 1, cu, M + y0, sp + hw) * 0.70710678, (eu + ey) * 0.70710678);
-  face(diag(p, -1, 1, cu, M + y0, sp + hw) * 0.70710678, (ey - eu) * 0.70710678);
-}
-
-// Where the ray leaves the shaft that slabOpening() describes.
-void slabReach(ivec3 L, vec3 f, bool up, int H, uint h) {
-  bool oculus = h01(h) < 0.88;
-  int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-  int y0 = up ? M + H - 1 : -M, y1 = up ? R + M : M + 1;
-  face(float(y0 - L.y) - f.y, vec3(0.0, -1.0, 0.0));
-  face(float(L.y - y1) + f.y, vec3(0.0, 1.0, 0.0));
-  int x = L.x - C, z = L.z - C;
-  face(float(x - w) + f.x, vec3(1.0, 0.0, 0.0));
-  face(float(-x - w) - f.x, vec3(-1.0, 0.0, 0.0));
-  face(float(z - w) + f.z, vec3(0.0, 0.0, 1.0));
-  face(float(-z - w) - f.z, vec3(0.0, 0.0, -1.0));
-  for (int j = 0; j < 4; j++) {
-    int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
-    face(diag(2, sx, sz, C, C, dg) * 0.70710678,
-         vec3(float(sx), 0.0, float(sz)) * 0.70710678);
-  }
+// The room: a box, less whatever stands in it.
+float roomAir(ivec3 L, vec3 f, int H, uint h, float under, float over) {
+  airPiece();
+  airSpan(L.x, f.x, M, R - M, EX);
+  airSpan(L.z, f.z, M, R - M, EZ);
+  airSpan(L.y, f.y, M, M + H, EY);
+  float box = gD;
+  return max(box, -furniture(L, f, h, under, over));
 }
 
 float cell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
@@ -269,22 +214,31 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) 
   bool here = built(id, seed);
   int H = here && h01(hc) < 0.65 ? HLO : HHI;
 
+  // Of the pieces of air the point is in, the ray stays in air to the end of
+  // whichever it is in for longest. Each piece is first asked only its
+  // distance; only one the point turns out to be in is asked again, for
+  // where the ray leaves it (asking that of every piece costs far more).
+  bool ray = gRay;
+  gRay = false;
   float room = 1e9;
   uint hup = hashCell(id, seed ^ 0x967a889bu);
   uint hdn = hashCell(wrapId(id - ivec3(0, 1, 0)), seed ^ 0x967a889bu);
   uint hf = hashCell(id, seed ^ 0x51ed270bu);
   if (here) {
-    room = max(max(span(L.x, f.x, M, R - M), span(L.z, f.z, M, R - M)), span(L.y, f.y, M, M + H));
-    room = max(room, -furniture(L, f, hf, h01(hdn), h01(hup)));
-  }
-  if (gRay && room + gO <= 0.0) {
-    gX = 1e30;
-    roomReach(L, f, H, hf, h01(hdn), h01(hup));
-    reach = gX;
-    nrm = gN;
+    room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
+    if (ray && room + gO <= 0.0) {
+      gRay = true;
+      roomAir(L, f, H, hf, h01(hdn), h01(hup));
+      gRay = false;
+      reach = gX;
+      nrm = gN;
+    }
   }
   // Openings reach only one unit into the room; deeper in, they change nothing.
-  if (room < -1.0) return room;
+  if (room < -1.0) {
+    gRay = ray;
+    return room;
+  }
 
   // Only the nearer face on each axis can matter to a point in this cell.
   bool hx = beyond(L.x, f.x, C), hz = beyond(L.z, f.z, C), hy = beyond(L.y, f.y, M + H / 2);
@@ -299,58 +253,54 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) 
     if (!built(wrapId(id + ivec3(0, 0, hz ? 1 : -1)), seed)) hwz = 0u;
     if (!built(wrapId(id + ivec3(0, hy ? 1 : -1, 0)), seed)) hwy = 0u;
   }
-  float ax = wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx);
-  float az = wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz);
+  float ax = wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, EX, EZ);
+  float az = wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, EZ, EX);
   float ay = slabOpening(L, f, hy, H, hwy);
-  if (gRay) {
-    // Of the pieces the point is in, the ray stays in air to the end of
-    // whichever it is in for longest.
-    if (ax + gO <= 0.0) {
-      gX = 1e30;
-      wallReach(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0));
-      if (gX > reach) { reach = gX; nrm = gN; }
-    }
-    if (az + gO <= 0.0) {
-      gX = 1e30;
-      wallReach(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0));
-      if (gX > reach) { reach = gX; nrm = gN; }
-    }
-    if (ay + gO <= 0.0) {
-      gX = 1e30;
-      slabReach(L, f, hy, H, hwy);
-      if (gX > reach) { reach = gX; nrm = gN; }
-    }
+  gRay = ray;
+  if (ray && ax + gO <= 0.0) {
+    wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, EX, EZ);
+    if (gX > reach) { reach = gX; nrm = gN; }
+  }
+  if (ray && az + gO <= 0.0) {
+    wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, EZ, EX);
+    if (gX > reach) { reach = gX; nrm = gN; }
+  }
+  if (ray && ay + gO <= 0.0) {
+    slabOpening(L, f, hy, H, hwy);
+    if (gX > reach) { reach = gX; nrm = gN; }
   }
 
   // From inside the slab over a low room, the nearest air may be the room
   // above. This cell says nothing else about its neighbours' rooms.
-  float above = max(max(span(L.x, f.x, M, R - M), span(L.z, f.z, M, R - M)), float(R + M - L.y) - f.y);
+  float above = max(max(max(float(M - L.x) - f.x, float(L.x - (R - M)) + f.x),
+                        max(float(M - L.z) - f.z, float(L.z - (R - M)) + f.z)), float(R + M - L.y) - f.y);
 
   float a = min(min(min(room, above), ax), min(az, ay));
   if (a <= 0.0) return a;
 
   // In solid, a must not overstate how far the nearest air is, and the above
   // only looked at part of it. Air it did not look at is at least this far:
-  // the far-side openings of this cell, and whatever the neighbours hold
-  // (nothing of theirs comes within M of the cell boundary unseen).
+  // the far-side openings of this cell, which come no nearer than M + 1 to
+  // their own side (so C - M - 1 from the middle across, and H / 2 - 1 from
+  // it up or down, H being at least HLO); and whatever the neighbours hold,
+  // none of which comes within M of the cell boundary unseen.
   vec3 q = vec3(L) + f;
   vec3 e = min(q, float(R) - q);
-  float unseen = min(min(abs(q.x - float(C)), abs(q.z - float(C))) + 8.0, abs(q.y - float(M + H / 2)) + 5.0);
+  float unseen = min(min(abs(q.x - float(C)), abs(q.z - float(C))) + float(C - M - 1), abs(q.y - float(M + H / 2)) + float(HLO / 2 - 1));
   unseen = min(unseen, min(e.x, min(e.y, e.z)) + float(M));
   return min(a, unseen);
 }
 `;
 
-// The same cell, in JavaScript. The engine asks this for the camera's
-// clearance every frame (asking the GPU would mean waiting for it), so it must
-// agree with the GLSL above; fw.check() in the console compares the two.
+// The same cell, in JavaScript, piece for piece. The engine asks this for
+// the camera's clearance every frame (asking the GPU would mean waiting for
+// it), so it must agree with the GLSL above (the tests compare the two). Only
+// the distances are wanted here, so a plane is only its distance.
 const C = R / 2;
 const HHI = R - 2 * M;
 const NONE = 1e9;
 const h01 = (h) => (h >>> 8) / 16777216;
-const sgn = (x, f) => (x > 0 || (x === 0 && f >= 0) ? 1 : -1);
 const beyond = (x, f, c) => x > c || (x === c && f >= 0);
-const span = (x, f, x0, x1) => Math.max(x0 - x - f, x - x1 + f);
 const bay = (u, fu) => Math.min(2, Math.max(0, Math.floor((u - M + fu) / 6)));
 
 // The point being asked about, along the diagonals (set by cellAir), and
@@ -359,56 +309,58 @@ let dLp, dFp, dLm, dFm;
 const diag = (p, sa, sb, ca, cb, k) =>
   sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];
 
-function gable(p, cu, cy, x, fx, y, fy, hw, sp) {
-  const s = sgn(x, fx);
-  const side = s * x - hw + s * fx;
-  const sill = -y - fy;
-  const roof = diag(p, s, 1, cu, cy, sp + hw) * Math.SQRT1_2;
-  return Math.max(side, sill, roof);
+// Pieces, as in the shaders (airPiece and the rest).
+let gD;
+const piece = () => (gD = -Infinity);
+const plane = (s) => (gD = Math.max(gD, s));
+const span = (x, f, x0, x1) => (plane(x0 - x - f), plane(x - x1 + f));
+
+function wallShape(h, u, fu) {
+  const t = h01(h);
+  if (t < 0.24) return null;
+  if (t < 0.52) return { cu: C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5, hw: 2, y0: 0, sp: 5, top: 1000 };
+  if (t < 0.68) return { cu: M + 3 + 6 * bay(u, fu), hw: 1, y0: 4, sp: 3, top: 1000 };
+  if (t < 0.84) return { cu: M + 3 + 6 * bay(u, fu), hw: 2, y0: 0, sp: 6, top: 1000 };
+  return { cu: C, hw: C - M, y0: 0, sp: 1000, top: HLO };
 }
 
 function wallOpening(p, a, fa, u, fu, y, fy, high, h) {
-  const t = h01(h);
-  if (t < 0.24) return NONE;
-  const along = high ? span(a, fa, R - M - 1, R + M) : span(a, fa, -M, M + 1);
-  const yy = y - M;
-  let prof;
-  if (t < 0.52) {
-    const cu = C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5;
-    prof = gable(p, cu, M, u - cu, fu, yy, fy, 2, 5);
-  } else if (t < 0.68) {
-    const cu = M + 3 + 6 * bay(u, fu);
-    prof = gable(p, cu, M + 4, u - cu, fu, yy - 4, fy, 1, 3);
-  } else if (t < 0.84) {
-    const cu = M + 3 + 6 * bay(u, fu);
-    prof = gable(p, cu, M, u - cu, fu, yy, fy, 2, 6);
-  } else {
-    prof = Math.max(span(u, fu, M, R - M), span(yy, fy, 0, HLO));
-  }
-  return Math.max(prof, along);
+  const s = wallShape(h, u, fu);
+  if (!s) return NONE;
+  const { cu, hw, y0, sp, top } = s;
+  const x = u - cu, yy = y - M - y0;
+  piece();
+  span(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1);
+  span(x, fu, -hw, hw);
+  span(yy, fy, 0, top);
+  plane(diag(p, 1, 1, cu, M + y0, sp + hw) * Math.SQRT1_2);
+  plane(diag(p, -1, 1, cu, M + y0, sp + hw) * Math.SQRT1_2);
+  return gD;
 }
 
 function slabOpening(L, f, up, H, h) {
   const t = h01(h);
   if (t < 0.66) return NONE;
-  const along = up ? span(L[1], f[1], M + H - 1, R + M) : span(L[1], f[1], -M, M + 1);
-  const x = L[0] - C, z = L[2] - C;
-  const sx = sgn(x, f[0]), sz = sgn(z, f[2]);
-  const fx = sx * f[0], fz = sz * f[2];
-  const prof =
-    t < 0.88
-      ? Math.max(sx * x - 3 + fx, sz * z - 3 + fz, diag(2, sx, sz, C, C, 4) * Math.SQRT1_2)
-      : Math.max(sx * x - 6 + fx, sz * z - 6 + fz);
-  return Math.max(prof, along);
+  const oculus = t < 0.88;
+  const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
+  piece();
+  span(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1);
+  span(L[0] - C, f[0], -w, w);
+  span(L[2] - C, f[2], -w, w);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) plane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2);
+  return gD;
 }
 
+// (Only the nearest of each set: that is all a distance needs.)
 function furniture(L, f, h, under, over) {
   const t = h01(h);
   if (t < 0.4) return NONE;
   if (t < 0.62) {
     if (Math.max(under, over) >= 0.88) return NONE;
     const cx = beyond(L[0], f[0], C) ? 17 : 7, cz = beyond(L[2], f[2], C) ? 17 : 7;
-    return diag(2, sgn(L[0] - cx, f[0]), sgn(L[2] - cz, f[2]), cx, cz, 2) * Math.SQRT1_2;
+    piece();
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) plane(diag(2, sx, sz, cx, cz, 2) * Math.SQRT1_2);
+    return gD;
   }
   if (under >= 0.66) return NONE;
   if (t < 0.82) {
@@ -416,9 +368,26 @@ function furniture(L, f, h, under, over) {
     const p = turn ? L[2] : L[0], q = turn ? L[0] : L[2];
     const fp = turn ? f[2] : f[0], fq = turn ? f[0] : f[2];
     const p0 = beyond(p, fp, C) ? 13 : 6, q0 = beyond(q, fq, C) ? 15 : 8;
-    return Math.max(span(p, fp, p0, p0 + 5), span(q, fq, q0, q0 + 1), span(L[1], f[1], M - 1, M + 1));
+    piece();
+    span(p, fp, p0, p0 + 5);
+    span(q, fq, q0, q0 + 1);
+    span(L[1], f[1], M - 1, M + 1);
+    return gD;
   }
-  return Math.max(span(L[0], f[0], C - 2, C + 2), span(L[2], f[2], C - 2, C + 2), span(L[1], f[1], M - 1, M + 3));
+  piece();
+  span(L[0], f[0], C - 2, C + 2);
+  span(L[2], f[2], C - 2, C + 2);
+  span(L[1], f[1], M - 1, M + 3);
+  return gD;
+}
+
+function roomAir(L, f, H, h, under, over) {
+  piece();
+  span(L[0], f[0], M, R - M);
+  span(L[2], f[2], M, R - M);
+  span(L[1], f[1], M, M + H);
+  const box = gD;
+  return Math.max(box, -furniture(L, f, h, under, over));
 }
 
 const ancestors = new Map(); // level -> where its cell sits in its parent
@@ -440,10 +409,7 @@ function cellAir(L, f, id, seed, dg) {
   let room = NONE;
   const hup = hashCell(id, seed ^ 0x967a889b);
   const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ 0x967a889b);
-  if (here) {
-    room = Math.max(span(L[0], f[0], M, R - M), span(L[2], f[2], M, R - M), span(L[1], f[1], M, M + H));
-    room = Math.max(room, -furniture(L, f, hashCell(id, seed ^ 0x51ed270b), h01(hdn), h01(hup)));
-  }
+  if (here) room = roomAir(L, f, H, hashCell(id, seed ^ 0x51ed270b), h01(hdn), h01(hup));
   if (room < -1) return room;
 
   const hx = beyond(L[0], f[0], C), hz = beyond(L[2], f[2], C), hy = beyond(L[1], f[1], M + H / 2);
@@ -458,14 +424,14 @@ function cellAir(L, f, id, seed, dg) {
   const ax = wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx);
   const az = wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz);
   const ay = slabOpening(L, f, hy, H, hwy);
-  const above = Math.max(span(L[0], f[0], M, R - M), span(L[2], f[2], M, R - M), R + M - L[1] - f[1]);
+  const above = Math.max(M - L[0] - f[0], L[0] - (R - M) + f[0], M - L[2] - f[2], L[2] - (R - M) + f[2], R + M - L[1] - f[1]);
 
   const a = Math.min(room, above, ax, az, ay);
   if (a <= 0) return a;
 
   const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];
   const edge = Math.min(q[0], R - q[0], q[1], R - q[1], q[2], R - q[2]);
-  const unseen = Math.min(Math.abs(q[0] - C) + 8, Math.abs(q[2] - C) + 8, Math.abs(q[1] - (M + H / 2)) + 5, edge + M);
+  const unseen = Math.min(Math.abs(q[0] - C) + (C - M - 1), Math.abs(q[2] - C) + (C - M - 1), Math.abs(q[1] - (M + H / 2)) + (HLO / 2 - 1), edge + M);
   return Math.min(a, unseen);
 }
 

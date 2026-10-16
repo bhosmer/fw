@@ -151,6 +151,7 @@ check('views look as they did', async () => {
       const n = a.length / 4;
       return { mean: sum / n, big: big / n, diff: __png(diff, ${W}, ${H}) };
     })()`);
+    if (process.env.VERBOSE) console.log(`  ${name}: mean ${d.mean?.toFixed(4)}, ${((d.big ?? 0) * 100).toFixed(3)}% changed visibly`);
     if (d.size || d.mean > 1.5 || d.big > 0.005) {
       mkdirSync(OUT, { recursive: true });
       writeFileSync(join(OUT, name + '.png'), Buffer.from(png, 'base64'));

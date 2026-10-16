@@ -62,7 +62,8 @@ float gIn, gOut;
 vec3 gInN;
 
 // A face of a convex piece of air that the point is in: s is the point's
-// distance outside it (so not positive), n points out of the piece.
+// distance outside it (so not positive), n points out of the piece. (Asked
+// about a piece the point is not in, it finds nothing that means anything.)
 void face(float s, vec3 n) {
   float r = dot(n, gDir) + gA;
   if (r > 0.0) {
@@ -87,15 +88,42 @@ void solidEnd() {
   gIn = max(gIn, 0.0);
   if (gIn < gOut && gIn < gX) { gX = gIn; gN = gInN; }
 }
-void solidBox(ivec3 L, vec3 f, ivec3 lo, ivec3 hi) {
-  solidBegin();
-  solidFace(float(lo.x - L.x) - f.x, vec3(-1.0, 0.0, 0.0));
-  solidFace(float(L.x - hi.x) + f.x, vec3(1.0, 0.0, 0.0));
-  solidFace(float(lo.y - L.y) - f.y, vec3(0.0, -1.0, 0.0));
-  solidFace(float(L.y - hi.y) + f.y, vec3(0.0, 1.0, 0.0));
-  solidFace(float(lo.z - L.z) - f.z, vec3(0.0, 0.0, -1.0));
-  solidFace(float(L.z - hi.z) + f.z, vec3(0.0, 0.0, 1.0));
-  solidEnd();
+
+// A space gives each convex piece of a cell, air or solid, as the planes that
+// bound it, one call each: s is the point's distance outside the plane
+// (negative inside) and n its normal, pointing out of the piece. The piece's
+// distance is the most of those (gD); and for a ray, the same planes are
+// where it leaves the piece of air or strikes the solid, so the two cannot
+// disagree. Begin a piece with airPiece() or solidPiece(). After a piece of
+// air the point is in, gX and gN are where the ray leaves it (where the
+// point is not in it, they mean nothing). solidDone() ends a solid, adding
+// where the ray strikes it, and gives its distance.
+float gD;
+void airPiece() { gD = -1e30; gX = 1e30; }
+void airPlane(float s, vec3 n) {
+  gD = max(gD, s);
+  if (gRay) face(s, n);
+}
+void solidPiece() {
+  gD = -1e30;
+  if (gRay) solidBegin();
+}
+void solidPlane(float s, vec3 n) {
+  gD = max(gD, s);
+  if (gRay) solidFace(s, n);
+}
+float solidDone() {
+  if (gRay) solidEnd();
+  return gD;
+}
+// Two planes across e, inside when x0 <= x + f <= x1.
+void airSpan(int x, float f, int x0, int x1, vec3 e) {
+  airPlane(float(x0 - x) - f, -e);
+  airPlane(float(x - x1) + f, e);
+}
+void solidSpan(int x, float f, int x0, int x1, vec3 e) {
+  solidPlane(float(x0 - x) - f, -e);
+  solidPlane(float(x - x1) + f, e);
 }
 
 // The point being asked about, along the diagonals (set by levelRay).
