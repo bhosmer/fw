@@ -216,12 +216,14 @@ function outerAir(recs) {
 }
 
 // Ease the things that should not jump: travel speed, and how far we can see.
+// (Until we have been somewhere with air in sight, there is no telling how
+// far we should see, and so nothing to ease toward.)
 function settle(dt) {
   scale *= Math.pow(Math.max(clearance, 1e-6) / scale, 1 - Math.exp(-dt / 0.3));
-  fog *= Math.pow(fogTarget / fog, 1 - Math.exp(-dt / 1.0));
+  if (fogTarget > 0) fog = fog > 0 ? fog * Math.pow(fogTarget / fog, 1 - Math.exp(-dt / 1.0)) : fogTarget;
 }
 function settled() {
-  return clearance > 0 && Math.abs(scale / clearance - 1) < 1e-3 && Math.abs(fog / fogTarget - 1) < 1e-3;
+  return clearance > 0 && Math.abs(scale / clearance - 1) < 1e-3 && (!(fogTarget > 0) || Math.abs(fog / fogTarget - 1) < 1e-3);
 }
 
 // Everywhere we have been, as the moves that got us there, so that it can be
@@ -255,12 +257,10 @@ function step(dt, wish, nudge = [0, 0, 0]) {
   const open = (opened = clearance > 0 ? ahead(aim.map((x) => x / size)) : 0);
   pace *= Math.pow(Math.max(open, 1e-6) / pace, 1 - Math.exp(-dt / 1.0));
   pace = Math.min(pace, Math.max(open, 0.05 * scale));
-  const unit = Math.min(pace, Math.max(open, 0.05 * scale));
-  const asked = aim.map((x) => x * unit);
-  const want = size * unit;
+  const want = size * pace;
   const len = clearance > 0 ? Math.min(want, 0.5 * open) : want;
   if (len <= 0) return 0;
-  const delta = asked.map((x) => (x * len) / want);
+  const delta = aim.map((x) => (x * len) / size);
   pos.move(delta);
   lastMove = delta;
   trail.length = travelled;
@@ -346,17 +346,17 @@ function mostVisible(recs) {
   return recs.filter((r) => keep.has(r.level));
 }
 
-function viewNow(moved) {
+function viewNow() {
   const fogLen = fog * SCHEMES[scheme].fog;
   const maxT = 4 * Math.max(fog, fogLen);
-  // How far away each level's nearest air is.
-  // A level with none in sight is solid as far as this frame is concerned.
-  const near = new Map(sensed.map((s) => [s.level, Math.max(0, (s.air - 0.05) / s.sig - moved)]));
-  // (Where we are now, which is a step on from where sense() looked.)
+  // How far away each level's nearest air is, from where we are now (which
+  // may be a step on from where sense() last looked). A level with none in
+  // sight is solid as far as this frame is concerned.
   const all = pos.levels(pos.F - UP - FAR, pos.F + DOWN);
-  let recs = all.filter((r) => r.level >= pos.F - UP && near.get(r.level) < maxT);
+  let recs = all.filter((r) => r.level >= pos.F - UP);
+  for (const r of recs) r.near = Math.max(0, (airAt(r) - 0.05) / r.sig);
+  recs = recs.filter((r) => r.near < maxT);
   if (recs.length > N_VIEW) recs = mostVisible(recs);
-  for (const r of recs) r.near = near.get(r.level);
   const { fwd, right, up } = controls.basis();
   const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
@@ -375,8 +375,8 @@ function viewNow(moved) {
   return { recs, view };
 }
 
-function draw(moved) {
-  const { recs, view } = viewNow(moved);
+function draw() {
+  const { recs, view } = viewNow();
   renderer.draw(recs, view);
   return recs.length;
 }
@@ -389,7 +389,7 @@ function look(now) {
   if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, { F: pos.F, scale, sky });
   if (renderer.lookSync || now - lookedAt < 250) return;
   const stride = Math.max(4, Math.round(canvas.width / 100));
-  const { recs, view } = viewNow(0);
+  const { recs, view } = viewNow();
   if (renderer.look(recs, view, stride)) {
     lookAt = { basis: controls.basis(), F: pos.F, res: [canvas.width, canvas.height], stride };
     lookedAt = now;
@@ -501,12 +501,12 @@ fog = fogTarget;
 
 // Draw only when the picture would differ from the one already showing.
 let shown = '';
-function present(moved) {
+function present() {
   resize();
   const key = [pos.F, pos.frac, controls.yaw, controls.pitch, scale.toPrecision(3), fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference, scheme].join();
   if (key === shown) return false;
   shown = key;
-  levelsDrawn = draw(moved);
+  levelsDrawn = draw();
   return true;
 }
 
@@ -570,7 +570,7 @@ function frame(now) {
     pilot.moved(lastMove, pos.F);
   } else moved = step(dt, controls.wish(), controls.nudge(dt));
 
-  const drew = present(moved);
+  const drew = present();
   if (pilot.on) look(now);
   if (drew && moved && raw < 0.25) {
     // Resolution gives way quickly when frames run long and returns slowly
@@ -658,11 +658,12 @@ window.fw = {
     for (let i = 0; i < seconds * 60; i++) {
       if (i % 15 === 0) {
         const stride = Math.max(4, Math.round(canvas.width / 100));
-        const { recs, view } = viewNow(0);
+        const { recs, view } = viewNow();
         renderer.look(recs, view, stride);
-        // (A fence's state only changes between tasks.)
+        // (A fence's state only changes between tasks. However long the GPU
+        // takes, give it up to three seconds.)
         let got = null;
-        for (let k = 0; k < 50 && !got; k++) {
+        for (const until = performance.now() + 3000; !got && performance.now() < until; ) {
           await new Promise((r) => {
             const c = new MessageChannel();
             c.port1.onmessage = r;
@@ -690,7 +691,7 @@ window.fw = {
     canvas.width = w;
     canvas.height = h;
     sense();
-    draw(0);
+    draw();
     const px = new Uint8Array(w * h * 4);
     renderer.gl.readPixels(0, 0, w, h, renderer.gl.RGBA, renderer.gl.UNSIGNED_BYTE, px);
     shown = '';
@@ -698,7 +699,9 @@ window.fw = {
   },
   // March a ray the way the shader does, but here, where it can be watched:
   // returns each step's position along the ray and every level's clearance.
+  // (We go back to where we were afterwards.)
   trace(dir, steps = 60, finest = Infinity) {
+    const was = { F: pos.F, frac: pos.frac.slice(), digits: new Map([...pos.digits].map(([j, d]) => [j, d.slice()])) };
     const log = [];
     let t = 0;
     for (let i = 0; i < steps; i++) {
@@ -711,6 +714,8 @@ window.fw = {
       pos.move(dir.map((x) => x * 0.9 * d));
       t += 0.9 * d * unit;
     }
+    Object.assign(pos, was);
+    sense();
     return log;
   },
   // Compare the JavaScript cell function with the shader's along a random
@@ -742,7 +747,7 @@ window.fw = {
     resize();
     sense();
     const ms = await renderer.time(() => {
-      for (let i = 0; i < n; i++) levelsDrawn = draw(0);
+      for (let i = 0; i < n; i++) levelsDrawn = draw();
     });
     return ms / n;
   },

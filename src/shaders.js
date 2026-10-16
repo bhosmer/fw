@@ -381,8 +381,10 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
     slot = from;
     n = bn;
     // Step just past the way out, so as to be inside whatever comes next.
+    // (Some way, even setting out from the camera: a camera exactly on the
+    // plane it is leaving by would otherwise never leave.)
     t += best;
-    t += 0.02 * pix * (t0 + t);
+    t += 0.02 * pix * max(t0 + t, 1e-3 * uScale);
     if (t > maxT) break;
   }
   if (t <= maxT && !open) hit = true;

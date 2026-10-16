@@ -323,7 +323,7 @@ export class Renderer {
     gl.uniform1f(p.u.uDisc, sc.disc);
     gl.uniform1f(p.u.uClouds, sc.clouds);
     gl.uniform1f(p.u.uStars, sc.stars);
-    gl.uniform1f(p.u.uShafts, sc.shafts);
+    gl.uniform1f(p.u.uShafts, view.debug ? 0 : sc.shafts); // (draw() leaves them out of debugging views)
     gl.uniform1f(p.u.uInlay, sc.inlay);
     const d = Math.hypot(...sc.sunDir);
     gl.uniform3fv(p.u.uSun, sc.sunDir.map((x) => x / d));

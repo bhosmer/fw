@@ -100,8 +100,10 @@ export class Pilot {
       dirs[o + 2] = z / l;
     }
     const far = CAP * scale;
-    const D = new Float32Array(n); // distance, capped; nothing counts as far
-    for (let m = 0; m < n; m++) D[m] = dist[m] < 0 ? far : Math.min(dist[m] * k, far);
+    // Distance, capped (nothing counts as far), and never quite zero, since
+    // what is made of it goes by its logarithm.
+    const D = new Float32Array(n);
+    for (let m = 0; m < n; m++) D[m] = dist[m] < 0 ? far : Math.max(Math.min(dist[m] * k, far), 1e-6 * scale);
     const at = (i, j) => D[j * w + i];
     // How big the space in view is: the median distance to what is in it.
     const seen = Float32Array.from(D.filter((_, m) => dist[m] >= 0)).sort();
