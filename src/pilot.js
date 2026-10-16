@@ -130,14 +130,13 @@ export class Pilot {
     const diving = this.held ? this.held === 'dive'
       : depth > BAND[1] ? false : depth < BAND[0] ? true : this.mood === 'dive';
 
-    // How good going toward grid point (i, j) looks; how far along it to aim
-    // is left in reach.
+    // How good going toward grid point (i, j) looks, and how far along it to
+    // aim.
     const fwd = b.fwd;
-    let reach = 0, kind = '', beyondAt = 0;
     const score = (i, j, jitter) => {
       const m0 = j * w + i;
       const d = D[m0];
-      if (d < 1.5 * scale) return -Infinity;
+      if (d < 1.5 * scale) return { s: -Infinity };
       const dx = dirs[m0 * 3], dy = dirs[m0 * 3 + 1], dz = dirs[m0 * 3 + 2];
       const turn = Math.acos(Math.max(-1, Math.min(1, dx * fwd[0] + dy * fwd[1] + dz * fwd[2])));
       // (Steep views are avoided, except diving down at the ground.)
@@ -145,17 +144,15 @@ export class Pilot {
       // Off into an empty sky is no tour.
       const away = dist[m0] < 0 && dy > 0.15 ? 2 : 0;
       const base = -1.2 * turn - pitch - away + jitter;
-      let s = -Infinity;
+      let s = -Infinity, aim = 0;
       if (!diving) {
         // Drifting: out into open space.
         s = base + Math.log(d / scale);
-        reach = 0.6 * d;
-        kind = 'open';
+        aim = 0.6 * d;
       } else if (dist[m0] >= 0) {
         // Diving: at a surface (coming close to one, finer openings show).
         s = base + 0.5;
-        reach = 0.85 * d;
-        kind = 'surface';
+        aim = 0.85 * d;
       }
       // Out over the ground, a way down into it is an opening too (seen
       // nearly edge on, a pit is not much deeper than the ground beyond it).
@@ -168,8 +165,7 @@ export class Pilot {
                                    : 0.8 * Math.min(3, Math.log(1 + below / scale)));
           if (t > s) {
             s = t;
-            reach = down + 0.5 * (d - down);
-            kind = 'pit';
+            aim = down + 0.5 * (d - down);
           }
         }
       }
@@ -185,20 +181,18 @@ export class Pilot {
         if (t > s) {
           s = t;
           // Aim past the mouth, halfway to what lies beyond it.
-          reach = m + 0.5 * (d - m);
-          kind = 'hole';
-          beyondAt = beyond;
+          aim = m + 0.5 * (d - m);
         }
       }
-      return s;
+      return { s, aim };
     };
 
     let best = null;
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-      const s = score(i, j, 0.15 * Math.random());
+      const { s, aim } = score(i, j, 0.15 * Math.random());
       if (s > -Infinity && (!best || s > best.s)) {
         const o = (j * w + i) * 3;
-        best = { s, kind, beyond: beyondAt, go: [dirs[o] * reach, dirs[o + 1] * reach, dirs[o + 2] * reach] };
+        best = { s, go: [dirs[o] * aim, dirs[o + 1] * aim, dirs[o + 2] * aim] };
       }
     }
 
@@ -215,7 +209,7 @@ export class Pilot {
           let clear = 0, s = -Infinity;
           for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
             clear = Math.max(clear, at(i + di, j + dj));
-            s = Math.max(s, score(i + di, j + dj, 0.15));
+            s = Math.max(s, score(i + di, j + dj, 0.15).s);
           }
           if (clear > 0.8 * len && s > -Infinity) current = s;
         }

@@ -157,8 +157,8 @@ export class Position {
     // are. So each sum and difference of two coordinates is carried as its
     // own lattice number and small offset: Lp + fp and Lm + fm, for the axis
     // pairs in DIAGONALS. At the finest level they come from L and f. Going
-    // coarser, a position is its digit plus a twenty-fourth of the position
-    // one level finer, so a sum is the digits' sum plus a twenty-fourth of the
+    // coarser, a position is its digit plus an Rth of the position one
+    // level finer, so a sum is the digits' sum plus an Rth of the
     // finer sum: whenever the finer lattice number divides evenly, the small
     // offset is carried up scaled and never added to anything large.
     for (let i = out.length - 1; i >= 0; i--) {

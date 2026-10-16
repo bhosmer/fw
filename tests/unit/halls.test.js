@@ -1,17 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import halls from '../../src/spaces/halls.js';
-import { levelSeed } from '../../src/util.js';
+import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 
 const R = halls.R;
 const P = R * R;
-const wrapId = (id) => id.map((a) => a - P * Math.floor((a + 0.5) / P));
+const wrapId = (id) => wrapIdR(id, R);
 
 // The distance at a point given as lattice coordinates q (0..R) in cell id.
 function air(q, id, seed) {
   const L = q.map(Math.round);
-  return halls.cellAir(L, q.map((x, a) => x - L[a]), id, seed, wrapId);
+  return halls.cellAir(L, q.map((x, a) => x - L[a]), id, seed);
 }
 
 // A distance that never overstates changes no faster than the point moves:

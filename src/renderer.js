@@ -30,7 +30,7 @@ const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uSeed', 'uSig', 'uLp', 'uFp', 'uLm'
 const SHAFT_STRIDE = 6;
 
 export class Renderer {
-  // nProbe: levels examined at the camera each frame. nView: levels drawn.
+  // nProbe: most levels probe() can be asked about. nView: most levels drawn.
   constructor(canvas, space, nProbe, nView, nThread) {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not available');
@@ -43,11 +43,12 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
-    // The older way of finding what each pixel sees, to check the above against.
-    this.refProg = link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
+    // The older way of finding what each pixel sees, to check the above
+    // against: made the first time it is asked for (see refProg).
+    this.makeRef = () => link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
     this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
     // Shafts of light are drawn into this, coarser than the picture (see draw).
@@ -282,7 +283,7 @@ export class Renderer {
   // Everything the view program needs to draw recs as view describes.
   setView(recs, view, stride) {
     const gl = this.gl;
-    const p = view.reference ? this.refProg : this.viewProg;
+    const p = view.reference ? (this.refProg ??= this.makeRef()) : this.viewProg;
     const n = this.nView;
     gl.useProgram(p.prog);
     this.setLevels(p, recs, n);
@@ -317,7 +318,7 @@ export class Renderer {
     gl.uniform3fv(p.u.uSunCol, sc.sunCol);
     gl.uniform1f(p.u.uAmbient, sc.ambient);
     gl.uniform1f(p.u.uLamp, sc.lamp);
-    gl.uniform1f(p.u.uReach, sc.reach);
+    gl.uniform1f(p.u.uLampReach, sc.lampReach);
     gl.uniform1f(p.u.uGlow, sc.glow);
     gl.uniform1f(p.u.uMirror, sc.mirror);
     gl.uniform1f(p.u.uDisc, sc.disc);

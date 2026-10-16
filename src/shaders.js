@@ -1,12 +1,17 @@
 const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 
+// Lattice units of margin on "this level is solid for at least this far"
+// (here, and in how far off main.js says each level's air is).
+export const SLACK = 0.05;
+
 export const VERT = /* glsl */ `#version 300 es
 void main() {
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-// Shared by both programs: the per-level description of where the camera is
+// Shared by the programs that look at the world (the probe and both ways of
+// drawing it): the per-level description of where the camera is
 // (see Position.levels), and levelAir(), which evaluates one level of the
 // world at a point given as a camera-relative offset v in level-F cell units.
 function common(nlev, space) {
@@ -18,6 +23,7 @@ precision highp int;
 #define R ${space.R}
 #define P ${space.R * space.R}
 #define MAX_IN ${glf(space.maxInterior)}
+#define LONGEST ${glf(space.longestWay)}
 #define CLOSE ${glf(space.close)}
 #define OPEN_AREA ${glf(space.openArea)}
 
@@ -185,7 +191,7 @@ uniform float uSunK;
 uniform vec3 uSunCol;
 uniform float uAmbient;
 uniform float uLamp;
-uniform float uReach;
+uniform float uLampReach;
 uniform float uGlow;
 uniform float uMirror;
 uniform float uDisc;
@@ -224,8 +230,6 @@ const float LOD_LO = 8.0;
 const float LOD_HI = 24.0;
 const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
 float lean(vec3 n, vec3 dir) { return sqrt(max(abs(dot(n, dir)), 1e-6)); }
-// The longest way through any one piece of a cell's air, in cells.
-const float REACH = 1.4;
 // A sun ray is tried only from at most this many fog lengths under the
 // ground, and gets at most this many steps to come out.
 const float SUN_DEPTH = 1.0;
@@ -239,8 +243,7 @@ const int SHAFT_STEPS = 32;
 
 // Per ray: for each level, how far along the ray it is known to stay solid.
 float gSolid[NLEV];
-// Lattice units of margin on "this level is solid for at least this far".
-const float SLACK = 0.05;
+const float SLACK = ${glf(SLACK)};
 
 // Distance to the nearest solid from camera-relative point v. Solid is what
 // is left after every level has carved out its air, so this is the largest
@@ -352,7 +355,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       if (i >= uN) break;
       if (t < gSolid[i]) continue;        // nothing but solid at this level yet
       float cell = float(R) / uSig[i];
-      if (best > REACH * cell) break;     // already going further than this level could take us
+      if (best > LONGEST * cell) break;   // already going further than this level could take us
       if ((foot / cell - 1.0 / LOD_HI) * LOD_K >= 1.0) break; // too small to see even face on: leave it solid
       float slant = seen ? lean(bn, dir) : 1.0;
       float rel = (foot / (slant * cell) - 1.0 / LOD_HI) * LOD_K;
@@ -498,7 +501,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
     march(p + n * foot, uSun, t, pix, 1e30, SUN_STEPS, false, sh, so, ss, sn, st);
     sunlit = so ? 1.0 : 0.0;
   }
-  float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uReach * uScale), 2.0));
+  float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uLampReach * uScale), 2.0));
   vec3 light = (0.15 + 0.85 * ao) * (uSky * uAmbient * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * uFill)
              + vec3(1.0, 0.9, 0.75) * lamp * uLamp
              + uSunCol * uSunK * key * sunlit

@@ -18,6 +18,8 @@
 //   cellAir        the distance alone, in JavaScript (see below)
 //   maxInterior    largest clearance any point in a cell's air can have, as a
 //                  fraction of the cell
+//   longestWay     the longest way through any one convex piece of a cell's
+//                  air, in cells
 //   close          how far (fraction of the cell) air is shrunk to fade a level
 //                  out with distance
 //   openArea       roughly what fraction of a surface is openings
@@ -55,9 +57,10 @@
 //   - a tunnel may run on into the next cell, where that cell's own
 //     description of it must agree
 
-import { hash32, hashCell, hsv, levelSeed } from '../util.js';
+import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR } from '../util.js';
 
 const R = 24; // children per cell edge
+const wrapId = (id) => wrapIdR(id, R);
 const M = 3; // half the wall thickness between two rooms
 const HLO = 12; // ceiling height of a low room; a tall room fills the cell (18)
 const SOLID = 0.5; // share of cells that are left solid, with no room in them
@@ -423,7 +426,7 @@ const built = (id, seed) => h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID;
 
 // dg is the point along the diagonals (see Position.levels). Without it they
 // are worked out from L and f, which is only good far from any such surface.
-function cellAir(L, f, id, seed, wrapId, dg) {
+function cellAir(L, f, id, seed, dg) {
   if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
   else {
     const pairs = [[0, 1], [2, 1], [0, 2]];
@@ -472,6 +475,7 @@ export default {
   glsl,
   cellAir,
   maxInterior: 0.375,
+  longestWay: 1.4,
   close: 0.3,
   openArea: 0.1,
 

@@ -31,6 +31,12 @@ export function hashCell(p, s) {
   return h >>> 0;
 }
 
+// Cell ids repeat with period R^2 (wrapId in shaders.js, the same).
+export function wrapId(id, R) {
+  const P = R * R;
+  return id.map((x) => ((x % P) + P) % P);
+}
+
 // What makes one level's cells differ from another's.
 export function levelSeed(level) {
   return hash32(level ^ 0x5bd1e995);

@@ -2,7 +2,8 @@ import { Position, DIAGONALS } from './position.js';
 import { Renderer } from './renderer.js';
 import { Controls } from './controls.js';
 import halls from './spaces/halls.js';
-import { levelSeed } from './util.js';
+import { levelSeed, wrapId } from './util.js';
+import { SLACK } from './shaders.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot } from './pilot.js';
 
@@ -74,8 +75,6 @@ let sensed = []; // per probed level: clearance that level alone gives us
 // One level's air distance at the point v from the camera, in level-F cells
 // (what levelAir in shaders.js gives), worked out here so that nothing waits
 // on the GPU.
-const P = R * R;
-const wrapId = (id) => id.map((x) => ((x % P) + P) % P);
 function airAt(rec, v = [0, 0, 0]) {
   const L = [0, 0, 0], f = [0, 0, 0], id = [0, 0, 0], cell = [0, 0, 0];
   for (let a = 0; a < 3; a++) {
@@ -99,7 +98,7 @@ function airAt(rec, v = [0, 0, 0]) {
     dg.Lp[p] = rec.Lp[p] + rp - (cell[a] + cell[b]) * R;
     dg.Lm[p] = rec.Lm[p] + rm - (cell[a] - cell[b]) * R;
   });
-  return space.cellAir(L, f, wrapId(id), levelSeed(rec.level), wrapId, dg);
+  return space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg);
 }
 
 // How far we are above the ground: the one plane over which there is only
@@ -273,7 +272,7 @@ function step(dt, wish, nudge = [0, 0, 0]) {
 // The way we came, as points relative to where we are now, nearest first.
 // Walking the trail backwards from here, each stretch is as long as it can be
 // without straying visibly from the path: short near us, longer with distance.
-function thread(reach) {
+function thread(range) {
   const pts = [];
   const p = [0, 0, 0];
   let anchor = null;
@@ -283,7 +282,7 @@ function thread(reach) {
     const k = Math.pow(R, pos.F - m.F);
     for (let a = 0; a < 3; a++) p[a] -= m.delta[a] * k;
     const far = Math.hypot(...p);
-    if (!(far < reach)) break;
+    if (!(far < range)) break;
     if (!anchor) {
       // Begin a little way off, not in our own eye.
       if (i > 0 && far < 0.1 * scale) continue;
@@ -354,7 +353,7 @@ function viewNow() {
   // sight is solid as far as this frame is concerned.
   const all = pos.levels(pos.F - UP - FAR, pos.F + DOWN);
   let recs = all.filter((r) => r.level >= pos.F - UP);
-  for (const r of recs) r.near = Math.max(0, (airAt(r) - 0.05) / r.sig);
+  for (const r of recs) r.near = Math.max(0, (airAt(r) - SLACK) / r.sig);
   recs = recs.filter((r) => r.near < maxT);
   if (recs.length > N_VIEW) recs = mostVisible(recs);
   const { fwd, right, up } = controls.basis();

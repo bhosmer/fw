@@ -6,7 +6,7 @@
 //   sun      direct sunlight, only where a ray toward the sun reaches the sky
 //   sunCol   the colour of sunlight
 //   ambient  how much light comes from the sky (the haze) all round
-//   lamp     a soft light carried with us, falling off reach clearances out
+//   lamp     a soft light carried with us, falling off lampReach clearances out
 //   glow     light every surface gives off of itself
 //   mirror   how much floors (and the ground) reflect, at a grazing angle
 //   fog      visibility, relative to the space's own
@@ -24,7 +24,7 @@ import { hash32, hsv } from './util.js';
 
 const DEFAULTS = {
   fill: 0.25, sun: 1.0, sunCol: [1.0, 0.88, 0.7], sunDir: [0.4657, 0.8279, 0.3105],
-  ambient: 1, lamp: 0.35, reach: 8, glow: 0, mirror: 0, fog: 1,
+  ambient: 1, lamp: 0.35, lampReach: 8, glow: 0, mirror: 0, fog: 1,
   disc: 1, clouds: 1, stars: 0, shafts: 0, inlay: 0,
 };
 
@@ -98,7 +98,7 @@ export const SCHEMES = [
     sunDir: [-0.5, 0.75, 0.45],
     ambient: 0.12,
     lamp: 1.2,
-    reach: 2.5,
+    lampReach: 2.5,
     fog: 0.7,
     sky: [0.035, 0.045, 0.1],
     zenith: [0.01, 0.015, 0.05],
