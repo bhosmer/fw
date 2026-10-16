@@ -196,6 +196,35 @@ check('the tour keeps to the air', async () => {
   assert(log.length === 160 && levels.size >= 2 && aimed >= 20, `the tour looked ${log.length} times, at ${levels.size} levels, aiming ${aimed} times`);
 });
 
+// Diving, the tour goes into openings it can see near its way, rather than
+// on at a wall until one opens right in front of it (which passes through
+// many levels in no time, and shows little of any).
+check('diving, the tour takes openings near its way', async () => {
+  let surface = 0, nearOpening = 0, looks = 0;
+  for (const place of ['court', 'start']) {
+    await load(place);
+    const r = await page.eval(`(async () => {
+      const p = fw.pilot;
+      p.start(fw.pos.F);
+      p.choose(fw.pos.F);
+      p.choose(fw.pos.F); // (diving, held to)
+      p.diagnose = true;
+      let looks = 0, surface = 0, near = 0;
+      await fw.tour(60, () => {
+        looks++;
+        if (p.kind === 'surface') (surface++, p.saw?.holeNear >= 1.3 && near++);
+      });
+      return { looks, surface, near };
+    })()`);
+    looks += r.looks;
+    surface += r.surface;
+    nearOpening += r.near;
+  }
+  // (Before it did, a third of its looks at a wall had an opening near.)
+  assert(nearOpening <= 0.05 * surface + 3, `of ${surface} looks heading at a surface, ${nearOpening} had an opening near`);
+  assert(surface < 0.3 * looks, `${surface} of ${looks} looks were heading at a surface`);
+});
+
 check('rewinding retraces the way we came', async () => {
   await load('court');
   const where = () => page.eval('JSON.stringify({ F: fw.pos.F, frac: fw.pos.frac, d: [...fw.pos.digits].sort() })');

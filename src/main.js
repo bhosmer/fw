@@ -78,12 +78,21 @@ function draw() {
   return recs.length;
 }
 
+// Where we are, for the tour: our level, clearance, height above the ground
+// and the size of the space we are in (level-F cells).
+const whereNow = () => ({
+  F: pos.F,
+  scale: flight.scale,
+  sky: flight.sky,
+  room: flight.room === null ? Infinity : Math.pow(R, pos.F - flight.room),
+});
+
 // The tour's eyes: a sparse picture of distances, a few times a second, read
 // back without holding anything up.
 let lookAt = null, lookedAt = 0;
 function look(now) {
   const got = renderer.seen();
-  if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, { F: pos.F, scale: flight.scale, sky: flight.sky });
+  if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, whereNow());
   if (renderer.lookSync || now - lookedAt < 250) return;
   const stride = Math.max(4, Math.round(canvas.width / 100));
   const { recs, view } = viewNow();
@@ -321,7 +330,7 @@ window.fw = {
           });
           got = renderer.seen();
         }
-        if (got) pilot.see(got, controls.basis(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, { F: pos.F, scale: flight.scale, sky: flight.sky });
+        if (got) pilot.see(got, controls.basis(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
         log.push({ t: i / 60, F: pos.F, mood: pilot.mood, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }

@@ -56,7 +56,7 @@ export class Flight {
     this.fog = 0; // smoothed visibility, level-F cells
     this.fogTarget = 0;
     this.opened = 0; // what ahead() last found
-    this.room = null; // the finest level whose air we are in, however far up
+    this.room = null; // the level whose air gives us our clearance, however far up
     // Everywhere we have been, as the moves that got us there, so that it can
     // be flown again in either direction. A move is a displacement in cells
     // of the level it was made at, which stays meaningful however far the
@@ -173,8 +173,10 @@ export class Flight {
         this.here.unshift(...far);
         this.sensed.unshift(...far.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig })));
       }
-      const air = this.sensed.filter((s) => s.air < 0);
-      if (air.length) this.room = air[air.length - 1].level;
+      // (Finer levels' air can be here too, but it is the most room any
+      // level gives us that is the space we are in.)
+      let most = 0;
+      for (const s of this.sensed) if (-s.air / s.sig > most) (most = -s.air / s.sig), (this.room = s.level);
       this.clearance = Math.max(this.sky, ...this.sensed.map((s) => -s.air / s.sig));
       let k = 1;
       if (this.clearance > 0 && this.clearance < REFINE_BELOW / R) {
@@ -201,7 +203,8 @@ export class Flight {
   }
 
   // The finest level coarser than lo (and not more than SEARCH coarser) whose
-  // air we are in, if any, as a list.
+  // air we are in, if any, as a list. (Somewhere none nearer has air, that
+  // is the room we are in.)
   search(lo) {
     // (levels() works out from F, so it is asked for everything up to there.)
     const recs = this.pos.levels(lo - SEARCH, this.pos.F);

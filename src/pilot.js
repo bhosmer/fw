@@ -20,6 +20,7 @@ const TURN = 0.45; // most yaw, radians per second
 const TILT = 0.35; // most pitch, radians per second
 const PITCH_MAX = 1.2;
 const KEEP = 0.8; // how much better somewhere else has to look to change course
+const TAKE = 0.2; // ...when that is an opening, and we are only heading at a surface
 const BAND = [-3, 5]; // levels coarser and finer than the start the tour keeps to
 // Closer than this to a surface, for the space in view, we keep away from it
 // (skimming a surface is slow, and shows little).
@@ -79,9 +80,10 @@ export class Pilot {
 
   // A new look (from Renderer.seen): a grid of distances in level-lookF cells,
   // -1 for nothing, taken with camera basis b and half-height tan, every
-  // stride-th pixel of a canvas res pixels in size. F, scale (our clearance)
-  // and sky (how high we are above the ground) are as of now.
-  see(look, b, lookF, tan, res, stride, { F, scale, sky }) {
+  // stride-th pixel of a canvas res pixels in size. F, scale (our clearance),
+  // sky (how high we are above the ground) and room (how big the space we
+  // are in is, if we are in one) are as of now, in level-F cells.
+  see(look, b, lookF, tan, res, stride, { F, scale, sky, room = Infinity }) {
     const { w, h, dist } = look;
     const k = Math.pow(this.R, F - lookF);
     // Each grid point's direction, worked out once.
@@ -130,8 +132,8 @@ export class Pilot {
     const diving = this.held ? this.held === 'dive'
       : depth > BAND[1] ? false : depth < BAND[0] ? true : this.mood === 'dive';
 
-    // How good going toward grid point (i, j) looks, and how far along it to
-    // aim.
+    // How good going toward grid point (i, j) looks, how far along it to
+    // aim, and what is there (for looking into what the tour does).
     const fwd = b.fwd;
     const score = (i, j, jitter) => {
       const m0 = j * w + i;
@@ -144,15 +146,18 @@ export class Pilot {
       // Off into an empty sky is no tour.
       const away = dist[m0] < 0 && dy > 0.15 ? 2 : 0;
       const base = -1.2 * turn - pitch - away + jitter;
-      let s = -Infinity, aim = 0;
+      let s = -Infinity, aim = 0, kind = '';
       if (!diving) {
         // Drifting: out into open space.
         s = base + Math.log(d / scale);
         aim = 0.6 * d;
+        kind = 'open';
       } else if (dist[m0] >= 0) {
-        // Diving: at a surface (coming close to one, finer openings show).
-        s = base + 0.5;
+        // Diving: at a surface, failing anything better (coming close to
+        // one, finer openings show; but one already in sight is better).
+        s = base - 0.5;
         aim = 0.85 * d;
+        kind = 'surface';
       }
       // Out over the ground, a way down into it is an opening too (seen
       // nearly edge on, a pit is not much deeper than the ground beyond it).
@@ -166,33 +171,57 @@ export class Pilot {
           if (t > s) {
             s = t;
             aim = down + 0.5 * (d - down);
+            kind = 'pit';
           }
         }
       }
       for (let r = 2; r <= 8; r *= 2) {
         const m = ring(i, j, r);
         if (m < 0 || d < 1.3 * m) continue;
-        // How clearly it is an opening, and how big the space beyond it is
-        // for us: diving looks for small spaces, drifting for big ones.
+        // How clearly it is an opening, and how big the space beyond it is:
+        // diving looks for spaces smaller than the one we are in, drifting
+        // for big ones. (Against the space we are in, not how close we are
+        // to its walls: close to a wall, every opening in it is big for us.)
         const hole = Math.min(2, Math.log(d / m));
         const beyond = Math.log(Math.max(d - m, 1e-30) / scale);
-        const t = base + (diving ? 1 + 1.5 * hole - 0.9 * Math.max(beyond, 0) - 0.3 * Math.log(m / scale)
+        const bigger = Math.log(Math.max(d - m, 1e-30) / room);
+        const t = base + (diving ? 1 + 1.5 * hole - 0.9 * Math.max(bigger, 0) - 0.3 * Math.log(m / scale)
                                  : 0.7 * hole + 0.4 * beyond);
         if (t > s) {
           s = t;
           // Aim past the mouth, halfway to what lies beyond it.
           aim = m + 0.5 * (d - m);
+          kind = 'hole';
         }
       }
-      return { s, aim };
+      return { s, aim, kind, turn };
+    };
+
+    // The clearest opening within a small turn of the way we face, however
+    // it scores: how much further off it is than the surface round it.
+    const h0 = h;
+    const holeNear = () => {
+      let clearest = 0;
+      for (let j = 0; j < h0; j++) for (let i = 0; i < w; i++) {
+        const m0 = j * w + i;
+        const d = D[m0];
+        if (d < 1.5 * scale || dist[m0] < 0) continue;
+        const c = dirs[m0 * 3] * fwd[0] + dirs[m0 * 3 + 1] * fwd[1] + dirs[m0 * 3 + 2] * fwd[2];
+        if (c < Math.cos(0.35)) continue;
+        for (let r = 2; r <= 8; r *= 2) {
+          const m = ring(i, j, r);
+          if (m > 0 && d >= 1.3 * m) clearest = Math.max(clearest, d / m);
+        }
+      }
+      return clearest;
     };
 
     let best = null;
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-      const { s, aim } = score(i, j, 0.15 * Math.random());
+      const { s, aim, kind, turn } = score(i, j, 0.15 * Math.random());
       if (s > -Infinity && (!best || s > best.s)) {
         const o = (j * w + i) * 3;
-        best = { s, go: [dirs[o] * aim, dirs[o + 1] * aim, dirs[o + 2] * aim] };
+        best = { s, kind, turn, go: [dirs[o] * aim, dirs[o + 1] * aim, dirs[o + 2] * aim] };
       }
     }
 
@@ -216,10 +245,15 @@ export class Pilot {
       }
     }
 
-    if (current !== null && !(best && best.s > current + KEEP)) return;
+    // (For looking into what the tour does, when asked to: what it sees, and
+    // how clear an opening there is near the way it faces.)
+    if (this.diagnose) this.saw = { best, current, diving, holeNear: holeNear() };
+    const keep = this.kind === 'surface' && best && best.kind !== 'surface' ? TAKE : KEEP;
+    if (current !== null && !(best && best.s > current + keep)) return;
     if (best && best.s > -1.5) {
       this.target = best.go;
       this.chose = best; // (for looking into what it does)
+      this.kind = best.kind;
       this.F = F;
       this.picks = (this.picks || 0) + 1;
       return;
@@ -229,6 +263,7 @@ export class Pilot {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) (i < w / 2 ? (left += Math.log(at(i, j))) : (right += Math.log(at(i, j))));
     const side = left > right ? -1 : 1;
     this.target = [0, 1, 2].map((a) => (b.fwd[a] * 0.5 + b.right[a] * side) * 4 * scale);
+    this.kind = 'aside';
     this.F = F;
   }
 
