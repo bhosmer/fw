@@ -15,8 +15,14 @@ export const DOWN = 3;
 // their air. We can be: flying at a surface that never happens to open, we
 // come closer to it than any drawn level reaches, and it is still that
 // level's room we are in. Such a level is not drawn (the numbers it would
-// take are beyond the GPU's arithmetic); its surface is, as a plane.
+// take are beyond the GPU's arithmetic); its surface is, as a plane. And
+// held at such a surface, the room can end up further up than FAR: then it
+// is the room we know we are in (see room) that is still asked.
 const FAR = 60;
+// How far up to look for a room, when we are somewhere with none in sight.
+// (Much further, and how big a level is in level-F cells is too small a
+// number for a double.)
+const SEARCH = 200;
 
 // F follows our clearance: it is kept above REFINE_BELOW level-(F + 1)
 // cells and below COARSEN_ABOVE level-F cells.
@@ -50,6 +56,7 @@ export class Flight {
     this.fog = 0; // smoothed visibility, level-F cells
     this.fogTarget = 0;
     this.opened = 0; // what ahead() last found
+    this.room = null; // the finest level whose air we are in, however far up
     // Everywhere we have been, as the moves that got us there, so that it can
     // be flown again in either direction. A move is a displacement in cells
     // of the level it was made at, which stays meaningful however far the
@@ -144,13 +151,30 @@ export class Flight {
     return l > 0 ? g.map((x) => x / l) : [0, 0, 0];
   }
 
+  // The levels around us, from the coarsest that matters: FAR above those we
+  // draw, or the room we are in if that is further.
+  around() {
+    const { pos } = this;
+    return pos.levels(Math.min(pos.F - UP - FAR, this.room ?? Infinity), pos.F + DOWN);
+  }
+
   // Find our clearance, and move the working level to suit it.
   sense() {
     const { pos, R } = this;
     for (let i = 0; i < 8; i++) {
-      this.here = pos.levels(pos.F - UP - FAR, pos.F + DOWN).filter((r) => r.level >= pos.F - UP || this.airAt(r) < 0);
+      const lo = pos.F - UP - FAR;
+      this.here = this.around().filter((r) => r.level >= pos.F - UP || ((r.level >= lo || r.level === this.room) && this.airAt(r) < 0));
       this.sensed = this.here.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig }));
       this.sky = this.skyHeight();
+      // Somewhere with no air in sight at all (a place we were sent to):
+      // look further up for the room we are in.
+      if (!(this.sky > 0) && !this.sensed.some((s) => s.air < 0)) {
+        const far = this.search(lo);
+        this.here.unshift(...far);
+        this.sensed.unshift(...far.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig })));
+      }
+      const air = this.sensed.filter((s) => s.air < 0);
+      if (air.length) this.room = air[air.length - 1].level;
       this.clearance = Math.max(this.sky, ...this.sensed.map((s) => -s.air / s.sig));
       let k = 1;
       if (this.clearance > 0 && this.clearance < REFINE_BELOW / R) {
@@ -176,11 +200,21 @@ export class Flight {
     if (see > 0) this.fogTarget = see;
   }
 
+  // The finest level coarser than lo (and not more than SEARCH coarser) whose
+  // air we are in, if any, as a list.
+  search(lo) {
+    // (levels() works out from F, so it is asked for everything up to there.)
+    const recs = this.pos.levels(lo - SEARCH, this.pos.F);
+    for (let i = recs.length - 1; i >= 0; i--) if (recs[i].level < lo && this.airAt(recs[i]) < 0) return [recs[i]];
+    return [];
+  }
+
   // Start out from wherever pos now is: no trail, nothing still settling.
   // fresh: we came by nothing in particular, so go on along the row of
   // rooms until there is space to stand in.
   begin(fresh = false) {
     this.trail.length = this.travelled = 0;
+    this.room = null;
     this.sense();
     for (let i = 0; fresh && i < 40 && this.clearance < 0.08; i++) {
       this.pos.move([0, 0, 1]);
@@ -306,7 +340,7 @@ export class Flight {
   // is concerned.
   visible(maxT, n) {
     const { pos } = this;
-    const all = pos.levels(pos.F - UP - FAR, pos.F + DOWN);
+    const all = this.around();
     let recs = all.filter((r) => r.level >= pos.F - UP);
     for (const r of recs) r.near = Math.max(0, (this.airAt(r) - SLACK) / r.sig);
     recs = recs.filter((r) => r.near < maxT);

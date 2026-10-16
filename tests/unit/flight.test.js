@@ -100,13 +100,29 @@ test('the thread is the way we came, within reach', () => {
 });
 
 // Flying at a surface that never opens takes us ever finer, and the space we
-// are really in is ever further up; sense() looks only so far (UP + FAR
-// levels), and past that we are taken to be in solid.
-test('held at a surface for ever, we still know where the air is', { todo: 'sense() looks only UP + FAR levels up' }, () => {
+// are really in ever further up: further than sense() looks as a rule.
+test('held at a surface for ever, we still know where the air is', () => {
   const flight = new Flight(halls, controls());
   flight.begin(true);
+  let deepest = 0;
   wander(flight, 1500, (f) => {
     f.sense();
     assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}`);
+    deepest = Math.max(deepest, f.pos.F - f.room);
   }, 3, 0.1, 8);
+  // (Past where it used to be lost: UP + FAR = 72 levels up.)
+  assert.ok(deepest > 72, `the room was never more than ${deepest} levels up`);
+});
+
+test('sent somewhere deep, we find the room we are in', () => {
+  const flight = new Flight(halls, controls());
+  flight.begin(true);
+  wander(flight, 1261, null, 3, 0.1, 8); // (to where the room is 73 levels up)
+  const { F, frac } = flight.pos;
+  const digits = new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()]));
+  // (As a link would: nothing known but where.)
+  const there = new Flight(halls, controls());
+  Object.assign(there.pos, { F, frac: frac.slice(), digits });
+  there.begin();
+  assert.ok(there.clearance > 0 && there.room < F - 72, `clearance ${there.clearance}, room ${there.room} at ${F}`);
 });
