@@ -26,7 +26,8 @@ const SMALLER = -1.5; // log of how much smaller than ours a space has to be to 
 const OPENING = Math.log(1.3); // how much further off than the surface round it an opening is
 const DEEP = 2; // ...or how much deeper than it looks wide
 const SLANT = 0.5; // diving, how much an opening seen at a slant counts against it
-const SPANS = 15; // going in, how many ways in are looked into for a way out elsewhere
+const SPANS = 15;
+const HEADING = 6; // going in, how much likelier a way in the way the dive heads // going in, how many ways in are looked into for a way out elsewhere
 const PLAN_EVERY = 1; // seconds between tries at planning a way, when there is none
 const STALLED = 8; // seconds getting no nearer the next point before giving up the way
 const NEAREST = 2; // clearances: a target closer than this is reached
@@ -71,6 +72,7 @@ export class Pilot {
     this.goal = null;
     this.linger = 0;
     this.going = null; // the room the way planned goes to (see Planner.key)
+    this.heading = null; // which way a dive heads (see decide)
     this.last = null; // the room we were last in
     this.passed = new Set(); // the rooms come into since the last dive began
   }
@@ -104,7 +106,21 @@ export class Pilot {
         else if (--this.linger === 0) (this.phase = 'surface'), (this.goal = this.top - int(0, 2));
       } else if (this.phase === 'surface' && k <= this.goal) {
         (this.phase = 'dive'), (this.goal = k + int(3, 6)), (this.top = k), (this.passed = new Set([name]));
+        this.heading = null;
       }
+    }
+    // Which way a dive heads: toward a room beside ours that we have not
+    // been in (into the wall between, and on into the walls of the rooms in
+    // it the same way; so that coming back up, it is that room's side we
+    // come out on), or failing one, any way along the floor.
+    if (this.phase === 'dive' && !this.heading) {
+      const sides = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
+      const beside = sides.filter((e) => {
+        const d = at.c.map((x, a) => x + e[a]);
+        return P.room(k, d) && !this.passed.has(P.key(k, d));
+      });
+      const from = beside.length ? beside : sides;
+      this.heading = from[Math.floor(rnd() * from.length)];
     }
     this.way = this.phase === 'dive' ? 'in' : 'out';
     let ways;
@@ -124,7 +140,8 @@ export class Pilot {
     // (Going in, ways into a wall with a room we have not been in behind it,
     // likelier still: through it, coming back up, is another room.)
     const behind = (w) => w.face && w.to?.k === k + 1 && !w.down && P.room(k, at.c.map((x, a) => x + w.face[a])) && !this.passed.has(P.key(k, at.c.map((x, a) => x + w.face[a])));
-    const weight = new Map(ways.map((w) => [w, (1.2 + dot(unit(w.at), fwd)) * Math.exp(-far(w) / (3 * near)) * (w.down ? 0.4 : 1) * (0.3 + rnd())]));
+    const heading = (w) => this.phase === 'dive' && w.face && this.heading && w.face.every((v, a) => v === this.heading[a]);
+    const weight = new Map(ways.map((w) => [w, (1.2 + dot(unit(w.at), fwd)) * Math.exp(-far(w) / (3 * near)) * (w.down ? 0.4 : 1) * (heading(w) ? HEADING : 1) * (0.3 + rnd())]));
     ways.sort((a, b) => weight.get(b) - weight.get(a));
     // Going in, of the likeliest, the first whose rooms reach a way up into
     // a room other than this one (and not one passed): coming back up, that
@@ -138,6 +155,7 @@ export class Pilot {
     // (The likeliest that can be got to from here.)
     let plan = null, way = null;
     for (const w of ways.slice(0, 6)) {
+      if (P.late() && plan === null && w !== ways[0]) break;
       plan = P.points(w, at);
       if (plan) {
         way = w;

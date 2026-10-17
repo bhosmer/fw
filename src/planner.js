@@ -25,6 +25,7 @@ const ACROSS = 60; // most rooms of one level looked through, from one
 const TRIES = 12; // most ways into the walls tried, looking for a way through them
 const UP = 4; // most levels up looked, for the air a cell is in
 const BUDGET = 20; // milliseconds a plan may take
+const LONGEST = 30; // most points in a way through a wall worth going
 
 export class Planner {
   constructor(flight) {
@@ -129,13 +130,21 @@ export class Planner {
   }
 
   // Is the way straight from a to b (offsets from us, level-F cells) in air?
+  // Stepped along by the clearance at each point (which no surface is
+  // nearer than), so that a surface however near is found; not if it would
+  // take too many steps (grazing one).
   clear(a, b) {
-    const f = this.flight;
-    for (let i = 1; i <= 16; i++) {
-      const v = a.map((x, k) => x + ((b[k] - x) * i) / 16);
-      if (!(Math.max(f.sky + v[1], ...f.here.map((r) => -f.airAt(r, v) / r.sig)) > 0)) return false;
+    const f = this.flight, len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const at = (t) => a.map((x, k) => x + ((b[k] - x) * t) / len);
+    const room = (v) => Math.max(f.sky + v[1], ...f.here.map((r) => -f.airAt(r, v) / r.sig));
+    let t = 0;
+    for (let i = 0; i < 48 && !this.late(); i++) {
+      const c = room(at(t));
+      if (!(c > 0)) return false;
+      t += c;
+      if (t >= len) return room(b) > 0;
     }
-    return true;
+    return false;
   }
 
   // The middle of the room r at c, in level-k units.
@@ -280,8 +289,10 @@ export class Planner {
     const fresh = (air) => air === 'sky' || !air.c || !been.has(this.key(air.k, air.c));
     const near = this.searchUp(k, c, rnd, fresh);
     if (near.steps) return { points: this.stepPoints(near.steps), to: near.steps.at(-1).up };
-    const through = this.throughWall(k, c, near.seen, been, rnd);
-    if (through) return through;
+    // (A way through a wall is long, and slow to go: as often as not, and
+    // if it is very long, up the way we came instead.)
+    const through = rnd() < 0.5 && this.throughWall(k, c, near.seen, been, rnd);
+    if (through && through.points.length <= LONGEST) return through;
     const any = this.searchUp(k, c, rnd, () => true);
     return any.steps ? { points: this.stepPoints(any.steps), to: any.steps.at(-1).up } : null;
   }
