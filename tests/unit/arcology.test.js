@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import arcology, { CITY, ROW_ID } from '../../src/spaces/arcology.js';
+import arcology, { CITY, ROW_ID, ROWS } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 
@@ -23,7 +23,7 @@ test('the city never changes faster than the point moves', () => {
   const rnd = rand(7);
   let worst = 0;
   for (let n = 0; n < 30000; n++) {
-    const id = anywhere(rnd, ROW_ID + [-1, 0, 0, 0, 1][n % 5]);
+    const id = anywhere(rnd, ROW_ID + [-1, 0, 0, 1, 2][n % 5]);
     const q = [0, 1, 2].map(() => 0.6 + rnd() * (R - 1.2));
     const step = 10 ** (rnd() * 3 - 3);
     const dir = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
@@ -59,9 +59,9 @@ test('the city and the halls under it agree where they meet', () => {
 test('over the city, a cell says no more than how far down it is', () => {
   const rnd = rand(9);
   for (let n = 0; n < 2000; n++) {
-    const id = anywhere(rnd, ROW_ID + 1 + Math.floor(rnd() * 3));
+    const id = anywhere(rnd, ROW_ID + ROWS + Math.floor(rnd() * 3));
     const q = [0, 1, 2].map(() => 0.6 + rnd() * (R - 1.2));
-    const down = q[1] + R * (id[1] - ROW_ID - 1);
+    const down = q[1] + R * (id[1] - ROW_ID - ROWS);
     assert.ok(Math.abs(air(q, id) - down) < 1e-9);
   }
 });
