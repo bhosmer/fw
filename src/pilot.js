@@ -24,6 +24,7 @@ const OUTWARD = 0.6; // how much more, going out, a way counts for going the way
 const SMALLER = -1.5; // log of how much smaller than ours a space has to be to be one going out passes by
 const OPENING = Math.log(1.3); // how much further off than the surface round it an opening is
 const DEEP = 2; // ...or how much deeper than it looks wide
+const SLANT = 0.5; // diving, how much an opening seen at a slant counts against it
 const NEAREST = 2; // clearances: a target closer than this is reached
 // Closer than this to a surface, for the space in view, we keep away from it
 // (skimming a surface is slow, and shows little).
@@ -48,6 +49,7 @@ export class Pilot {
     this.F = F; // the level target is measured in
     this.rate = [0, 0]; // yaw and pitch rates, eased
     this.spread = 0; // how far off things in view typically are, level-F cells
+    this.side = 0; // which way we are turning to look about (-1 left, 1 right), or 0
     this.way ??= 'in';
   }
 
@@ -206,12 +208,21 @@ export class Pilot {
         const m = ring(i, j, r);
         const hole = opening(d, m, r);
         if (!hole) continue;
+        // (Going in never goes out: not into the sky, nor into a space
+        // plainly bigger than ours, such as the one we have just come from.)
+        if (diving && (dist[m0] < 0 || bigger(d - m) > 0.7)) continue;
+        // How steeply the wall round it is seen: an opening seen at a slant
+        // can only be come at along the wall, which flight slides along
+        // without turning in. (The tangent of the angle off face on, from
+        // how the distance to the wall changes across the opening.)
+        const across = 2 * r * step * m;
+        const slant = Math.hypot(at(i + r, j) - at(i - r, j), at(i, j + r) - at(i, j - r)) / across;
         // How clearly it is an opening, and how big the space beyond it is:
         // going in looks for spaces smaller than the one we are in, going
         // out for bigger ones. (Against the space we are in, not how close
         // we are to its walls: close to a wall, every opening in it is big
         // for us.)
-        const t = base + (diving ? 1 + 1.5 * hole - 0.9 * Math.max(bigger(d - m), 0) - 0.3 * Math.log(m / scale)
+        const t = base + (diving ? 1 + 1.5 * hole - 0.9 * Math.max(bigger(d - m), 0) - 0.3 * Math.log(m / scale) - SLANT * Math.log1p(slant * slant)
                                  : toward * Math.log(d / scale) + 0.5 * hole + 0.8 * Math.min(1.5, bigger(d - m)));
         if (t > s) {
           s = t;
@@ -255,7 +266,10 @@ export class Pilot {
       }
     }
 
-    // How the current target looks now, if it is still in view and clear.
+    // How the current target looks now, if it is still in view and clear. An
+    // opening we are making for counts for at least what it did when we
+    // chose it: close up, it can fill more of the view than is looked at to
+    // see an opening, and no longer be seen as one.
     let current = null;
     if (this.target) {
       const len = Math.hypot(...this.target);
@@ -270,7 +284,8 @@ export class Pilot {
             clear = Math.max(clear, at(i + di, j + dj));
             s = Math.max(s, score(i + di, j + dj, 0.15).s);
           }
-          if (clear > 0.8 * len && s > -Infinity) current = s;
+          const kept = this.kind === 'hole' || this.kind === 'pit' ? this.chose.s : -Infinity;
+          if (clear > 0.8 * len && Math.max(s, kept) > -Infinity) current = Math.max(s, kept);
         }
       }
     }
@@ -281,6 +296,7 @@ export class Pilot {
     const keep = this.kind === 'surface' && best && best.kind !== 'surface' ? TAKE : KEEP;
     if (current !== null && !(best && best.s > current + keep)) return;
     if (best && best.s > -1.5) {
+      this.side = 0;
       this.target = best.go;
       this.chose = best; // (for looking into what it does)
       this.kind = best.kind;
@@ -288,10 +304,18 @@ export class Pilot {
       this.picks = (this.picks || 0) + 1;
       return;
     }
-    // Nothing worth going to in sight: turn toward the more open side.
-    let left = 0, right = 0;
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) (i < w / 2 ? (left += Math.log(at(i, j))) : (right += Math.log(at(i, j))));
-    const side = left > right ? -1 : 1;
+    // Nothing worth going to in sight: turn and look about, toward the way
+    // out if we are going out and it is to one side, or else the more open
+    // side; and once turning, keep on the same way until there is somewhere
+    // to go. (Choosing afresh each look, in a corner, where the two sides
+    // are much alike, it turned back and forth and never got out.)
+    if (!this.side) {
+      const across = !diving && out ? dot(out.dir, b.right) : 0;
+      let left = 0, right = 0;
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) (i < w / 2 ? (left += Math.log(at(i, j))) : (right += Math.log(at(i, j))));
+      this.side = Math.abs(across) > 0.2 ? Math.sign(across) : left > right ? -1 : 1;
+    }
+    const side = this.side;
     this.target = [0, 1, 2].map((a) => (b.fwd[a] * 0.5 + b.right[a] * side) * 4 * scale);
     this.kind = 'aside';
     this.F = F;
@@ -311,7 +335,9 @@ export class Pilot {
     let err = 0;
     if (this.target) {
       let dir = unit(this.target);
-      const near = this.spread > 0 ? 1 - scale / (ROOM * this.spread) : 0;
+      // (But not off the mouth of an opening we are going into.)
+      const into = this.kind === 'hole' || this.kind === 'pit';
+      const near = this.spread > 0 && !into ? 1 - scale / (ROOM * this.spread) : 0;
       if (near > 0) {
         const n = away();
         dir = unit(dir.map((x, a) => x + n[a] * near * 0.8));

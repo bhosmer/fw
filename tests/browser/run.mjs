@@ -29,6 +29,10 @@ const PLACES = {
   ground: at({ F: 0, frac: [0.08232830005124452, 0.18098790051953037, 0.6230254287625774], digits: [[-1, [21, 18, 8]], [0, [11, 18, 13]]], yaw: 7.824096801122629, pitch: 0.008087695913573402 }),
   // Wherever a first visit starts.
   start: '',
+  // In a small room, looking through a doorway into a great hall on the left.
+  doorway: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6NSwiZnJhYyI6WzAuMTM4NDEyMzMxMzYzNzIzOCwwLjIxNDk5MDAyMjQwMTc0MTk4LDAuMTA2Nzk2NzA2MTM0MDM5MjRdLCJkaWdpdHMiOltbLTEsWzcsMTgsMTZdXSxbMCxbMTYsMTcsNV1dLFsxLFsxNSw2LDIxXV0sWzIsWzIwLDcsMl1dLFszLFsyMSw3LDEzXV0sWzQsWzAsMTAsMF1dLFs1LFswLDE2LDBdXV0sInlhdyI6MTMuOTYyNTg5NzIyMjkyMzM2LCJwaXRjaCI6LTAuMzM0NzMzNzg5OTMwOTczMTR9',
+  // Close to a corner where two walls meet, facing into it.
+  corner: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6MiwiZnJhYyI6WzAuNzMyOTI0NDcxMDI0NjE1NiwwLjIyODE0MzU3NzQxNjMwOTgzLDAuNzM0NDE2NTc4OTI4MTc5Nl0sImRpZ2l0cyI6W1stMSxbNywxOCwxNl1dLFswLFsxNiwxNyw1XV0sWzEsWzE1LDYsMjFdXSxbMixbMjEsNywyXV1dLCJ5YXciOjE0Ljk2OTQyMzUwNTYxNDc1MywicGl0Y2giOjAuMDAwMTE3NTk3OTM4MDI1Njk2NzZ9',
 };
 
 // Run before the app's own code on every load: the frame loop never runs (so
@@ -263,6 +267,32 @@ check('going out, the tour comes out', async () => {
   })()`);
   assert(r.deepest > 0 && r.outermost < r.deepest, `dived to a room of level ${r.deepest}, came out only to ${r.outermost}`);
   assert(r.pressed < 0.2 * r.looks, `${r.pressed} of ${r.looks} looks were pressed against a wall`);
+});
+
+// Boxed into a corner, going out, the tour turns one way until it finds
+// somewhere to go. (Choosing which way afresh each look, it turned back
+// and forth, the two sides being much alike.)
+check('going out, the tour turns out of a corner', async () => {
+  await load('corner');
+  const found = await page.eval(`(async () => {
+    const p = fw.pilot;
+    p.start(fw.pos.F);
+    p.way = 'out';
+    let at = null;
+    await fw.tour(10, (t) => { if (at === null && p.target && p.kind !== 'aside') at = t; });
+    return at;
+  })()`);
+  assert(found !== null, 'it found nowhere to go in ten seconds');
+});
+
+// A great hall seen through a doorway from a small room is seen as far into
+// as from inside it, not lost in the small room's haze.
+check('a great hall is seen through a doorway', async () => {
+  await load('doorway');
+  const spread = await page.eval(`(() => { const w = 160, h = 100, p = __snap(w, h); let lo = 765, hi = 0;
+    for (let y = 0; y < 0.3 * h; y++) for (let x = 0; x < 0.4 * w; x++) { const i = (y * w + x) * 4, v = p[i] + p[i + 1] + p[i + 2]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return hi - lo; })()`);
+  assert(spread > 120, `the upper left of the view is nearly flat (spread ${spread}): lost in the haze`);
 });
 
 check('rewinding retraces the way we came', async () => {
