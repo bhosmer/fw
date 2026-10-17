@@ -399,6 +399,8 @@ const arcology = {
   skyPlane(j) {
     return j === CITY + 1 ? ROWS * R : j > CITY + 1 ? 0 : arcology.ancestorDigit(j)[1];
   },
+  // Finer than the city, it is halls, whose ways the tour can plan.
+  planned: (level) => level > CITY,
   // Sunlight comes down into it as far as the plaza (in level-0 cells).
   sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
 };

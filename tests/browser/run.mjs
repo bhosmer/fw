@@ -217,67 +217,37 @@ check('the tour keeps to the air', async () => {
   assert(log.length === 160 && levels.size >= 2 && aimed >= 20, `the tour looked ${log.length} times, at ${levels.size} levels, aiming ${aimed} times`);
 });
 
-// Diving, the tour goes into openings it can see near its way, rather than
-// on at a wall until one opens right in front of it (which passes through
-// many levels in no time, and shows little of any).
-check('diving, the tour takes openings near its way', async () => {
-  let surface = 0, nearOpening = 0, looks = 0;
-  for (const place of ['court', 'start']) {
-    await load(place);
-    const r = await page.eval(`(async () => {
-      const p = fw.pilot;
-      p.start(fw.pos.F);
-      p.way = 'in';
-      p.diagnose = true;
-      let looks = 0, surface = 0, near = 0;
-      await fw.tour(60, () => {
-        looks++;
-        if (p.kind === 'surface') (surface++, p.saw?.holeNear >= 1.3 && near++);
-      });
-      return { looks, surface, near };
-    })()`);
-    looks += r.looks;
-    surface += r.surface;
-    nearOpening += r.near;
-  }
-  // (Before it did, a third of its looks at a wall had an opening near.)
-  assert(nearOpening <= 0.05 * surface + 3, `of ${surface} looks heading at a surface, ${nearOpening} had an opening near`);
-  assert(surface < 0.3 * looks, `${surface} of ${looks} looks were heading at a surface`);
-});
-
-// Going out, the tour makes its way back to bigger spaces than it dived to,
-// and does not spend its time pressed against walls on the way.
-check('going out, the tour comes out', async () => {
+// The tour dives some levels, then comes back up some, through rooms it
+// did not pass on the way down: out somewhere else (see planner.js).
+check('the tour dives, and comes up somewhere else', async () => {
   await load('start');
   const r = await page.eval(`(async () => {
     const p = fw.pilot;
     p.start(fw.pos.F);
-    p.diagnose = true;
-    p.way = 'in';
-    let deepest = -Infinity;
-    await fw.tour(40, () => (deepest = Math.max(deepest, fw.flight.room)));
-    p.way = 'out';
-    let looks = 0, pressed = 0, outermost = Infinity;
-    await fw.tour(90, () => {
-      looks++;
-      if (p.saw?.ahead < 1.2) pressed++;
-      outermost = Math.min(outermost, fw.flight.room);
+    const down = new Set(), levels = [];
+    let last = null, fresh = 0, again = 0;
+    await fw.tour(360, () => {
+      if (!p.last || p.last === last) return;
+      last = p.last;
+      levels.push(+last.split(':')[0]);
+      if (p.phase === 'dive') down.add(last);
+      else down.has(last) ? again++ : fresh++;
     });
-    return { deepest, outermost, looks, pressed };
+    const start = levels[0], deepest = Math.max(...levels), at = levels.indexOf(deepest);
+    return { start, deepest, after: Math.min(...levels.slice(at)), fresh, again };
   })()`);
-  assert(r.deepest > 0 && r.outermost < r.deepest, `dived to a room of level ${r.deepest}, came out only to ${r.outermost}`);
-  assert(r.pressed < 0.2 * r.looks, `${r.pressed} of ${r.looks} looks were pressed against a wall`);
+  assert(r.deepest >= r.start + 3, `it dived from level ${r.start} only to ${r.deepest}`);
+  assert(r.after <= r.deepest - 2, `from level ${r.deepest}, it came up only to ${r.after}`);
+  assert(r.fresh > 2 * r.again, `coming up, ${r.again} of the rooms it came into it had passed going down, and ${r.fresh} it had not`);
 });
 
-// Boxed into a corner, going out, the tour turns one way until it finds
-// somewhere to go. (Choosing which way afresh each look, it turned back
-// and forth, the two sides being much alike.)
-check('going out, the tour turns out of a corner', async () => {
+// Boxed into a corner, the tour finds somewhere to go.
+check('the tour gets out of a corner', async () => {
   await load('corner');
   const found = await page.eval(`(async () => {
     const p = fw.pilot;
     p.start(fw.pos.F);
-    p.way = 'out';
+    p.phase = 'surface';
     let at = null;
     await fw.tour(10, (t) => { if (at === null && p.target && p.kind !== 'aside') at = t; });
     return at;

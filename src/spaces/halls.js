@@ -405,6 +405,45 @@ export const built = (id, seed) => h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID
 
 // dg is the point along the diagonals (see Position.levels). Without it they
 // are worked out from L and f, which is only good far from any such surface.
+// For finding a way through the halls (see planner.js): a cell's room, if
+// it has one (its height, its middle in its lattice units, and whether
+// piers stand in it, which a way across it must go round), and the
+// openings in its six faces, each as the middle of where it crosses the
+// face, the way across it (e), and the cell on the other side. (Of a row
+// of three windows or arches, the middle one.) The same hashes as above.
+export function hallsRoom(id, seed) {
+  if (!built(id, seed)) return null;
+  const H = h01(hashCell(id, seed)) < 0.65 ? HLO : HHI;
+  // (As furniture has it: piers, unless over or under a light well.)
+  const t = h01(hashCell(id, seed ^ 0x51ed270b));
+  const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ 0x967a889b)), over = h01(hashCell(id, seed ^ 0x967a889b));
+  return { H, middle: [C, M + H / 2, C], piers: t >= 0.4 && t < 0.62 && Math.max(under, over) < 0.88 };
+}
+export function hallsOpenings(id, seed) {
+  const here = built(id, seed);
+  const out = [];
+  for (const [a, sign] of [[0, 1], [0, -1], [2, 1], [2, -1], [1, 1], [1, -1]]) {
+    const e = [0, 0, 0];
+    e[a] = sign;
+    const nb = wrapId(id.map((x, b) => x + e[b]));
+    if (!here && !built(nb, seed)) continue;
+    // A face belongs to the cell on its lower side.
+    const owner = sign > 0 ? id : nb;
+    const at = [C, 0, C];
+    at[a] = sign > 0 ? R : 0;
+    if (a === 1) {
+      if (h01(hashCell(owner, seed ^ 0x967a889b)) < 0.66) continue;
+    } else {
+      const s = wallShape(hashCell(owner, seed ^ (a === 0 ? 0x68bc21eb : 0x02e5be93)), C, 0);
+      if (!s) continue;
+      at[a === 0 ? 2 : 0] = s.cu;
+      at[1] = M + s.y0 + Math.min(s.top, s.sp + s.hw) / 2;
+    }
+    out.push({ e, at, nb });
+  }
+  return out;
+}
+
 export function hallsAir(L, f, id, seed, dg) {
   if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
   else {

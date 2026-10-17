@@ -4,6 +4,7 @@ import halls from './spaces/halls.js';
 import arcology from './spaces/arcology.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot } from './pilot.js';
+import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { Pacing } from './pacing.js';
 
@@ -61,6 +62,7 @@ const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN));
 const flight = new Flight(space, controls);
 const pos = flight.pos;
 const pilot = new Pilot(R);
+pilot.planner = new Planner(flight);
 
 let debug = 0;
 let reference = false; // draw with the old ray stepping, to compare
@@ -164,9 +166,8 @@ function loadLocation() {
 }
 
 // X switches between the two ways of stepping rays, to compare them by eye;
-// L between schemes (shift-L back); P starts and stops the tour, M turns it
-// in or out; N goes somewhere new, shift-N to the next world; H hides and
-// shows the legend.
+// L between schemes (shift-L back); P starts and stops the tour; N goes
+// somewhere new, shift-N to the next world; H hides and shows the legend.
 
 // Off to the next world, somewhere in it as on a first visit.
 function nextWorld() {
@@ -204,7 +205,6 @@ addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'KeyX') reference = !reference;
   if (e.code === 'KeyP') toggleTour();
-  if (e.code === 'KeyM' && pilot.on) pilot.turnAbout();
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
   if (e.code === 'KeyN') (e.shiftKey ? nextWorld : respawn)();
@@ -212,7 +212,6 @@ addEventListener('keydown', (e) => {
 // The same, by buttons, for touch screens.
 const BUTTONS = {
   tour: toggleTour,
-  way: () => (pilot.on ? pilot.turnAbout() : toggleTour()),
   scheme: () => nextScheme(1),
   help: toggleHelp,
   new: respawn,
@@ -294,7 +293,7 @@ function frame(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${space.name}` : ''}${pilot.on ? `   touring ${pilot.way}ward (M)` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${space.name}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -373,7 +372,7 @@ window.fw = {
           got = renderer.seen();
         }
         if (got) pilot.see(got, controls.basis(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
-        log.push({ t: i / 60, F: pos.F, way: pilot.way, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
+        log.push({ t: i / 60, F: pos.F, phase: pilot.phase, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }
       flight.step(1 / 60, pilot.fly(1 / 60, controls, flight.scale, () => flight.awayFrom()));
