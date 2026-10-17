@@ -213,6 +213,9 @@ uniform vec4 uOuter;
 // How far the camera is above the plane over which there is only sky
 // (negative: below it).
 uniform float uSkyH;
+// How far under that plane sunlight can come in whatever we see from (see
+// sunReach in spaces/halls.js).
+uniform float uSunReach;
 uniform vec3 uZenith;
 uniform vec3 uGround;
 uniform float uFill;       // lighting scheme: see schemes.js
@@ -530,10 +533,13 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
   float key = max(dot(n, uSun), 0.0);
 
   // Sunlight: does a ray from here toward the sun get out into the sky?
-  // Not tried from too far below the ground for any to come in.
+  // Not tried from too far below the ground for any to come in: further
+  // than the space lets sunlight reach, and further than we see from here.
+  // (Going by how far we see alone, where the space is open well under the
+  // ground, shadows came and went as that changed.)
   float sunlit = 0.0;
   float below = -(p.y + uSkyH);
-  if (shadows && uSunK > 0.0 && key > 0.0 && below < SUN_DEPTH * uFogLen) {
+  if (shadows && uSunK > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach)) {
     for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
     bool sh, so;
     int ss = slot, st = 0;
@@ -563,7 +569,7 @@ float shafts(vec3 rd, float end, float pix, int slot, vec3 n) {
   for (int k = 0; k < SHAFT_SAMPLES; k++) {
     float s = end * (float(k) + j) / float(SHAFT_SAMPLES);
     vec3 q = rd * s;
-    if (-(q.y + uSkyH) > SUN_DEPTH * uFogLen) continue;
+    if (-(q.y + uSkyH) > max(SUN_DEPTH * uFogLen, uSunReach)) continue;
     for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
     bool sh, so;
     int ss = slot, st = 0;

@@ -32,6 +32,8 @@
 //                  level-0 cells up from the floor of the level -1 cell that
 //                  ancestorDigit leads to. Being on a cell boundary of level
 //                  0, it leaves the rooms under it their roofs.
+//   sunReach       how far under the ground plane, in level-0 cells, there
+//                  can be open air the sun shines into (optional; none here)
 //   zenith, roof   the sky's colour overhead; the colour of the ground seen
 //                  from above
 //

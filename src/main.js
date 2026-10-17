@@ -84,6 +84,7 @@ function viewNow() {
     scheme: SCHEMES[scheme],
     outer: flight.outerAir(all),
     sky: flight.skyHeight(),
+    sunReach: (space.sunReach ?? 0) * Math.pow(R, pos.F),
     thread: controls.thread ? flight.thread(50 * maxT, N_THREAD) : null,
   };
   return { recs, view };
@@ -342,7 +343,7 @@ window.fw = {
   },
   get state() {
     const { sky, clearance, scale, pace, opened, fog, sensed } = flight;
-    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, pixelRatio, every: pacing.every, fps, levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, pixelRatio, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = controls.basis();

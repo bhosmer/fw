@@ -264,6 +264,8 @@ export default {
     if (level === CITY) return [C, ROW, C];
     return [C, C, C];
   },
-  // The sky starts at the top of the city's row.
+  // The sky starts at the top of the city's row, and sunlight comes down
+  // into it as far as the plaza (in level-0 cells under the sky).
   ground: R,
+  sunReach: R - G,
 };
