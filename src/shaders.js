@@ -272,6 +272,11 @@ const int SHAFT_STEPS = 32;
 
 // Per ray: for each level, how far along the ray it is known to stay solid.
 float gSolid[NLEV];
+// Per line of sight: where it came into the biggest air it has been in
+// (bigger than the air we are in), and how far one sees inside that air.
+// From there on it sees that far: a great hall seen through a doorway from a
+// small room is not lost in the haze of the room.
+float gWideT, gWideFog;
 const float SLACK = ${glf(SLACK)};
 
 // Distance to the nearest solid from camera-relative point v. Solid is what
@@ -396,6 +401,12 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       vec3 nn;
       float a = levelRay(i, v, reach, nn);
       if (reach >= 0.0) {
+        float fog = uFogK / uSig[i];
+        if (seen && fog > 1.5 * gWideFog) {
+          gWideFog = fog;
+          gWideT = t0 + t;
+          maxT = max(maxT, t + 4.0 * fog);
+        }
         // The shrinking changes pace where the level starts to fade and
         // where it is gone: go no further than that in one step.
         float turn = slant * cell / ((rel > 0.0 ? LOD_LO : LOD_HI) * pix);
@@ -612,6 +623,8 @@ void main() {
       maxT = max(maxT, down + (4.0 - down / uFogLen) * fogIn);
     }
   }
+  gWideT = fogIn > uFogLen ? down : 1e30;
+  gWideFog = fogIn;
 
   for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
 #if EXACT
@@ -689,7 +702,7 @@ void main() {
       lit = mix(lit, rc, uMirror * mix(0.35, 1.0, glance));
     }
 
-    col = mix(col, lit, exp(-min(t, down) / uFogLen - max(t - down, 0.0) / fogIn));
+    col = mix(col, lit, exp(-min(t, gWideT) / uFogLen - max(t - gWideT, 0.0) / gWideFog));
   }
 
   // Shafts of light: drawn coarser beforehand, since they are soft anyway.
