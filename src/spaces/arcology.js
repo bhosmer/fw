@@ -1,36 +1,128 @@
-// "Arcology": the halls, built up into a city above the ground.
+// "Arcology": the halls, built up into a few great buildings above the
+// ground.
 //
 // Every level is halls (see halls.js) but one, the city's: there, one row of
-// cells, running on in every direction to the horizon, is a plaza with
-// buildings standing on it, open to the sky. The buildings are solid at the
-// city's level, so the halls one level finer are their rooms, and their
-// faces are the facades of those rooms; under the plaza are more halls,
-// whose light wells open up through its floor. Above the city's row there is
-// only sky, and the levels coarser than the city's are solid throughout (as
-// air, they would swallow parts of it).
+// cells, running on in every direction to the horizon, is a plaza open to
+// the sky, and in the middle of it stands a handful of buildings. They are
+// solid at the city's level, so the halls one level finer are their rooms
+// (each of which is a great hall of the halls one level finer still), and
+// their faces are the facades of those rooms. Under the plaza are more
+// halls, whose light wells open up through its floor. Above the city's row
+// there is only sky, and the levels coarser than the city's are solid
+// throughout (as air, they would swallow parts of it).
 //
-// A building is a block, perhaps with a narrower one on top, and perhaps a
-// roof of 45-degree slopes on whichever is highest. Each cell's is its own,
-// as in the halls: the scatter is what the city is.
+// A building grows from its footprint: a block, and on it one narrower
+// block, or two side by side, or towers at its corners, and so on up, each
+// ending perhaps in a roof of 45-degree slopes; some blocks are cut at the
+// corners, octagons in plan. Each is a list of blocks, the same for every
+// city cell, which asks all of them (they reach across many cells).
 
 import halls, { hallsGlsl, hallsAir, built, R, M } from './halls.js';
 import { hashCell, wrapId as wrapIdR } from '../util.js';
 
 const wrapId = (id) => wrapIdR(id, R);
 const C = R / 2;
-export const CITY = -1; // the city's level
+export const CITY = -2; // the city's level
 const ROW = 12; // which row of its parent the city's cells are in
 const G = M; // the plaza's floor, up from the bottom of a city cell
-const T = M; // how far buildings keep from a cell's sides
-const TOWER_SALT = 0x3b9ac9ff;
+const TOP = R - 2; // how high anything is built
 // Ids are a cell's index in its parent plus R times its parent's in the
-// grandparent: the city's row, as an id.
+// grandparent: the city's row, and the cell in the middle of it, as ids.
 export const ROW_ID = ROW + R * C;
+const MID = C + R * C;
 const ABOVE = 200; // how many rows over the city's are known to be over it
+
+// The buildings, as blocks in city lattice units (level CITY + 1 cells),
+// across from the corner of the middle cell: [x0, y0, z0, x1, y1, z1, kind],
+// kind 0 a plain block, 1 a gable rising across x (its ridge along z), 2 one
+// rising across z, 3 a pyramid, 4 a block cut at its corners. Worked out the
+// same every time.
+const BLOCKS = [];
+{
+  let s = 0x2545f491;
+  const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const block = (x0, y0, z0, x1, y1, z1, kind = 0) => BLOCKS.push([x0, y0, z0, x1, y1, z1, kind]);
+
+  // A roof on x0..x1, z0..z1 at height y, or none.
+  const roof = (x0, z0, x1, z1, y) => {
+    const w = x1 - x0, d = z1 - z0;
+    if (rnd() < 0.35 || y >= TOP) return;
+    const kind = w === d || rnd() < 0.3 ? 3 : w <= d ? 1 : 2;
+    const rise = Math.min(Math.floor((kind === 3 ? Math.min(w, d) : kind === 1 ? w : d) / 2), TOP + 1 - y);
+    if (rise >= 1) block(x0, y - 1, z0, x1, y + rise, z1, kind);
+  };
+
+  // A mass on x0..x1, z0..z1 standing at y, and whatever stands on it.
+  const mass = (x0, z0, x1, z1, y, depth) => {
+    const w = x1 - x0, d = z1 - z0;
+    if (y >= TOP - 1) return;
+    const slender = w <= 3 && d <= 3;
+    const top = Math.min(y + (slender ? int(4, 9) : depth === 0 ? int(3, 7) : int(2, 5)), TOP);
+    block(x0, y - 1, z0, x1, top, z1, w === d && w >= 4 && rnd() < 0.3 ? 4 : 0);
+    if (depth >= 3 || w < 3 || d < 3 || top >= TOP - 1) return roof(x0, z0, x1, z1, top);
+    const t = rnd();
+    if (t < 0.3) {
+      // One narrower mass.
+      const a = int(1, Math.max(1, Math.floor(w / 4))), b = int(1, Math.max(1, Math.floor(d / 4)));
+      mass(x0 + a, z0 + b, x1 - int(1, a), z1 - int(1, b), top, depth + 1);
+    } else if (t < 0.65 && Math.max(w, d) >= 6) {
+      // Two, side by side along the longer way.
+      const along = w >= d, n = along ? w : d, cut = int(2, n - 4), gap = int(0, 1);
+      const inset = int(0, 1);
+      if (along) {
+        mass(x0 + inset, z0 + inset, x0 + cut, z1 - inset, top, depth + 1);
+        mass(x0 + cut + gap, z0 + int(0, 1), x1 - inset, z1 - int(0, 1), top, depth + 1);
+      } else {
+        mass(x0 + inset, z0 + inset, x1 - inset, z0 + cut, top, depth + 1);
+        mass(x0 + int(0, 1), z0 + cut + gap, x1 - int(0, 1), z1 - inset, top, depth + 1);
+      }
+    } else if (t < 0.88 && w >= 6 && d >= 6) {
+      // Towers at its corners, and perhaps a lower mass between them.
+      const k = int(2, 3);
+      for (const [cx, cz] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        if (rnd() < 0.2) continue;
+        const tx = cx ? x1 - k : x0, tz = cz ? z1 - k : z0;
+        mass(tx, tz, tx + k, tz + k, top, 2);
+      }
+      if (rnd() < 0.5 && w - 2 * k >= 2 && d - 2 * k >= 2) mass(x0 + k, z0 + k, x1 - k, z1 - k, top, depth + 2);
+    } else roof(x0, z0, x1, z1, top);
+  };
+
+  // A handful of footprints round the middle of the plaza, apart.
+  const feet = [];
+  for (let tries = 0; feet.length < 6 && tries < 400; tries++) {
+    const w = int(7, 16), d = int(7, 16);
+    const x0 = int(-26, 26 + R - w), z0 = int(-26, 26 + R - d);
+    if (feet.every(([a0, b0, a1, b1]) => x0 >= a1 + 4 || x0 + w + 4 <= a0 || z0 >= b1 + 4 || z0 + d + 4 <= b0)) feet.push([x0, z0, x0 + w, z0 + d]);
+  }
+  for (const [x0, z0, x1, z1] of feet) mass(x0, z0, x1, z1, G, 0);
+}
+
+// The city cells, across from the middle one, that any building stands in:
+// no light well opens in those (it would come up into a building).
+const BUILT = new Set();
+for (const [x0, , z0, x1, , z1] of BLOCKS)
+  for (let a = Math.floor(x0 / R); a <= Math.floor((x1 - 1) / R); a++)
+    for (let b = Math.floor(z0 / R); b <= Math.floor((z1 - 1) / R); b++) BUILT.add(`${a},${b}`);
+const BUILT_CELLS = [...BUILT].map((k) => k.split(',').map(Number));
+
+const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
 
 const glsl = /* glsl */ `
 const int G = ${G};
-const int T = ${T};
+const int NB = ${BLOCKS.length};
+const ivec3 BLO[NB] = ivec3[NB](${ivecs(BLOCKS.map((b) => b.slice(0, 3)))});
+const ivec3 BHI[NB] = ivec3[NB](${ivecs(BLOCKS.map((b) => b.slice(3, 6)))});
+const int BKIND[NB] = int[NB](${BLOCKS.map((b) => b[6]).join(', ')});
+const int NBUILT = ${BUILT_CELLS.length};
+const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `ivec2(${a}, ${b})`).join(', ')});
+
+// Where the middle city cell is from this one, in lattice units.
+ivec3 fromMiddle(ivec3 id) {
+  ivec3 c = id - ivec3(${MID}, ${ROW_ID}, ${MID});
+  return ivec3(c.x, 0, c.z) * R;
+}
 
 // The light well, if any, that the hall below opens up through the plaza:
 // halls' own opening through its ceiling, as that hall has it (the two must
@@ -40,6 +132,8 @@ float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   uint h = hashCell(below, seed ^ 0x967a889bu);
   float t = h01(h);
   if (t < 0.66 || !(built(below, seed) || built(id, seed))) return 1e9;
+  ivec3 o = fromMiddle(id) / R;
+  for (int k = 0; k < NBUILT; k++) if (BUILT_CELLS[k] == o.xz) return 1e9;
   bool oculus = t < 0.88;
   int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   airPiece();
@@ -53,75 +147,66 @@ float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   return gD;
 }
 
-// The building on the plaza: the distance to it, negative inside.
-float building(ivec3 L, vec3 f, uint h) {
-  int x0 = T + 3 * int(h % 3u), x1 = R - T - 3 * int((h >> 2) % 3u);
-  int z0 = T + 3 * int((h >> 4) % 3u), z1 = R - T - 3 * int((h >> 6) % 3u);
-  int top = G + 4 + int((h >> 8) % 13u);
+// One block, its corners lo and hi in this cell's lattice units.
+float block(ivec3 L, vec3 f, ivec3 lo, ivec3 hi, int kind) {
   solidPiece();
-  solidSpan(L.x, f.x, x0, x1, EX);
-  solidSpan(L.z, f.z, z0, z1, EZ);
-  solidSpan(L.y, f.y, G - 1, top, EY);
-  float d = solidDone();
-  // A narrower block on top.
-  if (((h >> 12) & 3u) != 0u && x1 - x0 >= 12 && z1 - z0 >= 12) {
-    x0 += 3; x1 -= 3; z0 += 3; z1 -= 3;
-    int up = min(top + 3 + int((h >> 14) % 6u), R - 2);
-    solidPiece();
-    solidSpan(L.x, f.x, x0, x1, EX);
-    solidSpan(L.z, f.z, z0, z1, EZ);
-    solidSpan(L.y, f.y, top - 1, up, EY);
-    d = min(d, solidDone());
-    top = up;
+  solidSpan(L.x, f.x, lo.x, hi.x, EX);
+  solidSpan(L.z, f.z, lo.z, hi.z, EZ);
+  solidSpan(L.y, f.y, lo.y, hi.y, EY);
+  int base = lo.y + 1;
+  if (kind == 1 || kind == 3) {
+    solidPlane(diag(0, -1, 1, lo.x, base, 0) * 0.70710678, vec3(-0.70710678, 0.70710678, 0.0));
+    solidPlane(diag(0, 1, 1, hi.x, base, 0) * 0.70710678, vec3(0.70710678, 0.70710678, 0.0));
   }
-  // A roof: a gable, its ridge along the longer way, or a pyramid. Where
-  // there is not the height for it to come to a point, it is cut off flat.
-  uint roof = (h >> 18) & 3u;
-  if (roof >= 2u) {
-    bool pyramid = roof == 3u, alongZ = z1 - z0 >= x1 - x0;
-    int rise = min((pyramid ? min(x1 - x0, z1 - z0) : alongZ ? x1 - x0 : z1 - z0) / 2, R - 1 - top);
-    solidPiece();
-    solidSpan(L.x, f.x, x0, x1, EX);
-    solidSpan(L.z, f.z, z0, z1, EZ);
-    solidSpan(L.y, f.y, top - 1, top + rise, EY);
-    if (pyramid || alongZ) {
-      solidPlane(diag(0, -1, 1, x0, top, 0) * 0.70710678, vec3(-0.70710678, 0.70710678, 0.0));
-      solidPlane(diag(0, 1, 1, x1, top, 0) * 0.70710678, vec3(0.70710678, 0.70710678, 0.0));
-    }
-    if (pyramid || !alongZ) {
-      solidPlane(diag(1, -1, 1, z0, top, 0) * 0.70710678, vec3(0.0, 0.70710678, -0.70710678));
-      solidPlane(diag(1, 1, 1, z1, top, 0) * 0.70710678, vec3(0.0, 0.70710678, 0.70710678));
-    }
-    d = min(d, solidDone());
+  if (kind == 2 || kind == 3) {
+    solidPlane(diag(1, -1, 1, lo.z, base, 0) * 0.70710678, vec3(0.0, 0.70710678, -0.70710678));
+    solidPlane(diag(1, 1, 1, hi.z, base, 0) * 0.70710678, vec3(0.0, 0.70710678, 0.70710678));
   }
-  return d;
+  if (kind == 4) {
+    int c = min(hi.x - lo.x, hi.z - lo.z) / 4;
+    solidPlane(diag(2, -1, -1, lo.x, lo.z, -c) * 0.70710678, vec3(-0.70710678, 0.0, -0.70710678));
+    solidPlane(diag(2, 1, -1, hi.x, lo.z, -c) * 0.70710678, vec3(0.70710678, 0.0, -0.70710678));
+    solidPlane(diag(2, -1, 1, lo.x, hi.z, -c) * 0.70710678, vec3(-0.70710678, 0.0, 0.70710678));
+    solidPlane(diag(2, 1, 1, hi.x, hi.z, -c) * 0.70710678, vec3(0.70710678, 0.0, 0.70710678));
+  }
+  return solidDone();
 }
 
-// The air over the plaza, less the building. It runs T past the cell's
-// sides, where no building comes, so that it does not seem to close in at
-// every one.
-float plaza(ivec3 L, vec3 f, bool standing, uint h) {
+// The air over the plaza, less the buildings: the distance to the nearest
+// (and, for a ray, where it strikes one, if before it leaves this piece of
+// air). The piece runs a cell past this one's sides each way: every cell
+// asks after every building, so nothing stands in it unasked.
+float plaza(ivec3 L, vec3 f, ivec3 id) {
   airPiece();
-  airSpan(L.x, f.x, -T, R + T, EX);
-  airSpan(L.z, f.z, -T, R + T, EZ);
+  airSpan(L.x, f.x, -R, 2 * R, EX);
+  airSpan(L.z, f.z, -R, 2 * R, EZ);
   airSpan(L.y, f.y, G, R + M, EY);
-  float box = gD;
-  return standing ? max(box, -building(L, f, h)) : box;
+  float box = gD, d = 1e9;
+  vec3 q = vec3(L) + f;
+  ivec3 o = fromMiddle(id);
+  for (int k = 0; k < NB; k++) {
+    ivec3 lo = BLO[k] - o, hi = BHI[k] - o;
+    // (A block further off than one already found, or than a ray goes in
+    // this piece, is not asked about.)
+    vec3 off = max(vec3(lo) - q, q - vec3(hi));
+    float far = max(max(off.x, off.y), off.z);
+    if (far >= d && (!gRay || far >= gX)) continue;
+    d = min(d, block(L, f, lo, hi, BKIND[k]));
+  }
+  return max(box, -d);
 }
 
-// A cell of the city. A building stands only where no well opens.
+// A cell of the city.
 float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
   reach = -1.0;
   nrm = vec3(0.0);
   bool ray = gRay;
   gRay = false;
   float w = well(L, f, id, seed);
-  bool standing = w > 1e8;
-  uint h = hashCell(id, seed ^ ${TOWER_SALT}u);
-  float p = plaza(L, f, standing, h);
+  float p = plaza(L, f, id);
   if (ray && p + gO <= 0.0) {
     gRay = true;
-    plaza(L, f, standing, h);
+    plaza(L, f, id);
     gRay = false;
     reach = gX;
     nrm = gN;
@@ -166,10 +251,13 @@ const plane = (s) => (gD = Math.max(gD, s));
 const span = (x, f, x0, x1) => (plane(x0 - x - f), plane(x - x1 + f));
 const NONE = 1e9;
 
+const fromMiddle = (id) => [(id[0] - MID) * R, 0, (id[2] - MID) * R];
+
 function well(L, f, id, seed) {
   const below = wrapId([id[0], id[1] - 1, id[2]]);
   const t = h01(hashCell(below, seed ^ 0x967a889b));
   if (t < 0.66 || !(built(below, seed) || built(id, seed))) return NONE;
+  if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return NONE;
   const oculus = t < 0.88;
   const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   piece();
@@ -180,53 +268,40 @@ function well(L, f, id, seed) {
   return gD;
 }
 
-function building(L, f, h) {
-  let x0 = T + 3 * (h % 3), x1 = R - T - 3 * ((h >>> 2) % 3);
-  let z0 = T + 3 * ((h >>> 4) % 3), z1 = R - T - 3 * ((h >>> 6) % 3);
-  let top = G + 4 + ((h >>> 8) % 13);
+function block(L, f, lo, hi, kind) {
   piece();
-  span(L[0], f[0], x0, x1);
-  span(L[2], f[2], z0, z1);
-  span(L[1], f[1], G - 1, top);
-  let d = gD;
-  if (((h >>> 12) & 3) !== 0 && x1 - x0 >= 12 && z1 - z0 >= 12) {
-    x0 += 3; x1 -= 3; z0 += 3; z1 -= 3;
-    const up = Math.min(top + 3 + ((h >>> 14) % 6), R - 2);
-    piece();
-    span(L[0], f[0], x0, x1);
-    span(L[2], f[2], z0, z1);
-    span(L[1], f[1], top - 1, up);
-    d = Math.min(d, gD);
-    top = up;
+  span(L[0], f[0], lo[0], hi[0]);
+  span(L[2], f[2], lo[2], hi[2]);
+  span(L[1], f[1], lo[1], hi[1]);
+  const base = lo[1] + 1;
+  if (kind === 1 || kind === 3) {
+    plane(diag(0, -1, 1, lo[0], base, 0) * Math.SQRT1_2);
+    plane(diag(0, 1, 1, hi[0], base, 0) * Math.SQRT1_2);
   }
-  const roof = (h >>> 18) & 3;
-  if (roof >= 2) {
-    const pyramid = roof === 3, alongZ = z1 - z0 >= x1 - x0;
-    const rise = Math.min(Math.floor((pyramid ? Math.min(x1 - x0, z1 - z0) : alongZ ? x1 - x0 : z1 - z0) / 2), R - 1 - top);
-    piece();
-    span(L[0], f[0], x0, x1);
-    span(L[2], f[2], z0, z1);
-    span(L[1], f[1], top - 1, top + rise);
-    if (pyramid || alongZ) {
-      plane(diag(0, -1, 1, x0, top, 0) * Math.SQRT1_2);
-      plane(diag(0, 1, 1, x1, top, 0) * Math.SQRT1_2);
-    }
-    if (pyramid || !alongZ) {
-      plane(diag(1, -1, 1, z0, top, 0) * Math.SQRT1_2);
-      plane(diag(1, 1, 1, z1, top, 0) * Math.SQRT1_2);
-    }
-    d = Math.min(d, gD);
+  if (kind === 2 || kind === 3) {
+    plane(diag(1, -1, 1, lo[2], base, 0) * Math.SQRT1_2);
+    plane(diag(1, 1, 1, hi[2], base, 0) * Math.SQRT1_2);
   }
-  return d;
+  if (kind === 4) {
+    const c = Math.floor(Math.min(hi[0] - lo[0], hi[2] - lo[2]) / 4);
+    plane(diag(2, -1, -1, lo[0], lo[2], -c) * Math.SQRT1_2);
+    plane(diag(2, 1, -1, hi[0], lo[2], -c) * Math.SQRT1_2);
+    plane(diag(2, -1, 1, lo[0], hi[2], -c) * Math.SQRT1_2);
+    plane(diag(2, 1, 1, hi[0], hi[2], -c) * Math.SQRT1_2);
+  }
+  return gD;
 }
 
-function plaza(L, f, standing, h) {
+function plaza(L, f, id) {
   piece();
-  span(L[0], f[0], -T, R + T);
-  span(L[2], f[2], -T, R + T);
+  span(L[0], f[0], -R, 2 * R);
+  span(L[2], f[2], -R, 2 * R);
   span(L[1], f[1], G, R + M);
   const box = gD;
-  return standing ? Math.max(box, -building(L, f, h)) : box;
+  const o = fromMiddle(id);
+  let d = NONE;
+  for (const b of BLOCKS) d = Math.min(d, block(L, f, b.slice(0, 3).map((x, a) => x - o[a]), b.slice(3, 6).map((x, a) => x - o[a]), b[6]));
+  return Math.max(box, -d);
 }
 
 function cellAir(L, f, id, seed, dg, level) {
@@ -241,31 +316,46 @@ function cellAir(L, f, id, seed, dg, level) {
     dLm = pairs.map(([a, b]) => L[a] - L[b]);
     dFm = pairs.map(([a, b]) => f[a] - f[b]);
   }
-  const w = well(L, f, id, seed);
-  const p = plaza(L, f, w >= NONE, hashCell(id, seed ^ TOWER_SALT));
-  return Math.min(p, w);
+  return Math.min(plaza(L, f, id), well(L, f, id, seed));
 }
 
-export default {
+// Where a first visit starts, in the middle city cell (lattice units): on
+// the plaza, at the foot of the buildings, wherever there is room.
+const START = (() => {
+  for (let r = 0; r < R; r++)
+    for (let x = C - r; x <= C + r; x++)
+      for (const z of [C - r, C + r]) {
+        if (x < 0 || z < 0 || x >= R || z >= R) continue;
+        if (BLOCKS.every(([x0, , z0, x1, , z1]) => x + 1 <= x0 - 1 || x >= x1 + 1 || z + 1 <= z0 - 1 || z >= z1 + 1)) return [x, z];
+      }
+  return [C, C];
+})();
+
+const arcology = {
   ...halls,
   name: 'arcology',
   glsl: hallsGlsl + glsl,
   cellAir,
-  // A plaza's air reaches up out of its cell, and its widest way runs
-  // corner to corner beyond its sides.
+  // A plaza's air reaches up out of its cell, and its longest way runs
+  // corner to corner across the cells either side.
   maxInterior: 0.5,
-  longestWay: 2.1,
+  longestWay: 4.5,
 
-  // On the plaza, at the foot of the buildings (or inside one), in the city
-  // row; the levels coarser are all solid, so anywhere does for them.
+  // On the plaza, in the city's row; coarser than that, all is solid, so
+  // anywhere does.
   ancestorDigit(level) {
     if (level > 0) return halls.ancestorDigit(level);
-    if (level === 0) return [C, G, C];
+    if (level === 0) return [C, 4, C];
+    if (level === CITY + 1) return [START[0], G, START[1]];
     if (level === CITY) return [C, ROW, C];
     return [C, C, C];
   },
-  // The sky starts at the top of the city's row, and sunlight comes down
-  // into it as far as the plaza (in level-0 cells under the sky).
-  ground: R,
-  sunReach: R - G,
+  // The sky starts at the top of the city's row: R cells of level CITY + 1
+  // above the bottom of the row's cell, which at the defaults is G under it.
+  skyPlane(j) {
+    return j === CITY + 1 ? R : j > CITY + 1 ? 0 : arcology.ancestorDigit(j)[1];
+  },
+  // Sunlight comes down into it as far as the plaza (in level-0 cells).
+  sunReach: (R - G) * Math.pow(R, -1 - CITY),
 };
+export default arcology;

@@ -108,7 +108,7 @@ export class Flight {
   // cell.
   skyHeight() {
     const { pos, space, R } = this;
-    const plane = (j) => (j < 0 ? space.ancestorDigit(j)[1] : j === 0 ? space.ground : 0);
+    const plane = space.skyPlane ?? ((j) => (j < 0 ? space.ancestorDigit(j)[1] : j === 0 ? space.ground : 0));
     let acc = 0;
     for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) acc = acc * R + pos.digit(j)[1] - plane(j);
     // (Working coarser than level 0, the plane is part of the way up our cell.)
