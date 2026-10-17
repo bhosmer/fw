@@ -24,7 +24,10 @@ const PAST = M + 1; // how far either side of an opening its points are (a unit 
 const ACROSS = 60; // most rooms of one level looked through, from one
 const TRIES = 12; // most ways into the walls tried, looking for a way through them
 const UP = 4; // most levels up looked, for the air a cell is in
-const BUDGET = 20; // milliseconds a plan may take
+// How much a plan may look at (rooms, and steps along lines of sight):
+// about 18 ms on the machine this was tried on. (Counted, not timed, so
+// that the same place plans the same way every time.)
+const BUDGET = 30000;
 const LONGEST = 30; // most points in a way through a wall worth going
 
 export class Planner {
@@ -32,17 +35,24 @@ export class Planner {
     this.flight = flight;
     this.R = flight.R;
     this.frames = new Map();
+    // What has been worked out about cells, for the plan being made (by
+    // cell: see cell): the same ones are asked about over and over.
+    this.rooms = new Map();
+    this.airs = new Map();
   }
 
-  // Each search starts afresh (we will have moved), and has budget
-  // milliseconds: searching longer would hold up the frame it is done in
-  // (a search out of time finds nothing, and is tried again later).
+  // Each search starts afresh (we will have moved), and may look at only
+  // so much (see BUDGET): searching longer would hold up the frame it is
+  // done in. (One that runs out finds nothing, and is tried again later.)
   begin(budget = this.budget ?? BUDGET) {
     this.frames.clear();
-    this.until = performance.now() + budget;
+    this.rooms.clear();
+    this.airs.clear();
+    this.work = 0;
+    this.until = budget;
   }
   late() {
-    return performance.now() > this.until;
+    return this.work > this.until;
   }
 
   // Our level-k cell: where we are in it, in its lattice units; its id;
@@ -79,7 +89,20 @@ export class Planner {
     return k + ':' + this.id(k, c).join();
   }
   room(k, c) {
-    return hallsRoom(this.id(k, c), this.frame(k).seed);
+    const n = this.cell(k, c);
+    let r = this.rooms.get(n);
+    if (r === undefined) {
+      this.work++;
+      r = hallsRoom(this.id(k, c), this.frame(k).seed);
+      this.rooms.set(n, r);
+    }
+    return r;
+  }
+  // A number for cell c of level k (ids repeat with period R^2).
+  cell(k, c) {
+    const id = this.frame(k).id, P = this.R * this.R;
+    const w = (a) => (((id[a] + c[a]) % P) + P) % P;
+    return ((k + 4096) * P + w(2)) * P * P + w(1) * P + w(0);
   }
 
   // The parent of cell c of level k (an offset at level k - 1), and the
@@ -96,6 +119,12 @@ export class Planner {
   // room's box, that is: its furniture and its own openings are not looked
   // at.)
   air(k, c) {
+    const n = this.cell(k, c);
+    let a = this.airs.get(n);
+    if (a === undefined) this.airs.set(n, (a = this.airOf(k, c)));
+    return a;
+  }
+  airOf(k, c) {
     const f = this.flight;
     const atMiddle = (j, x) => this.toUs(this.frame(j), x.map((y) => y * this.R + this.R / 2));
     let found = null;
@@ -139,6 +168,7 @@ export class Planner {
     const room = (v) => Math.max(f.sky + v[1], ...f.here.map((r) => -f.airAt(r, v) / r.sig));
     let t = 0;
     for (let i = 0; i < 48 && !this.late(); i++) {
+      this.work += 8;
       const c = room(at(t));
       if (!(c > 0)) return false;
       t += c;
