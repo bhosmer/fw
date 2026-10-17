@@ -97,7 +97,7 @@ export class Flight {
       dg.Lp[p] = rec.Lp[p] + rp - (cell[a] + cell[b]) * R;
       dg.Lm[p] = rec.Lm[p] + rm - (cell[a] - cell[b]) * R;
     });
-    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg);
+    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level);
   }
 
   // How far we are above the ground: the one plane over which there is only

@@ -6,7 +6,7 @@
 // every scale. What a space provides:
 //
 //   R              children per cell edge
-//   glsl           float cell(ivec3 L, vec3 f, ivec3 id, uint seed,
+//   glsl           float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level,
 //                             out float reach, out vec3 nrm)
 //                  signed distance to the cell's air (negative inside air) at
 //                  the point L + f. It may understate a distance but must
@@ -15,7 +15,8 @@
 //                  is in air, reach is how far the ray goes before leaving
 //                  the piece of air it is in (and nrm the surface there);
 //                  otherwise reach is negative. See "Rays" below.
-//   cellAir        the distance alone, in JavaScript (see below)
+//   cellAir        the distance alone, in JavaScript (see below), given
+//                  (L, f, id, seed, dg, level)
 //   maxInterior    largest clearance any point in a cell's air can have, as a
 //                  fraction of the cell
 //   longestWay     the longest way through any one convex piece of a cell's
@@ -60,14 +61,16 @@
 
 import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR } from '../util.js';
 
-const R = 24; // children per cell edge
+export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
-const M = 3; // half the wall thickness between two rooms
+export const M = 3; // half the wall thickness between two rooms
 const HLO = 12; // ceiling height of a low room; a tall room fills the cell (18)
 const SOLID = 0.5; // share of cells that are left solid, with no room in them
 const BUILT_SALT = 0x3c6ef372;
 
-const glsl = /* glsl */ `
+// (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
+// cell, whatever its level.)
+export const hallsGlsl = /* glsl */ `
 const int M = ${M};
 const int HLO = ${HLO};
 const int HHI = R - 2 * M;
@@ -207,7 +210,7 @@ float roomAir(ivec3 L, vec3 f, int H, uint h, float under, float over) {
   return max(box, -furniture(L, f, h, under, over));
 }
 
-float cell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
+float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
   reach = -1.0;
   nrm = vec3(0.0);
   uint hc = hashCell(id, seed);
@@ -391,11 +394,11 @@ function roomAir(L, f, H, h, under, over) {
 }
 
 const ancestors = new Map(); // level -> where its cell sits in its parent
-const built = (id, seed) => h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID;
+export const built = (id, seed) => h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID;
 
 // dg is the point along the diagonals (see Position.levels). Without it they
 // are worked out from L and f, which is only good far from any such surface.
-function cellAir(L, f, id, seed, dg) {
+export function hallsAir(L, f, id, seed, dg) {
   if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
   else {
     const pairs = [[0, 1], [2, 1], [0, 2]];
@@ -438,8 +441,12 @@ function cellAir(L, f, id, seed, dg) {
 export default {
   name: 'halls',
   R,
-  glsl,
-  cellAir,
+  glsl: hallsGlsl + /* glsl */ `
+float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {
+  return hallsCell(L, f, id, seed, reach, nrm);
+}
+`,
+  cellAir: hallsAir,
   maxInterior: 0.375,
   longestWay: 1.4,
   close: 0.3,

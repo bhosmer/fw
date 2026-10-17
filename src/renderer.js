@@ -24,7 +24,7 @@ function link(gl, frag, names) {
   return { prog, u };
 }
 
-const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uSeed', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm'];
+const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm'];
 
 // Shafts of light are drawn for one pixel in this many each way (see draw).
 const SHAFT_STRIDE = 6;
@@ -83,6 +83,7 @@ export class Renderer {
     const fr = new Float32Array(n * 3);
     const id = new Int32Array(n * 3);
     const seed = new Uint32Array(n);
+    const level = new Int32Array(n);
     const sig = new Float32Array(n).fill(1);
     const Lp = new Int32Array(n * 3), Lm = new Int32Array(n * 3);
     const fp = new Float32Array(n * 3), fm = new Float32Array(n * 3);
@@ -95,12 +96,14 @@ export class Renderer {
       fr.set(r.f, i * 3);
       id.set(r.id, i * 3);
       seed[i] = levelSeed(r.level);
+      level[i] = r.level;
       sig[i] = r.sig;
     });
     gl.uniform3iv(p.u.uL, L);
     gl.uniform3fv(p.u.uFr, fr);
     gl.uniform3iv(p.u.uId, id);
     gl.uniform1uiv(p.u.uSeed, seed);
+    gl.uniform1iv(p.u.uLevel, level);
     gl.uniform1fv(p.u.uSig, sig);
     gl.uniform3iv(p.u.uLp, Lp);
     gl.uniform3fv(p.u.uFp, fp);

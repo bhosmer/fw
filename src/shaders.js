@@ -31,6 +31,7 @@ uniform ivec3 uL[NLEV];
 uniform vec3 uFr[NLEV];
 uniform ivec3 uId[NLEV];
 uniform uint uSeed[NLEV];
+uniform int uLevel[NLEV];
 uniform float uSig[NLEV];
 // The same split for the sum (p) and difference (m) of each pair of axes
 // (x, y), (z, y), (x, z): see Position.levels.
@@ -160,7 +161,7 @@ float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
   gFm = sm - rm;
   gLp = uLp[i] + ivec3(rp) - ivec3(c.x + c.y, c.z + c.y, c.x + c.z) * R;
   gLm = uLm[i] + ivec3(rm) - ivec3(c.x - c.y, c.z - c.y, c.x - c.z) * R;
-  return cell(I - c * R, f, wrapId(uId[i] + c), uSeed[i], reach, nrm);
+  return cell(I - c * R, f, wrapId(uId[i] + c), uSeed[i], uLevel[i], reach, nrm);
 }
 
 float levelAir(int i, vec3 v) {

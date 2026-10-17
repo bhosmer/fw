@@ -1,12 +1,29 @@
 import { Renderer } from './renderer.js';
 import { Controls } from './controls.js';
 import halls from './spaces/halls.js';
+import arcology from './spaces/arcology.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot } from './pilot.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { Pacing } from './pacing.js';
 
-const space = halls;
+// The worlds, and the one we are in: the one a link is in (one from before
+// there were others is in the halls), or else the one last visited.
+const WORLDS = [halls, arcology];
+const WORLD_KEY = 'fw.world';
+const space = (() => {
+  let name;
+  try {
+    if (location.hash.length > 1) name = JSON.parse(atob(location.hash.slice(1))).world ?? 'halls';
+  } catch {}
+  try {
+    name ??= localStorage.getItem(WORLD_KEY);
+  } catch {}
+  return WORLDS.find((w) => w.name === name) ?? halls;
+})();
+try {
+  localStorage.setItem(WORLD_KEY, space.name);
+} catch {}
 const R = space.R;
 
 // Of the levels around us, the most that are drawn.
@@ -125,7 +142,7 @@ function scaleLabel(F) {
 function saveLocation() {
   // (Only the digits that are not what they would be anyway.)
   const digits = [...pos.digits].filter(([j, d]) => space.ancestorDigit(j).some((x, a) => x !== d[a]));
-  const at = { F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch };
+  const at = { world: space.name, F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch };
   // (Where the page is framed, this may not be allowed: then it is not kept.)
   try {
     history.replaceState(null, '', '#' + btoa(JSON.stringify(at)));
@@ -147,7 +164,17 @@ function loadLocation() {
 
 // X switches between the two ways of stepping rays, to compare them by eye;
 // L between schemes (shift-L back); P starts and stops the tour, M turns it
-// in or out; N goes somewhere new; H hides and shows the legend.
+// in or out; N goes somewhere new, shift-N to the next world; H hides and
+// shows the legend.
+
+// Off to the next world, somewhere in it as on a first visit.
+function nextWorld() {
+  try {
+    localStorage.setItem(WORLD_KEY, WORLDS[(WORLDS.indexOf(space) + 1) % WORLDS.length].name);
+    history.replaceState(null, '', location.pathname + location.search);
+  } catch {}
+  location.reload();
+}
 
 // Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
 function respawn() {
@@ -169,6 +196,7 @@ function nextScheme(by) {
 }
 function showScheme() {
   for (const el of document.querySelectorAll('.scheme')) el.textContent = SCHEMES[scheme].name;
+  for (const el of document.querySelectorAll('.world')) el.textContent = space.name;
 }
 showScheme();
 addEventListener('keydown', (e) => {
@@ -178,7 +206,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && pilot.on) pilot.turnAbout();
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
-  if (e.code === 'KeyN') respawn();
+  if (e.code === 'KeyN') (e.shiftKey ? nextWorld : respawn)();
 });
 // The same, by buttons, for touch screens.
 const BUTTONS = {
@@ -187,6 +215,7 @@ const BUTTONS = {
   scheme: () => nextScheme(1),
   help: toggleHelp,
   new: respawn,
+  world: nextWorld,
 };
 for (const [name, act] of Object.entries(BUTTONS)) {
   document.getElementById(name + '-button')?.addEventListener('click', (e) => {
@@ -264,7 +293,7 @@ function frame(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${pilot.on ? `   touring ${pilot.way}ward (M)` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${space.name}` : ''}${pilot.on ? `   touring ${pilot.way}ward (M)` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

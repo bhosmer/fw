@@ -18,6 +18,8 @@ const OUT = join(ROOT, 'tests', 'out');
 const update = process.argv.includes('--update');
 const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 
+const WORLDS = ['halls', 'arcology'];
+
 // Places to look from, as the app writes them into its URL.
 const at = (o) => Buffer.from(JSON.stringify(o)).toString('base64');
 const PLACES = {
@@ -32,9 +34,10 @@ const PLACES = {
 // Run before the app's own code on every load: the frame loop never runs (so
 // nothing moves or settles between checks), the scheme is the one asked for,
 // and random numbers come out the same every time.
-const setup = (scheme, live = false) => `
+const setup = (scheme, live = false, world = 'halls') => `
   ${live ? '' : 'window.requestAnimationFrame = () => 0;'}
   localStorage.setItem('fw.scheme', ${JSON.stringify(scheme)});
+  localStorage.setItem('fw.world', ${JSON.stringify(world)});
   { let s = 12345; Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }`;
 
 // In the page: the current view drawn at w x h, top row first.
@@ -60,10 +63,10 @@ const PAGE_HELPERS = `
   };`;
 
 let page, base, loads = 0;
-async function load(place, scheme = 'alhambra', live = false) {
+async function load(place, scheme = 'alhambra', live = false, world = 'halls') {
   // (A query that differs every time, so that each load is a whole new page:
   // a change of hash alone would not even reload it.)
-  await page.goto(`${base}index.html?${++loads}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live));
+  await page.goto(`${base}index.html?${++loads}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live, world));
   await page.eval(PAGE_HELPERS);
   const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
   if (error) throw new Error('the page failed to start:\n' + error);
@@ -90,10 +93,24 @@ check('every scheme compiles and draws something', async () => {
   }
 });
 
-check('the shader and the JavaScript agree about the world', async () => {
-  await load('start');
-  const worst = await page.eval('fw.check(300)');
-  assert(worst.diff < 1e-3, `they differ by ${JSON.stringify(worst)}`);
+check('the shader and the JavaScript agree about each world', async () => {
+  for (const world of WORLDS) {
+    await load('start', 'alhambra', false, world);
+    const worst = await page.eval('fw.check(300)');
+    assert(worst.diff < 1e-3, `${world}: they differ by ${JSON.stringify(worst)}`);
+  }
+});
+
+// From up above each world too, the exact way sees nothing the older one
+// does not. (In the arcology it once saw the city as a plain: the cells
+// over it claimed to be solid further down than the city's air begins.)
+check('from above, each world is stepped through truly', async () => {
+  for (const world of WORLDS) {
+    await load('start', 'alhambra', false, world);
+    await page.eval('(fw.controls.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
+    const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
+    assert(newNearer < 0.002, `${world}: the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`);
+  }
 });
 
 // The older way (sphere tracing) stops once within half a pixel of a
