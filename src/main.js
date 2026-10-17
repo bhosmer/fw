@@ -85,6 +85,7 @@ const whereNow = () => ({
   scale: flight.scale,
   sky: flight.sky,
   room: flight.room === null ? Infinity : Math.pow(R, pos.F - flight.room),
+  out: pilot.way === 'out' ? flight.outward() : null,
 });
 
 // The tour's eyes: a sparse picture of distances, a few times a second, read
@@ -145,8 +146,8 @@ function loadLocation() {
 }
 
 // X switches between the two ways of stepping rays, to compare them by eye;
-// L between schemes (shift-L back); P starts and stops the tour, M picks its
-// mood; N goes somewhere new; H hides and shows the legend.
+// L between schemes (shift-L back); P starts and stops the tour, M turns it
+// in or out; N goes somewhere new; H hides and shows the legend.
 
 // Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
 function respawn() {
@@ -174,7 +175,7 @@ addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'KeyX') reference = !reference;
   if (e.code === 'KeyP') toggleTour();
-  if (e.code === 'KeyM' && pilot.on) pilot.choose(pos.F);
+  if (e.code === 'KeyM' && pilot.on) pilot.turnAbout();
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
   if (e.code === 'KeyN') respawn();
@@ -182,7 +183,7 @@ addEventListener('keydown', (e) => {
 // The same, by buttons, for touch screens.
 const BUTTONS = {
   tour: toggleTour,
-  mood: () => (pilot.on ? pilot.choose(pos.F) : toggleTour()),
+  way: () => (pilot.on ? pilot.turnAbout() : toggleTour()),
   scheme: () => nextScheme(1),
   help: toggleHelp,
   new: respawn,
@@ -263,7 +264,7 @@ function frame(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${pilot.on ? `   touring (${pilot.mood === 'dive' ? 'diving' : 'drifting'}${pilot.held ? ' only' : ''}, M)` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${pilot.on ? `   touring ${pilot.way}ward (M)` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -342,7 +343,7 @@ window.fw = {
           got = renderer.seen();
         }
         if (got) pilot.see(got, controls.basis(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
-        log.push({ t: i / 60, F: pos.F, mood: pilot.mood, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
+        log.push({ t: i / 60, F: pos.F, way: pilot.way, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }
       flight.step(1 / 60, pilot.fly(1 / 60, controls, flight.scale, () => flight.awayFrom()));

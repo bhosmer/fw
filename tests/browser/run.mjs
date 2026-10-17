@@ -206,8 +206,7 @@ check('diving, the tour takes openings near its way', async () => {
     const r = await page.eval(`(async () => {
       const p = fw.pilot;
       p.start(fw.pos.F);
-      p.choose(fw.pos.F);
-      p.choose(fw.pos.F); // (diving, held to)
+      p.way = 'in';
       p.diagnose = true;
       let looks = 0, surface = 0, near = 0;
       await fw.tour(60, () => {
@@ -223,6 +222,30 @@ check('diving, the tour takes openings near its way', async () => {
   // (Before it did, a third of its looks at a wall had an opening near.)
   assert(nearOpening <= 0.05 * surface + 3, `of ${surface} looks heading at a surface, ${nearOpening} had an opening near`);
   assert(surface < 0.3 * looks, `${surface} of ${looks} looks were heading at a surface`);
+});
+
+// Going out, the tour makes its way back to bigger spaces than it dived to,
+// and does not spend its time pressed against walls on the way.
+check('going out, the tour comes out', async () => {
+  await load('start');
+  const r = await page.eval(`(async () => {
+    const p = fw.pilot;
+    p.start(fw.pos.F);
+    p.diagnose = true;
+    p.way = 'in';
+    let deepest = -Infinity;
+    await fw.tour(40, () => (deepest = Math.max(deepest, fw.flight.room)));
+    p.way = 'out';
+    let looks = 0, pressed = 0, outermost = Infinity;
+    await fw.tour(90, () => {
+      looks++;
+      if (p.saw?.ahead < 1.2) pressed++;
+      outermost = Math.min(outermost, fw.flight.room);
+    });
+    return { deepest, outermost, looks, pressed };
+  })()`);
+  assert(r.deepest > 0 && r.outermost < r.deepest, `dived to a room of level ${r.deepest}, came out only to ${r.outermost}`);
+  assert(r.pressed < 0.2 * r.looks, `${r.pressed} of ${r.looks} looks were pressed against a wall`);
 });
 
 check('rewinding retraces the way we came', async () => {

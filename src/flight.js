@@ -23,6 +23,8 @@ const FAR = 60;
 // (Much further, and how big a level is in level-F cells is too small a
 // number for a double.)
 const SEARCH = 200;
+// How many levels coarser than the room we are in to look for a way out.
+const OUT = 4;
 
 // F follows our clearance: it is kept above REFINE_BELOW level-(F + 1)
 // cells and below COARSEN_ABOVE level-F cells.
@@ -406,6 +408,32 @@ export class Flight {
     const keep = new Set();
     for (const l of order) if (keep.size < n && levels.includes(l)) keep.add(l);
     return recs.filter((r) => keep.has(r.level));
+  }
+
+  // Which way is out: toward the nearest air of a level coarser than the
+  // room we are in, or under the ground, up to the sky. A direction, how
+  // far, in level-F cells, as the crow flies (the way there may well wind),
+  // and whether it is the sky; null out in the open.
+  outward() {
+    if (this.sky > 0 || this.room === null) return null;
+    let best = { dist: -this.sky, dir: [0, 1, 0], sky: true };
+    // (levels() works out from F, so it is asked for everything up to there.)
+    for (const r of this.pos.levels(this.room - OUT, this.pos.F)) {
+      if (r.level >= this.room) break;
+      const dist = this.airAt(r) / r.sig;
+      if (!(dist > 0) || dist >= best.dist) continue;
+      const h = 0.25 * dist;
+      const g = [0, 1, 2].map((a) => {
+        const v = [0, 0, 0];
+        v[a] = h;
+        const up = this.airAt(r, v);
+        v[a] = -h;
+        return up - this.airAt(r, v);
+      });
+      const len = Math.hypot(...g);
+      if (len > 0) best = { dist, dir: g.map((x) => -x / len), sky: false };
+    }
+    return best;
   }
 
   // The air of a level too coarse to draw, as the shader is to see it: the
