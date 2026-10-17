@@ -102,6 +102,28 @@ for (const [x0, , z0, x1, , z1] of BLOCKS)
     for (let b = Math.floor(z0 / R); b <= Math.floor((z1 - 1) / R); b++) BUILT.add(`${a},${b}`);
 const BUILT_CELLS = [...BUILT].map((k) => k.split(',').map(Number));
 
+// For each city cell (across from the middle one) with any building near
+// it, the blocks that reach into the air it answers for (its plaza piece,
+// see plaza): only those are asked about. A block further off is further
+// off than the piece's sides, so says nothing the piece does not.
+const NEAR = new Map();
+BLOCKS.forEach(([x0, y0, z0, x1, y1, z1], k) => {
+  for (let a = Math.floor((x0 - 2 * R) / R); a <= Math.floor((x1 + R) / R); a++)
+    for (let b = Math.floor((y0 - R - M) / R); b <= Math.floor((y1 + M) / R); b++)
+      for (let c = Math.floor((z0 - 2 * R) / R); c <= Math.floor((z1 + R) / R); c++) {
+        if (b < 0 || b >= ROWS) continue;
+        const lo = [a * R - R, b * R + (b === 0 ? G : -M), c * R - R], hi = [a * R + 2 * R, b * R + R + M, c * R + 2 * R];
+        if (x1 <= lo[0] || x0 >= hi[0] || y1 <= lo[1] || y0 >= hi[1] || z1 <= lo[2] || z0 >= hi[2]) continue;
+        const key = `${a},${b},${c}`;
+        if (!NEAR.has(key)) NEAR.set(key, []);
+        NEAR.get(key).push(k);
+      }
+});
+const NEAR_CELLS = [...NEAR.keys()].map((k) => k.split(',').map(Number));
+const NEAR_START = [0];
+for (const k of NEAR.keys()) NEAR_START.push(NEAR_START.at(-1) + NEAR.get(k).length);
+const NEAR_BLOCKS = [...NEAR.values()].flat();
+
 const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
 
 const glsl = /* glsl */ `
@@ -110,6 +132,10 @@ const int NB = ${BLOCKS.length};
 const ivec3 BLO[NB] = ivec3[NB](${ivecs(BLOCKS.map((b) => b.slice(0, 3)))});
 const ivec3 BHI[NB] = ivec3[NB](${ivecs(BLOCKS.map((b) => b.slice(3, 6)))});
 const int BKIND[NB] = int[NB](${BLOCKS.map((b) => b[6]).join(', ')});
+const int NNEAR = ${NEAR_CELLS.length};
+const ivec3 NEAR_CELLS[NNEAR] = ivec3[NNEAR](${ivecs(NEAR_CELLS)});
+const int NEAR_START[NNEAR + 1] = int[NNEAR + 1](${NEAR_START.join(', ')});
+const int NEAR_BLOCKS[${NEAR_BLOCKS.length}] = int[${NEAR_BLOCKS.length}](${NEAR_BLOCKS.join(', ')});
 const int NBUILT = ${BUILT_CELLS.length};
 const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `ivec2(${a}, ${b})`).join(', ')});
 
@@ -174,8 +200,10 @@ float block(ivec3 L, vec3 f, ivec3 lo, ivec3 hi, int kind) {
 
 // The air over the plaza, less the buildings: the distance to the nearest
 // (and, for a ray, where it strikes one, if before it leaves this piece of
-// air). The piece runs a cell past this one's sides each way: every cell
-// asks after every building, so nothing stands in it unasked.
+// air). The piece runs a cell past this one's sides each way (so that it
+// does not seem to close in at every one; narrower, rays far off crossed
+// so many pieces that they ran out of steps), and the blocks asked about
+// are all that reach into it (see NEAR).
 float plaza(ivec3 L, vec3 f, ivec3 id) {
   airPiece();
   airSpan(L.x, f.x, -R, 2 * R, EX);
@@ -186,7 +214,11 @@ float plaza(ivec3 L, vec3 f, ivec3 id) {
   float box = gD, d = 1e9;
   vec3 q = vec3(L) + f;
   ivec3 o = fromMiddle(id);
-  for (int k = 0; k < NB; k++) {
+  int n = -1;
+  for (int j = 0; j < NNEAR; j++) if (NEAR_CELLS[j] == o / R) n = j;
+  if (n < 0) return box;
+  for (int j = NEAR_START[n]; j < NEAR_START[n + 1]; j++) {
+    int k = NEAR_BLOCKS[j];
     ivec3 lo = BLO[k] - o, hi = BHI[k] - o;
     // (A block further off than one already found, or than a ray goes in
     // this piece, is not asked about.)
@@ -308,7 +340,10 @@ function plaza(L, f, id) {
   const box = gD;
   const o = fromMiddle(id);
   let d = NONE;
-  for (const b of BLOCKS) d = Math.min(d, block(L, f, b.slice(0, 3).map((x, a) => x - o[a]), b.slice(3, 6).map((x, a) => x - o[a]), b[6]));
+  for (const k of NEAR.get(o.map((x) => x / R).join()) ?? []) {
+    const b = BLOCKS[k];
+    d = Math.min(d, block(L, f, b.slice(0, 3).map((x, a) => x - o[a]), b.slice(3, 6).map((x, a) => x - o[a]), b[6]));
+  }
   return Math.max(box, -d);
 }
 
