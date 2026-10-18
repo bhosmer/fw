@@ -414,13 +414,14 @@ export class Planner {
     return middle[3] > 0 && this.clear([0, 0, 0], middle) && this.clear(middle, pts[0]) ? [middle, ...pts] : null;
   }
 
-  // Are we inside the room at c of level k, a unit or more from its walls?
-  inside(k, c) {
+  // Are we inside the room at c of level k, at least margin units from its
+  // walls?
+  inside(k, c, margin = 1) {
     const fr = this.frame(k), r = fr && this.room(k, c);
     if (!r) return false;
     const R = this.R;
     return [0, 1, 2].every((a) => {
-      const lo = c[a] * R + M + 1, hi = c[a] * R + (a === 1 ? M + r.H : R - M) - 1;
+      const lo = c[a] * R + M + margin, hi = c[a] * R + (a === 1 ? M + r.H : R - M) - margin;
       return fr.here[a] > lo && fr.here[a] < hi;
     });
   }
