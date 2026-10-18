@@ -19,8 +19,8 @@
 // from it, each a little different. Each is a list of blocks, the same for
 // every city cell, which asks all of them (they reach across many cells).
 
-import halls, { hallsGlsl, hallsAir, built, R, M } from './halls.js';
-import { hashCell, wrapId as wrapIdR } from '../util.js';
+import halls, { hallsGlsl, hallsAir, hallsRoom, hallsOpenings, built, R, M } from './halls.js';
+import { hashCell, levelSeed, wrapId as wrapIdR } from '../util.js';
 
 const wrapId = (id) => wrapIdR(id, R);
 const C = R / 2;
@@ -271,7 +271,37 @@ export const VOLUME = (() => {
       if (within(m)) data[2 * at(m) + 1] = NEAR_BIT;
     }
   }
-  return { lo, size, data, galleries: boxes.length };
+  return { lo, size, data, galleries: boxes.length, deep, open, at, within };
+})();
+
+// Whether the level-(CITY + 1) cell id is one of a gallery's (as near the
+// middle city cell as ids tell apart).
+function galleryAt(id) {
+  const { lo, data, at, within } = VOLUME, P = R * R;
+  const v = id.map((x, a) => ((((x - R * (a === 1 ? ROW : C) - lo[a]) % P) + P) % P));
+  return within(v) && (data[2 * at(v)] & TAKEN) !== 0;
+}
+
+// The ways into the buildings from the plaza, for the tour (see
+// Planner.waysFromCity): each a room of the halls one level finer than the
+// city's, wholly inside a building, with an opening in one of its walls
+// straight out onto open air. As { id, e }: the room's cell's id at that
+// level, and the way out of it through the opening.
+export const ENTRANCES = (() => {
+  const { lo, size, deep, open, data, at, within } = VOLUME;
+  const seed = levelSeed(CITY + 1), out = [];
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+    const v = [x, y, z];
+    if (!deep[at(v)] || data[2 * at(v)] & TAKEN) continue;
+    const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
+    if (!hallsRoom(id, seed)) continue;
+    for (const o of hallsOpenings(id, seed)) {
+      if (o.e[1] !== 0) continue;
+      const u = v.map((q, a) => q + o.e[a]);
+      if (within(u) && open[at(u)] && !(data[2 * at(u)] & PIECE)) out.push({ id, e: o.e, at: o.at });
+    }
+  }
+  return out;
 })();
 
 const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
@@ -637,8 +667,12 @@ const arcology = {
   skyPlane(j) {
     return j === CITY + 1 ? ROWS * R : j > CITY + 1 ? 0 : arcology.ancestorDigit(j)[1];
   },
-  // Finer than the city, it is halls, whose ways the tour can plan.
+  // Finer than the city, it is halls, whose ways the tour can plan; but a
+  // gallery's cells are not rooms (and from the plaza, the ways in are
+  // ENTRANCES).
   planned: (level) => level > CITY,
+  notRoom: (level, id) => level === CITY + 1 && galleryAt(id),
+  entrances: { level: CITY + 1, list: ENTRANCES },
   // Nothing stands higher than the tallest building (in level-0 cells).
   skyClear: (ROWS * R - Math.max(...BLOCKS.map((b) => b[4]))) * Math.pow(R, -1 - CITY),
   // Sunlight comes down into it as far as the plaza (in level-0 cells).

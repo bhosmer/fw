@@ -93,7 +93,8 @@ export class Planner {
     let r = this.rooms.get(n);
     if (r === undefined) {
       this.work++;
-      r = hallsRoom(this.id(k, c), this.frame(k).seed);
+      const id = this.id(k, c);
+      r = this.flight.space.notRoom?.(k, id) ? null : hallsRoom(id, this.frame(k).seed);
       this.rooms.set(n, r);
     }
     return r;
@@ -412,6 +413,44 @@ export class Planner {
     if (!r) return null;
     const middle = this.point(via.k, this.middle(via.c, r));
     return middle[3] > 0 && this.clear([0, 0, 0], middle) && this.clear(middle, pts[0]) ? [middle, ...pts] : null;
+  }
+
+  // Out in air that is not a room of the halls (the arcology's city, or a
+  // gallery in it): the level of the halls rooms that open onto it, if the
+  // world says where they do (see ENTRANCES in spaces/arcology.js).
+  outdoors() {
+    const { space, sky } = this.flight, k = space.entrances?.level;
+    if (k === undefined || sky > 0 || !this.frame(k) || this.here()) return null;
+    return k;
+  }
+
+  // From out there, the ways into those rooms whose openings face us: in
+  // line with the opening a few cells out, out in front of it, just inside,
+  // the room's middle (and its lane, if piers stand in it). As waysIn has
+  // them; nearest first, at most n.
+  waysFromCity(n = 24) {
+    const { space } = this.flight, k = space.entrances.level, fr = this.frame(k);
+    const R = this.R, P = R * R;
+    const near = [];
+    for (const { id, e, at: o } of space.entrances.list) {
+      const c = id.map((x, a) => ((((x - fr.id[a]) % P) + P + P / 2) % P) - P / 2);
+      const at = c.map((x, a) => x * R + o[a]);
+      const us = fr.here.map((x, a) => x - at[a]);
+      const ahead = us[0] * e[0] + us[2] * e[2];
+      if (ahead <= 0) continue;
+      near.push({ c, e, at, far: Math.hypot(...us) });
+    }
+    near.sort((a, b) => a.far - b.far);
+    const ways = [];
+    for (const { c, e, at } of near.slice(0, n)) {
+      const r = this.room(k, c);
+      if (!r) continue;
+      const out = at.map((x, a) => x + e[a] * 3 * R), front = at.map((x, a) => x + e[a] * PAST), inside = at.map((x, a) => x - e[a] * PAST);
+      const lane = inside.map((x, a) => (e[a] !== 0 || a === 1 ? x : c[a] * R + R / 2));
+      const points = [out, front, inside, ...(r.piers ? [lane] : []), this.middle(c, r)].map((p) => [k, p]);
+      ways.push({ points, to: { k, c }, down: false, face: e.map((x) => -x) });
+    }
+    return ways;
   }
 
   // Are we inside the room at c of level k, at least margin units from its

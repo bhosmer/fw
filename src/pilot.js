@@ -103,10 +103,17 @@ export class Pilot {
     // in its middle, its air may not yet be what gives us most room, and
     // here() names the room round it.)
     const to = this.going && P.find(this.going);
-    const at = from ?? (to && P.inside(to.k, to.c, 0) ? to : null) ?? P.here() ?? to;
+    let at = from ?? (to && P.inside(to.k, to.c, 0) ? to : null) ?? P.here() ?? to;
     if (!at || !P.frame(at.k) || !P.room(at.k, at.c)) {
       if (this.phase === 'surface') (this.phase = 'dive'), (this.goal = null);
       this.way = 'in';
+      // Out in the arcology's city: in, through the nearest entrances ahead.
+      const city = P.outdoors();
+      if (city === null) return;
+      this.passed = new Set();
+      (this.goal = city + int(2, 5)), (this.top = city - 1), (this.linger = 0), (this.heading = null);
+      at = null;
+      this.choose(P.waysFromCity(), null, city - 1, 'city', false);
       return;
     }
     const k = at.k, name = P.key(k, at.c);
@@ -146,6 +153,13 @@ export class Pilot {
     } else if (this.linger) ways = P.waysAcross(k, at.c);
     else ways = rnd() < 0.2 ? P.waysAcross(k, at.c) : P.waysIn(k, at.c);
     if (!ways.length) ways = P.waysIn(k, at.c);
+    this.choose(ways, at, k, name, on);
+  }
+
+  // Of ways from the room at (null: from the city, see decide), the one to
+  // go: the likeliest that can be got to from here; and so the plan.
+  choose(ways, at, k, name, on) {
+    const P = this.planner, rnd = Math.random;
     if (!ways.length) return;
     // The nearer, and the more nearly ahead, the likelier; going straight
     // up or down through a floor or ceiling, less so. And only ways ahead,
@@ -167,7 +181,7 @@ export class Pilot {
     const near = Math.min(...ways.map(far));
     // (Going in, ways into a wall with a room we have not been in behind it,
     // likelier still: through it, coming back up, is another room.)
-    const behind = (w) => w.face && w.to?.k === k + 1 && !w.down && P.room(k, at.c.map((x, a) => x + w.face[a])) && !this.passed.has(P.key(k, at.c.map((x, a) => x + w.face[a])));
+    const behind = (w) => at && w.face && w.to?.k === k + 1 && !w.down && P.room(k, at.c.map((x, a) => x + w.face[a])) && !this.passed.has(P.key(k, at.c.map((x, a) => x + w.face[a])));
     // (Ways behind us, hardly ever: turning back on our way is no tour.)
     const ahead = (w) => dot(unit(w.at), fwd) > -0.3;
     const heading = (w) => this.phase === 'dive' && w.face && this.heading && ahead(w) && w.face.every((v, a) => v === this.heading[a]);
@@ -176,7 +190,7 @@ export class Pilot {
     // Going in, of the likeliest, the first whose rooms reach a way up into
     // a room other than this one (and not one passed): coming back up, that
     // is a way out somewhere else.
-    if (this.phase === 'dive' && !this.linger) {
+    if (at && this.phase === 'dive' && !this.linger) {
       const fresh = (air) => air === 'sky' || !air.c || (P.key(air.k, air.c) !== name && !this.passed.has(P.key(air.k, air.c)));
       const i = ways.slice(0, SPANS).findIndex((w) => !P.late() && ahead(w) && w.to?.k === k + 1 && P.searchUp(k + 1, w.to.c, rnd, fresh).steps);
       if (i > 0) ways.unshift(...ways.splice(i, 1));
@@ -575,7 +589,15 @@ export class Pilot {
         }
       }
     }
-    if (!this.plan && this.target && (Math.hypot(...this.target) < NEAREST * scale || dot(this.target, fwd) < 0)) this.target = null;
+    if (!this.plan && this.target && (Math.hypot(...this.target) < NEAREST * scale || dot(this.target, fwd) < 0)) {
+      // Come to where we aimed in an opening, going in: on into it, the
+      // same way (where we aimed was only a guess at how deep it goes, made
+      // from further off; if it is no deeper, the next look says so).
+      // Choosing afresh there, it turned off to whatever opening in the
+      // wall beside it looked best, and never went in.
+      const into = this.way === 'in' && (this.kind === 'hole' || this.kind === 'pit') && dot(this.target, fwd) > 0;
+      this.target = into ? unit(this.target).map((x) => x * 3 * NEAREST * scale) : null;
+    }
     let err = 0, reach = Infinity;
     if (this.target) {
       let dir = unit(this.target);
