@@ -30,6 +30,8 @@ const SPANS = 15;
 const HEADING = 6; // going in, how much likelier a way in the way the dive heads // going in, how many ways in are looked into for a way out elsewhere
 const PLAN_EVERY = 1; // seconds between tries at planning a way, when there is none
 const STALLED = 8; // seconds getting no nearer the next point before giving up the way
+const BLEND = 1.5; // clearances from a point at which we start turning toward the one after
+const EASE_UP = 0.5; // seconds over which the tour picks up speed
 const NEAREST = 2; // clearances: a target closer than this is reached
 // Closer than this to a surface, for the space in view, we keep away from it
 // (skimming a surface is slow, and shows little).
@@ -61,6 +63,8 @@ export class Pilot {
     this.plan = null;
     this.planned = 0; // when we last tried to plan (seconds of touring)
     this.time = 0;
+    this.pace = null; // how fast, of the most we would go (see fly)
+    this.prev = null; // where the leg to the next point began (the last point passed, or where we were)
     this.closest = Infinity; // nearest we have come to the next point, and when
     this.closer = 0;
     // The tour's course: diving to some level finer than where it began,
@@ -85,11 +89,13 @@ export class Pilot {
   // The course: dive some levels, linger a room or two, come up through
   // rooms not passed on the way down (so, out somewhere else), up past
   // where the dive began, and dive again.
-  decide() {
+  //
+  // from: the room to plan from, if not the one we are in.
+  decide(from = null) {
     const P = this.planner, rnd = Math.random;
     const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
     P.begin();
-    const at = P.here() ?? (this.going && P.find(this.going));
+    const at = from ?? P.here() ?? (this.going && P.find(this.going));
     if (!at || !P.frame(at.k) || !P.room(at.k, at.c)) {
       if (this.phase === 'surface') (this.phase = 'dive'), (this.goal = null);
       this.way = 'in';
@@ -140,15 +146,17 @@ export class Pilot {
     // (Going in, ways into a wall with a room we have not been in behind it,
     // likelier still: through it, coming back up, is another room.)
     const behind = (w) => w.face && w.to?.k === k + 1 && !w.down && P.room(k, at.c.map((x, a) => x + w.face[a])) && !this.passed.has(P.key(k, at.c.map((x, a) => x + w.face[a])));
-    const heading = (w) => this.phase === 'dive' && w.face && this.heading && w.face.every((v, a) => v === this.heading[a]);
-    const weight = new Map(ways.map((w) => [w, (1.2 + dot(unit(w.at), fwd)) * Math.exp(-far(w) / (3 * near)) * (w.down ? 0.4 : 1) * (heading(w) ? HEADING : 1) * (0.3 + rnd())]));
+    // (Ways behind us, hardly ever: turning back on our way is no tour.)
+    const ahead = (w) => dot(unit(w.at), fwd) > -0.3;
+    const heading = (w) => this.phase === 'dive' && w.face && this.heading && ahead(w) && w.face.every((v, a) => v === this.heading[a]);
+    const weight = new Map(ways.map((w) => [w, (0.2 + (1 + dot(unit(w.at), fwd)) / 2) ** 2 * Math.exp(-far(w) / (3 * near)) * (w.down ? 0.4 : 1) * (heading(w) ? HEADING : 1) * (0.3 + rnd())]));
     ways.sort((a, b) => weight.get(b) - weight.get(a));
     // Going in, of the likeliest, the first whose rooms reach a way up into
     // a room other than this one (and not one passed): coming back up, that
     // is a way out somewhere else.
     if (this.phase === 'dive' && !this.linger) {
       const fresh = (air) => air === 'sky' || !air.c || (P.key(air.k, air.c) !== name && !this.passed.has(P.key(air.k, air.c)));
-      const i = ways.slice(0, SPANS).findIndex((w) => !P.late() && w.to?.k === k + 1 && P.searchUp(k + 1, w.to.c, rnd, fresh).steps);
+      const i = ways.slice(0, SPANS).findIndex((w) => !P.late() && ahead(w) && w.to?.k === k + 1 && P.searchUp(k + 1, w.to.c, rnd, fresh).steps);
       if (i > 0) ways.unshift(...ways.splice(i, 1));
       this.count?.(i >= 0 ? 'spans' : 'spans none');
     }
@@ -164,6 +172,8 @@ export class Pilot {
     }
     if (!plan) return;
     this.plan = plan;
+    this.prev = [0, 0, 0];
+    this.chained = false;
     this.going = way.to && way.to !== 'sky' && way.to.c ? P.key(way.to.k, way.to.c) : null;
     this.kind = 'plan';
     this.closest = Infinity;
@@ -182,12 +192,14 @@ export class Pilot {
       const k = Math.pow(this.R, F - this.F);
       if (this.target) this.target = this.target.map((x) => x * k);
       if (this.plan) this.plan = this.plan.map((p) => p.map((x) => x * k)); // (clearance and all)
+      if (this.prev) this.prev = this.prev.map((x) => x * k);
       this.closest *= k;
       this.spread *= k;
       this.F = F;
     }
     if (this.target) this.target = this.target.map((x, a) => x - delta[a]);
     if (this.plan) this.plan = this.plan.map(([x, y, z, c]) => [x - delta[0], y - delta[1], z - delta[2], c]);
+    if (this.prev) this.prev = this.prev.map((x, a) => x - delta[a]);
   }
 
   // A new look (from Renderer.seen): a grid of distances in level-lookF cells,
@@ -473,19 +485,36 @@ export class Pilot {
       const off = (p) => Math.hypot(p[0], p[1], p[2]);
       while (this.plan.length) {
         const [p, q] = this.plan;
-        // (Or, near it, if the next is in plain sight from here: hanging
-        // about to come within its clearance, in a tight place, we could
-        // circle it for a while. Looked at a few times a second.)
-        let seen = false;
-        if (q && off(p) < 3 * p[3] && this.time - (this.glanced ?? -1) > 0.25) {
+        // (Or, if it is not the last, once past it, going the way the leg to
+        // it goes; or near it with it behind us: rather than circle it to
+        // come within its clearance. Or, near it, if the next is in plain
+        // sight from here, looked at a few times a second.)
+        const leg = p.slice(0, 3).map((x, a) => x - this.prev[a]);
+        let seen = q && (dot(leg, p) < 0 || (off(p) < 2 * p[3] && dot(p, fwd) < 0));
+        if (!seen && q && off(p) < 3 * p[3] && this.time - (this.glanced ?? -1) > 0.25) {
           this.glanced = this.time;
           seen = this.planner.clear([0, 0, 0], q);
         }
         if (!seen && off(p) > Math.max(p[3], q ? 0.3 * dist(p, q) : 0)) break;
+        this.prev = p.slice(0, 3);
         this.plan.shift();
         this.closest = Infinity;
         this.closer = this.time;
         this.closerF = this.planner.flight.pos.F;
+      }
+      // Down to the last point (the middle of the room the way goes to) and
+      // inside that room: on from here, rather than stopping in its middle
+      // to choose. (Tried once a way.)
+      if (this.plan.length === 1 && this.going && !this.chained) {
+        this.chained = true;
+        const P = this.planner;
+        P.begin();
+        const to = P.find(this.going);
+        if (to && P.inside(to.k, to.c)) {
+          const was = this.plan;
+          this.decide(to);
+          this.count?.(this.plan === was ? 'chain none' : 'chained');
+        }
       }
       if (!this.plan.length) (this.plan = null), (this.planned = -Infinity), this.count?.('done');
       else {
@@ -502,7 +531,14 @@ export class Pilot {
           if (this.count) this.count((this.time - this.closer > STALLED ? 'stalled' : 'pressed') + (this.planner.clear([0, 0, 0], this.plan[0]) ? ' in sight' : ' hidden') + ' ' + (off(this.plan[0]) / this.plan[0][3]).toFixed(0) + 'x');
           (this.plan = null), (this.target = null);
         }
-        else this.target = this.plan[0].slice(0, 3);
+        else {
+          // Near a point, already turning toward the one after it, so as to
+          // round the corner rather than turn at it.
+          const [p, q] = this.plan;
+          const w = q ? Math.max(0, Math.min(1, 1 - off(p) / (BLEND * p[3]))) : 0;
+          const u = unit(p.slice(0, 3)), v = q ? unit(q.slice(0, 3)) : u;
+          this.target = u.map((x, a) => (x * (1 - w) + v[a] * w) * off(p));
+        }
       }
     }
     if (!this.plan && this.target && (Math.hypot(...this.target) < NEAREST * scale || dot(this.target, fwd) < 0)) this.target = null;
@@ -539,10 +575,14 @@ export class Pilot {
     // somewhere to go (rather than on into whatever is ahead: going in,
     // that is where to go anyway).
     const looking = this.kind === 'aside' || (!this.target && this.way === 'out');
-    // (Following a way planned, we turn toward a point off to the side
-    // before going on much: going on, we would circle it.)
-    const turning = this.plan ? Math.max(0.05, Math.cos(err)) ** 3 : 0.3 + 0.7 * Math.max(0, Math.cos(err));
-    const go = PACE * controls.speed * turning * (looking ? 0.25 : 1);
+    const c = Math.max(0, Math.cos(err));
+    const turning = this.plan ? 0.3 + 0.7 * c * c * (3 - 2 * c) : 0.3 + 0.7 * c;
+    // (Slowing at once, speeding up gently: so a new way, or a new target,
+    // does not set off with a jump.)
+    const want = turning * (looking ? 0.25 : 1);
+    this.pace ??= want;
+    this.pace = want < this.pace ? want : this.pace + (want - this.pace) * (1 - Math.exp(-dt / EASE_UP));
+    const go = PACE * controls.speed * this.pace;
     return controls.basis().fwd.map((x) => x * go);
   }
 }
