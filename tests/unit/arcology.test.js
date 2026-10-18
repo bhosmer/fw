@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import arcology, { CITY, ROW_ID, ROWS } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
+import { Flight } from '../../src/flight.js';
 
 const R = arcology.R;
 const P = R * R;
@@ -70,4 +71,36 @@ test('coarser than the city, all is solid', () => {
   for (const level of [CITY - 1, CITY - 5]) {
     assert.ok(arcology.cellAir([12, 12, 12], [0, 0, 0], [0, ROW_ID, 0], levelSeed(level), undefined, level) >= 1e8);
   }
+});
+
+// Just what Flight needs of the controls.
+const controls = () => ({ yaw: 0, pitch: 0, boost: () => 1 });
+// Fly straight ahead (yaw 0, level) n steps from somewhere in the city,
+// given as the digits of our level -2 and -1 cells.
+function flyFrom(d2, d1, frac, n, each) {
+  const flight = new Flight(arcology, controls());
+  flight.pos.F = -1;
+  flight.pos.frac = frac;
+  flight.pos.digits.set(-2, d2);
+  flight.pos.digits.set(-1, d1);
+  flight.begin();
+  for (let i = 0; i < n; i++) {
+    flight.step(1 / 60, [0, 0, -1]);
+    each(flight, i);
+  }
+}
+
+test('flying level just over the city goes as fast as its buildings are clear', () => {
+  // (Not by how far over the sky's plane we are: half a cell over it, that
+  // was about a cell a second.)
+  let moved = 0;
+  flyFrom([12, ROW_ID % R + ROWS, 12], [12, 0, 0], [0.5, 0.5, 0.5], 600, (f, i) => {
+    if (i >= 300) moved += Math.hypot(...f.lastMove) * Math.pow(R, -1 - f.pos.F);
+  });
+  assert.ok(moved > 10, `${moved} cells in 5 s`);
+});
+
+test('pressed against a building many levels down, flight stays out of it', () => {
+  // (Toward the face of a shaft of the great hexahedron, from just in front.)
+  flyFrom([12, ROW_ID % R, 12], [9, 3, 8], [0.13, 0.18, 0.5], 6000, (f) => assert.ok(f.clearance > 0, `F ${f.pos.F}: ${f.clearance}`));
 });

@@ -51,7 +51,7 @@ export class Flight {
     this.pos = new Position(this.R, space.ancestorDigit, space.start);
     this.here = []; // the levels around us, as sense() last found them
     this.sensed = []; // per level: the clearance it alone gives us
-    this.sky = -1e30; // how high we are above the ground (level-F cells)
+    this.sky = -1e30; // how high we are above the ground, or what stands highest on it (level-F cells)
     this.clearance = 0;
     this.scale = 0.25; // smoothed clearance, level-F cells
     this.pace = 0.25; // smoothed open distance the way we are going
@@ -105,15 +105,15 @@ export class Flight {
   // Our height and the plane's are compared digit by digit from the coarsest
   // level at which we have ever been anywhere but the default, so that close
   // to the plane what is left is a small whole number plus our offset in the
-  // cell.
-  skyHeight() {
+  // cell. under: count from this far under the plane instead (level-F cells).
+  skyHeight(under = 0) {
     const { pos, space, R } = this;
     const plane = space.skyPlane ?? ((j) => (j < 0 ? space.ancestorDigit(j)[1] : j === 0 ? space.ground : 0));
     let acc = 0;
     for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) acc = acc * R + pos.digit(j)[1] - plane(j);
     // (Working coarser than level 0, the plane is part of the way up our cell.)
     for (let j = pos.F + 1; j <= 0; j++) acc -= plane(j) * Math.pow(R, pos.F - j);
-    return Math.max(acc + pos.frac[1], -1e30);
+    return Math.max(acc + pos.frac[1] + under, -1e30);
   }
 
   // How far the way is open in direction dir, in level-F cells. Each stride
@@ -167,7 +167,9 @@ export class Flight {
       const lo = pos.F - UP - FAR;
       this.here = this.around().filter((r) => r.level >= pos.F - UP || ((r.level >= lo || r.level === this.room) && this.airAt(r) < 0));
       this.sensed = this.here.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig }));
-      this.sky = this.skyHeight();
+      // (Over the sky plane, nothing is nearer than what stands highest under
+      // it: clearance goes by that, not by the plane.)
+      this.sky = this.skyHeight((this.space.skyClear ?? 0) * Math.pow(R, pos.F));
       // Somewhere with no air in sight at all (a place we were sent to):
       // look further up for the room we are in.
       if (!(this.sky > 0) && !this.sensed.some((s) => s.air < 0)) {

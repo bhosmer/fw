@@ -37,6 +37,8 @@
 //                  compared with ours digit by digit; where our digits are
 //                  the default ones, those of the levels coarser than any
 //                  we have been elsewhere at must cancel
+//   skyClear       how far under the plane, in level-0 cells, it is open air
+//                  everywhere (optional; none here)
 //   sunReach       how far under the ground plane, in level-0 cells, there
 //                  can be open air the sun shines into (optional; none here)
 //   zenith, roof   the sky's colour overhead; the colour of the ground seen

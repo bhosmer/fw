@@ -401,6 +401,8 @@ const arcology = {
   },
   // Finer than the city, it is halls, whose ways the tour can plan.
   planned: (level) => level > CITY,
+  // Nothing stands higher than the tallest building (in level-0 cells).
+  skyClear: (ROWS * R - Math.max(...BLOCKS.map((b) => b[4]))) * Math.pow(R, -1 - CITY),
   // Sunlight comes down into it as far as the plaza (in level-0 cells).
   sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
 };
