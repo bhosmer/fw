@@ -123,7 +123,7 @@ export class Position {
       u.set(j, uu);
       cu.set(j, uu.map((x) => 1 - x));
     }
-    for (let j = Math.min(F, hi + 1); j >= lo - 1; j--) dg.set(j, this.digit(j));
+    for (let j = Math.min(F, hi + 1); j >= lo - 2; j--) dg.set(j, this.digit(j));
     for (let j = F - 1; j >= lo + 1; j--) {
       const d = dg.get(j + 1);
       const un = u.get(j + 1);
@@ -139,16 +139,19 @@ export class Position {
       const cc = cu.get(k + 1);
       const own = dg.get(k);
       const par = dg.get(k - 1);
+      const gpar = dg.get(k - 2);
       const L = [0, 0, 0];
       const f = [0, 0, 0];
       const id = [0, 0, 0];
+      const pid = [0, 0, 0]; // the parent cell's id
       for (let a = 0; a < 3; a++) {
         const up = uu[a] >= 0.5;
         L[a] = d[a] + (up ? 1 : 0);
         f[a] = up ? -cc[a] : uu[a];
         id[a] = own[a] + R * par[a];
+        pid[a] = par[a] + R * gpar[a];
       }
-      out.push({ level: k, L, f, id, sig: Math.pow(R, k + 1 - F) });
+      out.push({ level: k, L, f, id, pid, sig: Math.pow(R, k + 1 - F) });
     }
 
     // Diagonal surfaces need the same care. How far we are from the plane
