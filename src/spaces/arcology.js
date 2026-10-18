@@ -124,31 +124,34 @@ const NEAR_START = [0];
 for (const k of NEAR.keys()) NEAR_START.push(NEAR_START.at(-1) + NEAR.get(k).length);
 const NEAR_BLOCKS = [...NEAR.values()].flat();
 
-// The buildings' faces are not left flat: galleries are cut into them, at
-// the next level (CITY + 1, whose cells are the units the blocks are
-// measured in), so that the sides of the terraces, the waist and the crown
-// read as built up of smaller masses, as in Soleri's drawings. Each gallery
-// is a box of whole cells (one to four wide, one or two high, one to three
-// deep), open to the plaza on its front and solid everywhere else; no two
-// come within a cell of each other. Which, is worked out here once and kept
-// as a table (a volume, see halls.js), which the shader and cellAir both
-// read.
-//
-// A gallery is one piece of air, running EXT on out of its front into the
-// open air there, so that it is still open however far off it is seen (the
-// engine shrinks air with distance; see halls.js). Every cell that piece
-// reaches into (the gallery's own, and those in front of it) says the same
-// of it, as the rules for pieces that cross from one cell to the next ask.
-// Each such cell holds, in the table's first channel: the gallery's extent
-// in cells from it, for each axis its lowest and highest cell (4 bits each,
-// less 8: x low, x high, y low, ...); which of its faces is open (from bit
-// OPEN_AT: +x, -x, +y, -y, +z, -z); whether the cell has a gallery's air
-// in it (PIECE), and whether that is all there is (TAKEN: the gallery's own
-// cells). The second channel says whether a gallery's air comes within a
-// cell (NEAR): a cell of the halls then must not say its nearest air is
-// any further than its own sides.
-const OPEN_AT = 24, PIECE = 1 << 30, TAKEN = 1 << 31, NEAR_BIT = 1;
-const EXT = 8; // more than the most the engine shrinks air by (close * R)
+// The buildings' faces are not left flat: at the next level (CITY + 1, whose
+// cells are the units the blocks are measured in), each face of a cell
+// wholly in a building that gives onto open air is coffered (three bays by
+// three, each with a shallow recess or none, as its hash says), and each
+// cell a 45-degree face crosses has steps cut into it. Close up these are
+// carved; further off the engine draws them onto the face as texture (see
+// detail in shaders.js), so that the faces read as built up of small
+// masses, as in Soleri's drawings. Which cells have what is worked out here
+// once and kept as a table (a volume, see halls.js), which the shader and
+// cellAir both read: in its first channel,
+//   FACE  (6 bits from 0: +x, -x, +y, -y, +z, -z): the faces of the cell
+//         that are coffered;
+//   FRONT (6 bits from 6): the faces across which the next cell's face is
+//         coffered (whose recesses run on EXT into this one);
+//   STAIR (6 bits from 12): the diagonals the cell is stepped along, 2p + o
+//         for the pair of axes p (as diag has them: xy, zy, xz) and o 0 for
+//         the diagonal, 1 the other (see stairs);
+//   ON    (12 bits from 18): for each of those, whether the next cell along
+//         the third axis, below and above, is stepped the same (so the steps
+//         run on into it);
+// and in its second, NEAR_BIT: some step comes within a cell (a cell of the
+// halls then must not say its nearest air is any further than its sides).
+const FACE_AT = 0, FRONT_AT = 6, STAIR_AT = 12, ON_AT = 18, NEAR_BIT = 1;
+const EXT = 3; // how far a recess runs on out of its face (more than it is deep)
+const STEP = 6; // the steps' size, in lattice units
+const THIRD = [2, 0, 1]; // the axis a pair of axes leaves out
+const PAIRS = [[0, 1], [2, 1], [0, 2]];
+const COFFER_SALT = 0x3c6ef372, BAY_SALT = 0x9e3779b9;
 
 // How far outside each plane of a block a point is (negative: inside), with
 // the plane's normal, as block() has them, from the point itself.
@@ -167,6 +170,7 @@ function planes([x0, y0, z0, x1, y1, z1, kind], [x, y, z]) {
   }
   return out;
 }
+const inBlock = (b, q) => planes(b, q).every(([d]) => d < 0);
 
 export const VOLUME = (() => {
   const lo = [Infinity, 0, Infinity], hi = [-Infinity, TOP + 2, -Infinity];
@@ -190,97 +194,67 @@ export const VOLUME = (() => {
     }
     if (clear && q[1] >= G) open[at([x, y, z])] = 1;
   }
-  let s = 0x7f4a7c15;
-  const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
-  const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
-  // Galleries, tried at random places on the faces of the buildings. Each
-  // is all in solid that is wholly the buildings'; across each of its faces
-  // is either solid of that kind all along, or open air all along (it is
-  // open that way, and its air runs EXT on into that); it is open on its
-  // front at least; and it keeps a cell clear of every other (none touches
-  // another).
-  const kept = new Uint8Array(n);
-  const boxes = [];
-  const sides = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
-  const cellsOf = (b0, b1) => {
-    const out = [];
-    for (let x = b0[0]; x <= b1[0]; x++) for (let y = b0[1]; y <= b1[1]; y++) for (let z = b0[2]; z <= b1[2]; z++) out.push([x, y, z]);
-    return out;
-  };
-  // (Every cell of open air before a face of solid, in no particular
-  // order, each tried a few ways.)
-  const spots = [];
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
-    for (const e of sides) {
-      const o = [x, y, z], i = o.map((v, a) => v + e[a]);
-      if (open[at(o)] && within(i) && deep[at(i)]) spots.push([o, e]);
-    }
-  for (let i = spots.length - 1; i > 0; i--) {
-    const j = int(0, i);
-    [spots[i], spots[j]] = [spots[j], spots[i]];
-  }
-  for (const [o, e] of spots.flatMap((x) => [x, x, x])) {
-    // e into the building, t across its face.
-    const t = e[0] ? [0, 0, 1] : [1, 0, 0];
-    const w = int(1, 4), h = int(1, 2), d = int(1, 3), u0 = -int(0, w - 1), y0 = -int(0, h - 1);
-    const ends = [[u0, y0, 1], [u0 + w - 1, y0 + h - 1, d]].map(([i, j, k]) => [0, 1, 2].map((a) => o[a] + t[a] * i + (a === 1 ? j : 0) + e[a] * k));
-    const b0 = [0, 1, 2].map((a) => Math.min(ends[0][a], ends[1][a])), b1 = [0, 1, 2].map((a) => Math.max(ends[0][a], ends[1][a]));
-    const cells = cellsOf(b0, b1);
-    if (!cells.every((c) => within(c) && deep[at(c)] && c[1] + lo[1] >= G && !kept[at(c)])) continue;
-    // Each face: open all along, or solid all along.
-    const front = e[0] ? (e[0] > 0 ? 1 : 0) : e[2] > 0 ? 5 : 4;
-    const opens = [];
-    let ok = true;
-    for (let a = 0; a < 3 && ok; a++) for (const side of [1, -1]) {
-      const f0 = b0.slice(), f1 = b1.slice();
-      f0[a] = f1[a] = side > 0 ? b1[a] + 1 : b0[a] - 1;
-      const across = cellsOf(f0, f1);
-      if (!across.every(within)) { ok = false; break; }
-      // (Open only on its front, top or bottom: across its back and its
-      // sides it is all solid, so that it never cuts through a shaft or
-      // round a corner.)
-      const way = 2 * a + (side > 0 ? 0 : 1);
-      if ((a === 1 || way === front) && across.every((c) => open[at(c)])) opens.push(way);
-      else if (!across.every((c) => deep[at(c)])) { ok = false; break; }
-    }
-    if (!ok || !opens.includes(front)) continue;
-    // The cells its air reaches into, past its open faces (all must be
-    // open air, none kept clear for another).
-    const x0 = b0.slice(), x1 = b1.slice();
-    for (const way of opens) (way & 1 ? (x0[way >> 1] -= 1) : (x1[way >> 1] += 1));
-    const before = cellsOf(x0, x1).filter((c) => c.some((v, a) => v < b0[a] || v > b1[a]));
-    if (!before.every((c) => within(c) && open[at(c)] && !kept[at(c)])) continue;
-    for (const c of [...cells, ...before]) for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const m = [c[0] + dx, c[1] + dy, c[2] + dz];
-      if (within(m)) kept[at(m)] = 1;
-    }
-    boxes.push({ cells, front: before, lo: b0, hi: b1, opens });
-  }
   const data = new Uint32Array(2 * n);
-  for (const { cells, front, lo: bl, hi: bh, opens } of boxes) {
-    const say = (c, taken) => {
-      let v = PIECE | (taken ? TAKEN : 0);
-      for (const way of opens) v |= 1 << (OPEN_AT + way);
-      for (let a = 0; a < 3; a++) v |= ((bl[a] - c[a] + 8) << (8 * a)) | ((bh[a] - c[a] + 8) << (8 * a + 4));
-      data[2 * at(c)] = v >>> 0;
-    };
-    for (const c of cells) say(c, true);
-    for (const c of front) say(c, false);
-    for (const c of [...cells, ...front]) for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const m = [c[0] + dx, c[1] + dy, c[2] + dz];
-      if (within(m)) data[2 * at(m) + 1] = NEAR_BIT;
+  const sides = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  // Coffered faces: of a cell wholly in a building, onto one wholly clear.
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+    const v = [x, y, z];
+    if (!deep[at(v)]) continue;
+    sides.forEach((e, k) => {
+      const u = v.map((q, a) => q + e[a]);
+      if (!within(u) || !open[at(u)]) return;
+      data[2 * at(v)] |= 1 << (FACE_AT + k);
+      data[2 * at(u)] |= 1 << (FRONT_AT + (k ^ 1));
+    });
+  }
+  // Stepped cells: a 45-degree face runs exactly along one of the cell's
+  // diagonals (the blocks' corners are on the lattice), with one side of it
+  // inside a single block and the other clear of every block (and the cell
+  // over the plaza's floor). Seen at points either side of the diagonal, a
+  // little off it.
+  const stepped = (v, p, o) => {
+    const [a, b] = PAIRS[p], c = THIRD[p], base = v.map((q, k) => q + lo[k]);
+    if (base[1] < G) return false;
+    const seen = [new Set(), new Set()]; // each side: the block it is in (-1 none, -2 several)
+    for (const [h, s] of [[0, 1], [1, -1]]) for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) {
+      // Along the diagonal (t), off it (off), across (w).
+      const t = (i + 0.5) / 5, off = 0.1 + 0.15 * j, w = ((i * 3 + j * 7) % 5) / 5 + 0.1;
+      const ua = t + (s * off) / 2, ub = o === 0 ? t - (s * off) / 2 : 1 - t + (s * off) / 2;
+      if (ua <= 0 || ua >= 1 || ub <= 0 || ub >= 1) continue;
+      const q = base.slice();
+      (q[a] += ua), (q[b] += ub), (q[c] += w);
+      const ins = BLOCKS.flatMap((B, k) => (inBlock(B, q) ? [k] : []));
+      seen[h].add(ins.length === 1 ? ins[0] : ins.length ? -2 : -1);
+    }
+    const one = (S) => S.size === 1 && [...S][0] >= 0, none = (S) => S.size === 1 && S.has(-1);
+    return (one(seen[0]) && none(seen[1])) || (none(seen[0]) && one(seen[1]));
+  };
+  const steps = [];
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+    const v = [x, y, z];
+    if (deep[at(v)] || open[at(v)]) continue;
+    for (let p = 0; p < 3; p++) for (let o = 0; o < 2; o++)
+      if (stepped(v, p, o)) (data[2 * at(v)] |= 1 << (STAIR_AT + 2 * p + o)), steps.push(v);
+  }
+  for (const v of steps) {
+    const m = data[2 * at(v)];
+    for (let s = 0; s < 6; s++) {
+      if (!(m & (1 << (STAIR_AT + s)))) continue;
+      const c = THIRD[s >> 1];
+      [-1, 1].forEach((side, h) => {
+        const u = v.slice();
+        u[c] += side;
+        if (within(u) && data[2 * at(u)] & (1 << (STAIR_AT + s))) data[2 * at(v)] |= 1 << (ON_AT + 2 * s + h);
+      });
+    }
+    for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const u = [v[0] + dx, v[1] + dy, v[2] + dz];
+      if (within(u)) data[2 * at(u) + 1] = NEAR_BIT;
     }
   }
-  return { lo, size, data, galleries: boxes.length, deep, open, at, within };
+  for (let i = 0; i < n; i++) data[2 * i] >>>= 0;
+  return { lo, size, data, deep, open, at, within, stepped: new Set(steps.map((v) => v.join())).size };
 })();
-
-// Whether the level-(CITY + 1) cell id is one of a gallery's (as near the
-// middle city cell as ids tell apart).
-function galleryAt(id) {
-  const { lo, data, at, within } = VOLUME, P = R * R;
-  const v = id.map((x, a) => ((((x - R * (a === 1 ? ROW : C) - lo[a]) % P) + P) % P));
-  return within(v) && (data[2 * at(v)] & TAKEN) !== 0;
-}
 
 // The ways into the buildings from the plaza, for the tour (see
 // Planner.waysFromCity): each a room of the halls one level finer than the
@@ -288,17 +262,17 @@ function galleryAt(id) {
 // straight out onto open air. As { id, e }: the room's cell's id at that
 // level, and the way out of it through the opening.
 export const ENTRANCES = (() => {
-  const { lo, size, deep, open, data, at, within } = VOLUME;
+  const { lo, size, deep, open, at, within } = VOLUME;
   const seed = levelSeed(CITY + 1), out = [];
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = [x, y, z];
-    if (!deep[at(v)] || data[2 * at(v)] & TAKEN) continue;
+    if (!deep[at(v)]) continue;
     const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
     if (!hallsRoom(id, seed)) continue;
     for (const o of hallsOpenings(id, seed)) {
       if (o.e[1] !== 0) continue;
       const u = v.map((q, a) => q + o.e[a]);
-      if (within(u) && open[at(u)] && !(data[2 * at(u)] & PIECE)) out.push({ id, e: o.e, at: o.at });
+      if (within(u) && open[at(u)]) out.push({ id, e: o.e, at: o.at });
     }
   }
   return out;
@@ -321,8 +295,8 @@ const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `i
 
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
-const int OPEN_AT = ${OPEN_AT}, EXT = ${EXT};
-const uint PIECE = ${PIECE >>> 0}u, TAKEN = ${TAKEN >>> 0}u, NEAR_BIT = ${NEAR_BIT}u;
+const int FACE_AT = ${FACE_AT}, FRONT_AT = ${FRONT_AT}, STAIR_AT = ${STAIR_AT}, ON_AT = ${ON_AT}, EXT = ${EXT}, STEP = ${STEP};
+const uint NEAR_BIT = ${NEAR_BIT}u, COFFER_SALT = ${COFFER_SALT}u, BAY_SALT = ${BAY_SALT}u;
 
 // Where the middle city cell is from this one, in lattice units.
 ivec3 fromMiddle(ivec3 id) {
@@ -331,7 +305,7 @@ ivec3 fromMiddle(ivec3 id) {
 
 // What the table says of the level-(CITY + 1) cell id, in a city cell
 // (whose id is up): nothing, if it is not in the table.
-uvec2 gallery(ivec3 id, ivec3 up) {
+uvec2 relief(ivec3 id, ivec3 up) {
   if (up.y < ${ROW_ID} || up.y >= ${ROW_ID + ROWS}) return uvec2(0u);
   ivec3 own = id - R * ivec3(floor((vec3(id) + 0.5) / float(R)));
   ivec3 v = fromMiddle(up) + own - VOL_LO;
@@ -339,33 +313,91 @@ uvec2 gallery(ivec3 id, ivec3 up) {
   return texelFetch(uVolume, v, 0).rg;
 }
 
-// The gallery whose air is in this cell (m, from the table): one box.
-float galleryAir(ivec3 L, vec3 f, uint m) {
+ivec3 put(ivec3 v, int a, int x) { return a == 0 ? ivec3(x, v.y, v.z) : a == 1 ? ivec3(v.x, x, v.z) : ivec3(v.x, v.y, x); }
+int at3(ivec3 v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
+float at3(vec3 v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
+
+// A box of air, lo to hi (lattice units).
+float boxAir(ivec3 L, vec3 f, ivec3 lo, ivec3 hi) {
   airPiece();
-  for (int a = 0; a < 3; a++) {
-    int lo = (int((m >> uint(8 * a)) & 15u) - 8) * R - (((m >> uint(OPEN_AT + 2 * a + 1)) & 1u) == 1u ? EXT : 0);
-    int hi = (int((m >> uint(8 * a + 4)) & 15u) - 7) * R + (((m >> uint(OPEN_AT + 2 * a)) & 1u) == 1u ? EXT : 0);
-    airSpan(a == 0 ? L.x : a == 1 ? L.y : L.z, a == 0 ? f.x : a == 1 ? f.y : f.z, lo, hi, a == 0 ? EX : a == 1 ? EY : EZ);
-  }
+  airSpan(L.x, f.x, lo.x, hi.x, EX);
+  airSpan(L.y, f.y, lo.y, hi.y, EY);
+  airSpan(L.z, f.z, lo.z, hi.z, EZ);
   return gD;
 }
-
-// A level-(CITY + 1) cell the table says something of: a gallery's own
-// (all air, the gallery's), or one of the halls with a gallery's air in it
-// or near it (d, reach and nrm being what the halls say of it).
-float galleryCell(ivec3 L, vec3 f, uvec2 m, float d, inout float reach, inout vec3 nrm) {
-  bool ray = gRay;
-  if ((m.x & PIECE) != 0u) {
+// The same, united with what is known of the air here so far: its
+// distance d, and for a ray (ray), how far on it stays in air (reach, nrm).
+float unite(ivec3 L, vec3 f, ivec3 lo, ivec3 hi, float d, bool ray, inout float reach, inout vec3 nrm) {
+  gRay = false;
+  float g = boxAir(L, f, lo, hi);
+  if (ray && g + gO <= 0.0) {
+    gRay = true;
+    boxAir(L, f, lo, hi);
     gRay = false;
-    float g = galleryAir(L, f, m.x);
-    if (ray && g + gO <= 0.0) {
-      gRay = true;
-      galleryAir(L, f, m.x);
-      if (gX > reach) { reach = gX; nrm = gN; }
-    }
-    gRay = ray;
-    d = (m.x & TAKEN) != 0u ? g : min(d, g);
+    if (gX > reach) { reach = gX; nrm = gN; }
   }
+  return min(d, g);
+}
+
+// The recess, if any, in the bay of the coffered face k (+x, -x, +y, ...)
+// of the cell sid that the point is across from, as a box in this cell's
+// lattice units; the face being on this cell's side k, and the cell sid
+// this one (inward -1) or the next one across it (inward 1). Its depth is
+// 0 (none), 1 or 2, as the hash of its cell, face and bay says, and it runs
+// EXT on out of the face. Returns how far off any of the face's recesses
+// is, at least (none is nearer than the edge of the bay we are across from,
+// and one more; nor than the layer they are in).
+float coffer(ivec3 L, vec3 f, int k, ivec3 sid, int face, int inward, uint seed, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int a = k >> 1, b = a == 0 ? 1 : 0, c = a == 2 ? 1 : 2;
+  int plane = (k & 1) == 0 ? R : 0, side = (k & 1) == 0 ? 1 : -1;
+  float pb = float(at3(L, b)) + at3(f, b), pc = float(at3(L, c)) + at3(f, c);
+  int i = clamp(int(floor((pb - 3.0) / 6.0)), 0, 2), j = clamp(int(floor((pc - 3.0) / 6.0)), 0, 2);
+  float thin = 0.25 + 0.4 * h01(hashCell(sid, seed ^ (COFFER_SALT + uint(face) * 0x85ebca6bu)));
+  float t = h01(hashCell(sid, seed ^ (COFFER_SALT + uint(face * 9 + i * 3 + j) * BAY_SALT)));
+  // Into the cell sid: across the plane from this cell (side), or back (if
+  // sid is this cell). The recesses are all in the layer from 2 into it to
+  // EXT out of it; and none is nearer than the edges of our bay, and one.
+  int into = inward > 0 ? side : -side;
+  float x = float(at3(L, a)) + at3(f, a);
+  float layer = max(float(min(plane + into * 2, plane - into * EXT)) - x, x - float(max(plane + into * 2, plane - into * EXT)));
+  float eb = min(i > 0 ? pb - float(3 + 6 * i) : 1e9, i < 2 ? float(9 + 6 * i) - pb : 1e9);
+  float ec = min(j > 0 ? pc - float(3 + 6 * j) : 1e9, j < 2 ? float(9 + 6 * j) - pc : 1e9);
+  float cap = max(layer, min(eb, ec) + 1.0);
+  if (t < thin) return min(d, cap);
+  int depth = (t - thin) / (1.0 - thin) < 0.5 ? 1 : 2;
+  int n0 = min(plane + into * depth, plane - into * EXT), n1 = max(plane + into * depth, plane - into * EXT);
+  ivec3 bl = put(put(put(ivec3(0), a, n0), b, 4 + 6 * i), c, 4 + 6 * j);
+  ivec3 bh = put(put(put(ivec3(0), a, n1), b, 8 + 6 * i), c, 8 + 6 * j);
+  return min(unite(L, f, bl, bh, d, ray, reach, nrm), cap);
+}
+
+// The steps cut along diagonal s (see STAIR_AT) of this cell: squares of
+// STEP down it, each a box across the cell along the third axis (and on a
+// unit into the next cell where it is stepped the same, on: below, above).
+float stairs(ivec3 L, vec3 f, int s, uint on, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int p = s >> 1, a = p == 1 ? 2 : 0, b = p == 2 ? 2 : 1, c = p == 0 ? 2 : p == 1 ? 0 : 1;
+  int c0 = (on & 1u) != 0u ? -1 : 0, c1 = (on & 2u) != 0u ? R + 1 : R;
+  for (int k = 0; k < R / STEP; k++) {
+    int b0 = (s & 1) == 0 ? STEP * k : R - STEP * (k + 1);
+    ivec3 lo = put(put(put(ivec3(0), a, STEP * k), b, b0), c, c0);
+    ivec3 hi = put(put(put(ivec3(0), a, STEP * (k + 1)), b, b0 + STEP), c, c1);
+    d = unite(L, f, lo, hi, d, ray, reach, nrm);
+  }
+  return d;
+}
+
+// A level-(CITY + 1) cell the table says something of: the halls' air in it
+// (d, reach and nrm being what the halls say of it), with the recesses of
+// its own coffered faces and the next cells', and its steps.
+float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout float reach, inout vec3 nrm) {
+  bool ray = gRay;
+  for (int k = 0; k < 6; k++) {
+    ivec3 e = put(ivec3(0), k >> 1, (k & 1) == 0 ? 1 : -1);
+    if ((m.x & (1u << uint(FACE_AT + k))) != 0u) d = coffer(L, f, k, id, k, -1, seed, d, ray, reach, nrm);
+    if ((m.x & (1u << uint(FRONT_AT + k))) != 0u) d = coffer(L, f, k, wrapId(id + e), k ^ 1, 1, seed, d, ray, reach, nrm);
+    if ((m.x & (1u << uint(STAIR_AT + k))) != 0u) d = stairs(L, f, k, (m.x >> uint(ON_AT + 2 * k)) & 3u, d, ray, reach, nrm);
+  }
+  gRay = ray;
   if (d <= 0.0 || (m.y & NEAR_BIT) == 0u) return d;
   float e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)),
                 min(float(R - L.z) - f.z, float(L.z) + f.z));
@@ -491,15 +523,10 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   }
   if (level == ${CITY} && id.y >= ${ROW_ID} && id.y < ${ROW_ID + ROWS}) return city(L, f, id, seed, reach, nrm);
   if (level == ${CITY + 1}) {
-    uvec2 m = gallery(id, gUp);
-    if ((m.x & TAKEN) != 0u) {
-      reach = -1.0;
-      nrm = vec3(0.0);
-      return galleryCell(L, f, m, 1e9, reach, nrm);
-    }
+    uvec2 m = relief(id, gUp);
     if (m != uvec2(0u)) {
       float d = hallsCell(L, f, id, seed, reach, nrm);
-      return galleryCell(L, f, m, d, reach, nrm);
+      return reliefCell(L, f, id, seed, m, d, reach, nrm);
     }
   }
   // Over the city there is only sky, and the city's air comes right up to
@@ -587,7 +614,7 @@ function plaza(L, f, id) {
   return Math.max(box, -d);
 }
 
-function gallery(id, up) {
+function relief(id, up) {
   if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0];
   const o = fromMiddle(up), v = [0, 1, 2].map((a) => o[a] + (((id[a] % R) + R) % R) - VOLUME.lo[a]);
   if (v.some((x, a) => x < 0 || x >= VOLUME.size[a])) return [0, 0];
@@ -595,15 +622,49 @@ function gallery(id, up) {
   return [VOLUME.data[i], VOLUME.data[i + 1]];
 }
 
-function galleryCell(L, f, [m, near], d) {
-  if (m & PIECE) {
-    piece();
-    for (let a = 0; a < 3; a++) {
-      const lo = (((m >>> (8 * a)) & 15) - 8) * R - ((m >>> (OPEN_AT + 2 * a + 1)) & 1 ? EXT : 0);
-      const hi = (((m >>> (8 * a + 4)) & 15) - 7) * R + ((m >>> (OPEN_AT + 2 * a)) & 1 ? EXT : 0);
-      span(L[a], f[a], lo, hi);
-    }
-    d = m & TAKEN ? gD : Math.min(d, gD);
+const boxAir = (L, f, lo, hi) => (piece(), [0, 1, 2].forEach((a) => span(L[a], f[a], lo[a], hi[a])), gD);
+const put = (a, x, b, y, c, z) => {
+  const v = [0, 0, 0];
+  (v[a] = x), (v[b] = y), (v[c] = z);
+  return v;
+};
+
+function coffer(L, f, k, sid, face, inward, seed, d) {
+  const a = k >> 1, b = a === 0 ? 1 : 0, c = a === 2 ? 1 : 2;
+  const plane = k & 1 ? 0 : R, side = k & 1 ? -1 : 1;
+  const pb = L[b] + f[b], pc = L[c] + f[c];
+  const i = Math.max(0, Math.min(2, Math.floor((pb - 3) / 6))), j = Math.max(0, Math.min(2, Math.floor((pc - 3) / 6)));
+  const thin = 0.25 + 0.4 * h01(hashCell(sid, (seed ^ ((COFFER_SALT + Math.imul(face, 0x85ebca6b)) >>> 0)) >>> 0));
+  const t = h01(hashCell(sid, (seed ^ ((COFFER_SALT + Math.imul(face * 9 + i * 3 + j, BAY_SALT)) >>> 0)) >>> 0));
+  const into = inward > 0 ? side : -side;
+  const x = L[a] + f[a];
+  const layer = Math.max(Math.min(plane + into * 2, plane - into * EXT) - x, x - Math.max(plane + into * 2, plane - into * EXT));
+  const eb = Math.min(i > 0 ? pb - (3 + 6 * i) : 1e9, i < 2 ? 9 + 6 * i - pb : 1e9);
+  const ec = Math.min(j > 0 ? pc - (3 + 6 * j) : 1e9, j < 2 ? 9 + 6 * j - pc : 1e9);
+  const cap = Math.max(layer, Math.min(eb, ec) + 1);
+  if (t < thin) return Math.min(d, cap);
+  const depth = (t - thin) / (1 - thin) < 0.5 ? 1 : 2;
+  const n0 = Math.min(plane + into * depth, plane - into * EXT), n1 = Math.max(plane + into * depth, plane - into * EXT);
+  return Math.min(d, boxAir(L, f, put(a, n0, b, 4 + 6 * i, c, 4 + 6 * j), put(a, n1, b, 8 + 6 * i, c, 8 + 6 * j)), cap);
+}
+
+function stairs(L, f, s, on, d) {
+  const p = s >> 1, [a, b] = PAIRS[p], c = THIRD[p];
+  const c0 = on & 1 ? -1 : 0, c1 = on & 2 ? R + 1 : R;
+  for (let k = 0; k < R / STEP; k++) {
+    const b0 = s & 1 ? R - STEP * (k + 1) : STEP * k;
+    d = Math.min(d, boxAir(L, f, put(a, STEP * k, b, b0, c, c0), put(a, STEP * (k + 1), b, b0 + STEP, c, c1)));
+  }
+  return d;
+}
+
+function reliefCell(L, f, id, seed, [m, near], d) {
+  for (let k = 0; k < 6; k++) {
+    const e = [0, 0, 0];
+    e[k >> 1] = k & 1 ? -1 : 1;
+    if (m & (1 << (FACE_AT + k))) d = coffer(L, f, k, id, k, -1, seed, d);
+    if (m & (1 << (FRONT_AT + k))) d = coffer(L, f, k, wrapId(id.map((x, a) => x + e[a])), k ^ 1, 1, seed, d);
+    if (m & (1 << (STAIR_AT + k))) d = stairs(L, f, k, (m >>> (ON_AT + 2 * k)) & 3, d);
   }
   if (d <= 0 || !(near & NEAR_BIT)) return d;
   return Math.min(d, R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
@@ -612,9 +673,8 @@ function galleryCell(L, f, [m, near], d) {
 function cellAir(L, f, id, seed, dg, level, up) {
   if (level < CITY) return NONE;
   if (level === CITY + 1) {
-    const m = gallery(id, up);
-    if (m[0] & TAKEN) return galleryCell(L, f, m, NONE);
-    if (m[0] || m[1]) return galleryCell(L, f, m, hallsAir(L, f, id, seed, dg));
+    const m = relief(id, up);
+    if (m[0] || m[1]) return reliefCell(L, f, id, seed, m, hallsAir(L, f, id, seed, dg));
   }
   if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return L[1] + R * (id[1] - ROW_ID - ROWS) + f[1];
   if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg);
@@ -667,11 +727,9 @@ const arcology = {
   skyPlane(j) {
     return j === CITY + 1 ? ROWS * R : j > CITY + 1 ? 0 : arcology.ancestorDigit(j)[1];
   },
-  // Finer than the city, it is halls, whose ways the tour can plan; but a
-  // gallery's cells are not rooms (and from the plaza, the ways in are
-  // ENTRANCES).
+  // Finer than the city, it is halls, whose ways the tour can plan (and
+  // from the plaza, the ways in are ENTRANCES).
   planned: (level) => level > CITY,
-  notRoom: (level, id) => level === CITY + 1 && galleryAt(id),
   entrances: { level: CITY + 1, list: ENTRANCES },
   // Nothing stands higher than the tallest building (in level-0 cells).
   skyClear: (ROWS * R - Math.max(...BLOCKS.map((b) => b[4]))) * Math.pow(R, -1 - CITY),

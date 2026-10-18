@@ -33,7 +33,7 @@ const PLACES = {
   doorway: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6NSwiZnJhYyI6WzAuMTM4NDEyMzMxMzYzNzIzOCwwLjIxNDk5MDAyMjQwMTc0MTk4LDAuMTA2Nzk2NzA2MTM0MDM5MjRdLCJkaWdpdHMiOltbLTEsWzcsMTgsMTZdXSxbMCxbMTYsMTcsNV1dLFsxLFsxNSw2LDIxXV0sWzIsWzIwLDcsMl1dLFszLFsyMSw3LDEzXV0sWzQsWzAsMTAsMF1dLFs1LFswLDE2LDBdXV0sInlhdyI6MTMuOTYyNTg5NzIyMjkyMzM2LCJwaXRjaCI6LTAuMzM0NzMzNzg5OTMwOTczMTR9',
   // Close to a corner where two walls meet, facing into it.
   // Galleries in the arcology's buildings, from in front of a terrace.
-  galleries: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTEsImZyYWMiOlswLjUsMC41LDAuNV0sImRpZ2l0cyI6W1stMixbMTIsMTIsMTNdXSxbLTEsWzEyLDIyLDZdXV0sInlhdyI6MCwicGl0Y2giOi0wLjE1fQ==',
+  relief: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTEsImZyYWMiOlswLjUsMC41LDAuNV0sImRpZ2l0cyI6W1stMixbMTIsMTIsMTNdXSxbLTEsWzEyLDIyLDZdXV0sInlhdyI6MCwicGl0Y2giOi0wLjE1fQ==',
   corner: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6MiwiZnJhYyI6WzAuNzMyOTI0NDcxMDI0NjE1NiwwLjIyODE0MzU3NzQxNjMwOTgzLDAuNzM0NDE2NTc4OTI4MTc5Nl0sImRpZ2l0cyI6W1stMSxbNywxOCwxNl1dLFswLFsxNiwxNyw1XV0sWzEsWzE1LDYsMjFdXSxbMixbMjEsNywyXV1dLCJ5YXciOjE0Ljk2OTQyMzUwNTYxNDc1MywicGl0Y2giOjAuMDAwMTE3NTk3OTM4MDI1Njk2NzZ9',
 };
 
@@ -127,9 +127,9 @@ check('from above, each world is stepped through truly', async () => {
 // more than they do now (by more than a tenth of the distance, as fractions
 // of the picture).
 // Per place: at most how many pixels the exact way may see nearer, and at
-// most how many may disagree. (The galleries: sphere tracing grazes the
+// most how many may disagree. (The relief: sphere tracing grazes the
 // arcology's long faces badly, there as elsewhere in it.)
-const STEPPING = { court: [0.002, 0.07], ground: [0.002, 0.06], start: [0.002, 0.01], galleries: [0.015, 0.05] };
+const STEPPING = { court: [0.002, 0.07], ground: [0.002, 0.06], start: [0.002, 0.01], relief: [0.015, 0.05] };
 check('the two ways of stepping rays agree', async () => {
   for (const [place, [nearer, most]] of Object.entries(STEPPING)) {
     await load(place);

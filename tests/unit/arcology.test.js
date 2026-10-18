@@ -105,24 +105,58 @@ test('pressed against a building many levels down, flight stays out of it', () =
   flyFrom([12, ROW_ID % R, 12], [9, 3, 8], [0.13, 0.18, 0.5], 6000, (f) => assert.ok(f.clearance > 0, `F ${f.pos.F}: ${f.clearance}`));
 });
 
-test('the galleries are boxes, each said alike by every cell its air reaches, and none touches another', () => {
-  const { size, data } = VOLUME;
-  const box = new Map(); // each cell with a gallery's air in it: that gallery, as absolute cells
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
-    const i = x + size[0] * (y + size[1] * z), m = data[2 * i];
-    if (!(m & (1 << 30))) continue;
-    const c = [x, y, z];
-    const lo = c.map((v, a) => v + ((m >>> (8 * a)) & 15) - 8), hi = c.map((v, a) => v + ((m >>> (8 * a + 4)) & 15) - 8);
-    const taken = !!(m & (1 << 31)), inBox = c.every((v, a) => v >= lo[a] && v <= hi[a]);
-    assert.equal(taken, inBox, `cell ${c}: all air exactly when it is in its gallery`);
-    box.set(i, `${lo}|${hi}|${(m >>> 24) & 63}`);
+// The cells the relief table says something of (see VOLUME), as cells of
+// level CITY + 1 measured from the middle city cell's corner; and the
+// distance at a point in one (lattice units q, 0..R), as cellAir has it.
+const C = R / 2, seed1 = levelSeed(CITY + 1);
+const reliefCells = (() => {
+  const { lo, size, data } = VOLUME, out = [];
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
+    if (data[2 * (x + size[0] * (y + size[1] * z))]) out.push([x + lo[0], y + lo[1], z + lo[2]]);
+  return out;
+})();
+function air1(v, q) {
+  const id = wrapId([v[0] + R * C, v[1] + (ROW_ID % R) * R, v[2] + R * C]);
+  const up = wrapId([0, 1, 2].map((a) => (a === 1 ? ROW_ID : C + R * C) + Math.floor(v[a] / R)));
+  const L = q.map(Math.round);
+  return arcology.cellAir(L, q.map((x, a) => x - L[a]), id, seed1, undefined, CITY + 1, up);
+}
+
+test('the buildings\' relief never changes faster than the point moves', () => {
+  const rnd = rand(11);
+  let worst = 0;
+  assert.ok(reliefCells.length > 5000, `${reliefCells.length} cells with relief`);
+  for (let n = 0; n < 40000; n++) {
+    const v = reliefCells[Math.floor(rnd() * reliefCells.length)];
+    const q = [0, 1, 2].map(() => 0.6 + rnd() * (R - 1.2));
+    const step = 10 ** (rnd() * 3 - 2);
+    const dir = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
+    const len = Math.hypot(...dir);
+    const q2 = q.map((x, a) => Math.min(R - 0.51, Math.max(0.51, x + (dir[a] / len) * step)));
+    const moved = Math.hypot(...q2.map((x, a) => x - q[a]));
+    const change = Math.abs(air1(v, q2) - air1(v, q));
+    worst = Math.max(worst, change / moved);
+    assert.ok(change <= moved * (1 + 1e-6) + 1e-9, `changed ${change} over ${moved} at ${q} in ${v}`);
   }
-  assert.ok(new Set(box.values()).size > 100, `${new Set(box.values()).size} galleries`);
-  for (const [i, name] of box) {
-    const c = [i % size[0], Math.floor(i / size[0]) % size[1], Math.floor(i / (size[0] * size[1]))];
-    for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const j = c[0] + dx + size[0] * (c[1] + dy + size[1] * (c[2] + dz));
-      if (box.has(j)) assert.equal(box.get(j), name, `two galleries meet at ${c}`);
-    }
+  assert.ok(worst > 0.5, 'the test moves through enough surfaces to mean something');
+});
+
+test('where relief crosses from one cell to the next, both cells say so', () => {
+  const rnd = rand(12);
+  let crossed = 0;
+  for (let n = 0; n < 40000; n++) {
+    const v = reliefCells[Math.floor(rnd() * reliefCells.length)];
+    const a = Math.floor(rnd() * 3), side = rnd() < 0.5 ? 1 : -1;
+    const u = v.slice();
+    u[a] += side;
+    // A point on the face between them, as each has it.
+    const q = [0, 1, 2].map(() => 0.5 + rnd() * (R - 1));
+    q[a] = side > 0 ? R : 0;
+    const p = q.slice();
+    p[a] = side > 0 ? 0 : R;
+    const here = air1(v, q), there = air1(u, p);
+    if (here < -0.05 || there < -0.05) crossed++;
+    assert.ok(!(here < -0.05 && there > 0.05) && !(there < -0.05 && here > 0.05), `${v} says ${here}, ${u} says ${there}, at ${q}`);
   }
+  assert.ok(crossed > 100, `${crossed} points in air on a face`);
 });
