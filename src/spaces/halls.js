@@ -14,9 +14,14 @@
 //                  When gRay is set it also answers for a ray: if the point
 //                  is in air, reach is how far the ray goes before leaving
 //                  the piece of air it is in (and nrm the surface there);
-//                  otherwise reach is negative. See "Rays" below.
+//                  otherwise reach is negative. See "Rays" below. The id
+//                  of the cell's parent is in gUp.
 //   cellAir        the distance alone, in JavaScript (see below), given
-//                  (L, f, id, seed, dg, level)
+//                  (L, f, id, seed, dg, level, up), up the parent's id
+//   volume         optionally, a table the space looks things up in rather
+//                  than work them out: { size, data }, data a Uint32Array of
+//                  two numbers for each of size[0] * size[1] * size[2]
+//                  cells, x fastest; in the shader, the usampler3D uVolume
 //   maxInterior    largest clearance any point in a cell's air can have, as a
 //                  fraction of the cell
 //   longestWay     the longest way through any one convex piece of a cell's

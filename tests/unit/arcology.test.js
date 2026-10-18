@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import arcology, { CITY, ROW_ID, ROWS } from '../../src/spaces/arcology.js';
+import arcology, { CITY, ROW_ID, ROWS, VOLUME } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight } from '../../src/flight.js';
@@ -103,4 +103,26 @@ test('flying level just over the city goes as fast as its buildings are clear', 
 test('pressed against a building many levels down, flight stays out of it', () => {
   // (Toward the face of a shaft of the great hexahedron, from just in front.)
   flyFrom([12, ROW_ID % R, 12], [9, 3, 8], [0.13, 0.18, 0.5], 6000, (f) => assert.ok(f.clearance > 0, `F ${f.pos.F}: ${f.clearance}`));
+});
+
+test('the galleries are boxes, each said alike by every cell its air reaches, and none touches another', () => {
+  const { size, data } = VOLUME;
+  const box = new Map(); // each cell with a gallery's air in it: that gallery, as absolute cells
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+    const i = x + size[0] * (y + size[1] * z), m = data[2 * i];
+    if (!(m & (1 << 30))) continue;
+    const c = [x, y, z];
+    const lo = c.map((v, a) => v + ((m >>> (8 * a)) & 15) - 8), hi = c.map((v, a) => v + ((m >>> (8 * a + 4)) & 15) - 8);
+    const taken = !!(m & (1 << 31)), inBox = c.every((v, a) => v >= lo[a] && v <= hi[a]);
+    assert.equal(taken, inBox, `cell ${c}: all air exactly when it is in its gallery`);
+    box.set(i, `${lo}|${hi}|${(m >>> 24) & 63}`);
+  }
+  assert.ok(new Set(box.values()).size > 100, `${new Set(box.values()).size} galleries`);
+  for (const [i, name] of box) {
+    const c = [i % size[0], Math.floor(i / size[0]) % size[1], Math.floor(i / (size[0] * size[1]))];
+    for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const j = c[0] + dx + size[0] * (c[1] + dy + size[1] * (c[2] + dz));
+      if (box.has(j)) assert.equal(box.get(j), name, `two galleries meet at ${c}`);
+    }
+  }
 });

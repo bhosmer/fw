@@ -97,7 +97,9 @@ export class Flight {
       dg.Lp[p] = rec.Lp[p] + rp - (cell[a] + cell[b]) * R;
       dg.Lm[p] = rec.Lm[p] + rm - (cell[a] - cell[b]) * R;
     });
-    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level);
+    // (And the id of the cell's parent: see gUp in shaders.js.)
+    const up = rec.pid.map((p, a) => p + Math.floor((rec.id[a] - R * Math.floor(rec.id[a] / R) + cell[a]) / R));
+    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level, wrapId(up, R));
   }
 
   // How far we are above the ground: the one plane over which there is only

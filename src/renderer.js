@@ -24,7 +24,10 @@ function link(gl, frag, names) {
   return { prog, u };
 }
 
-const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm'];
+const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm'];
+
+// The texture unit a space's volume is kept on (0 and 1 are the picture's).
+const VOLUME_UNIT = 2;
 
 // Shafts of light are drawn for one pixel in this many each way (see draw).
 const SHAFT_STRIDE = 6;
@@ -51,7 +54,9 @@ export class Renderer {
     this.makeRef = () => link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
     this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
-    // Shafts of light are drawn into this, coarser than the picture (see draw).
+    // The texture unit a space's volume is kept on (0 and 1 are the picture's).
+
+// Shafts of light are drawn into this, coarser than the picture (see draw).
     this.shaftTex = null;
     this.shaftFbo = gl.createFramebuffer();
     this.shaftSize = [-1, -1];
@@ -75,6 +80,22 @@ export class Renderer {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.probeTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.probeBuf = new Float32Array(nProbe * 4);
+
+    // What a space keeps as a table rather than works out (see volume in
+    // spaces/halls.js): a 3D texture of pairs of unsigned integers, on a unit of its
+    // own.
+    this.volume = null;
+    if (space.volume) {
+      const { size, data } = space.volume;
+      this.volume = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
+      gl.bindTexture(gl.TEXTURE_3D, this.volume);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG32UI, size[0], size[1], size[2], 0, gl.RG_INTEGER, gl.UNSIGNED_INT, data);
+      gl.activeTexture(gl.TEXTURE0);
+    }
   }
 
   setLevels(p, recs, n) {
@@ -82,6 +103,7 @@ export class Renderer {
     const L = new Int32Array(n * 3);
     const fr = new Float32Array(n * 3);
     const id = new Int32Array(n * 3);
+    const pid = new Int32Array(n * 3);
     const seed = new Uint32Array(n);
     const level = new Int32Array(n);
     const sig = new Float32Array(n).fill(1);
@@ -95,6 +117,7 @@ export class Renderer {
       L.set(r.L, i * 3);
       fr.set(r.f, i * 3);
       id.set(r.id, i * 3);
+      pid.set(r.pid, i * 3);
       seed[i] = levelSeed(r.level);
       level[i] = r.level;
       sig[i] = r.sig;
@@ -102,6 +125,13 @@ export class Renderer {
     gl.uniform3iv(p.u.uL, L);
     gl.uniform3fv(p.u.uFr, fr);
     gl.uniform3iv(p.u.uId, id);
+    gl.uniform3iv(p.u.uPid, pid);
+    if (this.volume) {
+      gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
+      gl.bindTexture(gl.TEXTURE_3D, this.volume);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(p.u.uVolume, VOLUME_UNIT);
+    }
     gl.uniform1uiv(p.u.uSeed, seed);
     gl.uniform1iv(p.u.uLevel, level);
     gl.uniform1fv(p.u.uSig, sig);

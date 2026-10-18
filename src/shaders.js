@@ -30,6 +30,8 @@ precision highp int;
 uniform ivec3 uL[NLEV];
 uniform vec3 uFr[NLEV];
 uniform ivec3 uId[NLEV];
+uniform ivec3 uPid[NLEV];  // the id of the cell's parent
+${space.volume ? '// The space\'s table (see volume in spaces/halls.js).\nuniform highp usampler3D uVolume;' : ''}
 uniform uint uSeed[NLEV];
 uniform int uLevel[NLEV];
 uniform float uSig[NLEV];
@@ -127,6 +129,9 @@ void solidSpan(int x, float f, int x0, int x1, vec3 e) {
   solidPlane(float(x - x1) + f, e);
 }
 
+// The id of the parent of the cell being asked about (set by levelRay).
+ivec3 gUp;
+
 // The point being asked about, along the diagonals (set by levelRay).
 ivec3 gLp, gLm;
 vec3 gFp, gFm;
@@ -161,6 +166,10 @@ float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
   gFm = sm - rm;
   gLp = uLp[i] + ivec3(rp) - ivec3(c.x + c.y, c.z + c.y, c.x + c.z) * R;
   gLm = uLm[i] + ivec3(rm) - ivec3(c.x - c.y, c.z - c.y, c.x - c.z) * R;
+  // (The cell's index in its parent is its id's last digit; carried over
+  // into the parent's neighbours as c goes past them.)
+  vec3 own = vec3(uId[i] - R * ivec3(floor((vec3(uId[i]) + 0.5) / float(R))));
+  gUp = wrapId(uPid[i] + ivec3(floor((own + vec3(c) + 0.5) / float(R))));
   return cell(I - c * R, f, wrapId(uId[i] + c), uSeed[i], uLevel[i], reach, nrm);
 }
 
