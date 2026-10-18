@@ -61,6 +61,8 @@ vec3 gDir;        // its direction
 float gO, gA;
 float gX;         // how far the ray can go
 vec3 gN;          // the surface it meets there, facing the air
+bool gSkin;       // that air is only the coarser level's surface, cut back
+                  // (its relief): coloured as that level's, not this one's
 float gIn, gOut;
 vec3 gInN;
 
@@ -170,6 +172,7 @@ float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
   // into the parent's neighbours as c goes past them.)
   vec3 own = vec3(uId[i] - R * ivec3(floor((vec3(uId[i]) + 0.5) / float(R))));
   gUp = wrapId(uPid[i] + ivec3(floor((own + vec3(c) + 0.5) / float(R))));
+  gSkin = false;
   return cell(I - c * R, f, wrapId(uId[i] + c), uSeed[i], uLevel[i], reach, nrm);
 }
 
@@ -323,7 +326,7 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     // shrunk back flush with the wall it opens through), that is a coin toss
     // per pixel, so a finer level has to win clearly.
     if (w > d) {
-      if (w > d + foot) slot = i;
+      if (w > d + foot) slot = gSkin ? i - 1 : i;
       d = w;
     }
   }
@@ -342,11 +345,14 @@ vec3 detail(vec3 base, vec3 v, float foot, int slot) {
     if (wgt <= 0.0) continue;
     float sharp = smoothstep(2.0, 8.0, px);
     float hole = OPEN_AREA;
+    vec3 ink = mix(uWall[i] * 0.5, uWall[i], uInlay);
     if (sharp > 0.0) {
       float a = levelAir(i, v) / uSig[i];
       hole = mix(hole, 1.0 - smoothstep(-foot, 0.5 * foot, a), sharp);
+      // (Relief is the surface's own, in its shadow.)
+      if (gSkin) ink = mix(ink, base * 0.55, sharp);
     }
-    base = mix(base, mix(uWall[i] * 0.5, uWall[i], uInlay), hole * wgt * mix(0.8, 1.0, uInlay));
+    base = mix(base, ink, hole * wgt * mix(0.8, 1.0, uInlay));
   }
   return base;
 }
@@ -426,7 +432,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
         if (e > best) {
           // The surface takes its colour from the level whose air we are
           // leaving; a finer level has to be clearly the one.
-          if (e > best + foot) from = i;
+          if (e > best + foot) from = gSkin ? i - 1 : i;
           best = e;
           bn = nn;
         }

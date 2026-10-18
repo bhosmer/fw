@@ -126,32 +126,40 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 
 // The buildings' faces are not left flat: at the next level (CITY + 1, whose
 // cells are the units the blocks are measured in), each face of a cell
-// wholly in a building that gives onto open air is coffered (three bays by
-// three, each with a shallow recess or none, as its hash says), and each
-// cell a 45-degree face crosses has steps cut into it. Close up these are
+// wholly in a building that gives onto open air is cut into strata (courses
+// of long slots, of varying depth, running on from cell to cell: see
+// strata), and each cell a 45-degree face crosses has steps cut into it. Close up these are
 // carved; further off the engine draws them onto the face as texture (see
 // detail in shaders.js), so that the faces read as built up of small
 // masses, as in Soleri's drawings. Which cells have what is worked out here
 // once and kept as a table (a volume, see halls.js), which the shader and
 // cellAir both read: in its first channel,
 //   FACE  (6 bits from 0: +x, -x, +y, -y, +z, -z): the faces of the cell
-//         that are coffered;
+//         that are cut into strata;
 //   FRONT (6 bits from 6): the faces across which the next cell's face is
-//         coffered (whose recesses run on EXT into this one);
+//         (whose slots run on EXT into this one);
 //   STAIR (6 bits from 12): the diagonals the cell is stepped along, 2p + o
 //         for the pair of axes p (as diag has them: xy, zy, xz) and o 0 for
 //         the diagonal, 1 the other (see stairs);
 //   ON    (12 bits from 18): for each of those, whether the next cell along
 //         the third axis, below and above, is stepped the same (so the steps
 //         run on into it);
-// and in its second, NEAR_BIT: some step comes within a cell (a cell of the
-// halls then must not say its nearest air is any further than its sides).
-const FACE_AT = 0, FRONT_AT = 6, STAIR_AT = 12, ON_AT = 18, NEAR_BIT = 1;
-const EXT = 3; // how far a recess runs on out of its face (more than it is deep)
+// and in its second,
+//   NEAR  (bit 0): some step comes within a cell (a cell of the halls then
+//         must not say its nearest air is any further than its sides);
+//   SIDE  (12 bits from 1): for each face of FACE or FRONT, whether the cells
+//         either side of the one whose face it is, before and after along
+//         the way its slots run (RUN), have that face too (so the slots run
+//         on into them).
+const FACE_AT = 0, FRONT_AT = 6, STAIR_AT = 12, ON_AT = 18, NEAR_BIT = 1, SIDE_AT = 1;
+const EXT = 3; // how far a slot runs on out of its face
+const SEG = 3, SEGS = R / SEG; // a slot's lengths come in SEGs along its face
+const LAYER = 6, DEEPEST = 7; // its courses' height, and the deepest a slot is
+const RUN = [2, 0, 0], COURSE = [1, 2, 1]; // for a face across each axis: which way its slots run, and its courses rise
 const STEP = 6; // the steps' size, in lattice units
 const THIRD = [2, 0, 1]; // the axis a pair of axes leaves out
 const PAIRS = [[0, 1], [2, 1], [0, 2]];
-const COFFER_SALT = 0x3c6ef372, BAY_SALT = 0x9e3779b9;
+const STRATA_SALT = 0x3c6ef372, BAY_SALT = 0x9e3779b9, JITTER_SALT = 0x2545f491;
 
 // How far outside each plane of a block a point is (negative: inside), with
 // the plane's normal, as block() has them, from the point itself.
@@ -196,7 +204,9 @@ export const VOLUME = (() => {
   }
   const data = new Uint32Array(2 * n);
   const sides = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
-  // Coffered faces: of a cell wholly in a building, onto one wholly clear.
+  // Faces cut into strata: of a cell wholly in a building, onto one wholly
+  // clear.
+  const faces = [];
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = [x, y, z];
     if (!deep[at(v)]) continue;
@@ -205,8 +215,17 @@ export const VOLUME = (() => {
       if (!within(u) || !open[at(u)]) return;
       data[2 * at(v)] |= 1 << (FACE_AT + k);
       data[2 * at(u)] |= 1 << (FRONT_AT + (k ^ 1));
+      faces.push([v, u, k]);
     });
   }
+  for (const [v, u, k] of faces)
+    [-1, 1].forEach((dir, h) => {
+      const w = v.slice();
+      w[RUN[k >> 1]] += dir;
+      if (!within(w) || !(data[2 * at(w)] & (1 << (FACE_AT + k)))) return;
+      data[2 * at(v) + 1] |= 1 << (SIDE_AT + 2 * k + h);
+      data[2 * at(u) + 1] |= 1 << (SIDE_AT + 2 * (k ^ 1) + h);
+    });
   // Stepped cells: a 45-degree face runs exactly along one of the cell's
   // diagonals (the blocks' corners are on the lattice), with one side of it
   // inside a single block and the other clear of every block (and the cell
@@ -249,10 +268,10 @@ export const VOLUME = (() => {
     }
     for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const u = [v[0] + dx, v[1] + dy, v[2] + dz];
-      if (within(u)) data[2 * at(u) + 1] = NEAR_BIT;
+      if (within(u)) data[2 * at(u) + 1] |= NEAR_BIT;
     }
   }
-  for (let i = 0; i < n; i++) data[2 * i] >>>= 0;
+  for (let i = 0; i < 2 * n; i++) data[i] >>>= 0;
   return { lo, size, data, deep, open, at, within, stepped: new Set(steps.map((v) => v.join())).size };
 })();
 
@@ -295,8 +314,10 @@ const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `i
 
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
-const int FACE_AT = ${FACE_AT}, FRONT_AT = ${FRONT_AT}, STAIR_AT = ${STAIR_AT}, ON_AT = ${ON_AT}, EXT = ${EXT}, STEP = ${STEP};
-const uint NEAR_BIT = ${NEAR_BIT}u, COFFER_SALT = ${COFFER_SALT}u, BAY_SALT = ${BAY_SALT}u;
+const int FACE_AT = ${FACE_AT}, FRONT_AT = ${FRONT_AT}, STAIR_AT = ${STAIR_AT}, ON_AT = ${ON_AT}, SIDE_AT = ${SIDE_AT}, EXT = ${EXT}, STEP = ${STEP};
+const int SEG = ${SEG}, SEGS = ${SEGS}, LAYER = ${LAYER}, DEEPEST = ${DEEPEST};
+const ivec3 RUN = ivec3(${RUN.join(', ')}), COURSE = ivec3(${COURSE.join(', ')});
+const uint NEAR_BIT = ${NEAR_BIT}u, STRATA_SALT = ${STRATA_SALT}u, BAY_SALT = ${BAY_SALT}u, JITTER_SALT = ${JITTER_SALT}u;
 
 // Where the middle city cell is from this one, in lattice units.
 ivec3 fromMiddle(ivec3 id) {
@@ -339,36 +360,60 @@ float unite(ivec3 L, vec3 f, ivec3 lo, ivec3 hi, float d, bool ray, inout float 
   return min(d, g);
 }
 
-// The recess, if any, in the bay of the coffered face k (+x, -x, +y, ...)
-// of the cell sid that the point is across from, as a box in this cell's
-// lattice units; the face being on this cell's side k, and the cell sid
-// this one (inward -1) or the next one across it (inward 1). Its depth is
-// 0 (none), 1 or 2, as the hash of its cell, face and bay says, and it runs
-// EXT on out of the face. Returns how far off any of the face's recesses
-// is, at least (none is nearer than the edge of the bay we are across from,
-// and one more; nor than the layer they are in).
-float coffer(ivec3 L, vec3 f, int k, ivec3 sid, int face, int inward, uint seed, float d, bool ray, inout float reach, inout vec3 nrm) {
-  int a = k >> 1, b = a == 0 ? 1 : 0, c = a == 2 ? 1 : 2;
-  int plane = (k & 1) == 0 ? R : 0, side = (k & 1) == 0 ? 1 : -1;
-  float pb = float(at3(L, b)) + at3(f, b), pc = float(at3(L, c)) + at3(f, c);
-  int i = clamp(int(floor((pb - 3.0) / 6.0)), 0, 2), j = clamp(int(floor((pc - 3.0) / 6.0)), 0, 2);
-  float thin = 0.25 + 0.4 * h01(hashCell(sid, seed ^ (COFFER_SALT + uint(face) * 0x85ebca6bu)));
-  float t = h01(hashCell(sid, seed ^ (COFFER_SALT + uint(face * 9 + i * 3 + j) * BAY_SALT)));
-  // Into the cell sid: across the plane from this cell (side), or back (if
-  // sid is this cell). The recesses are all in the layer from 2 into it to
-  // EXT out of it; and none is nearer than the edges of our bay, and one.
-  int into = inward > 0 ? side : -side;
-  float x = float(at3(L, a)) + at3(f, a);
-  float layer = max(float(min(plane + into * 2, plane - into * EXT)) - x, x - float(max(plane + into * 2, plane - into * EXT)));
-  float eb = min(i > 0 ? pb - float(3 + 6 * i) : 1e9, i < 2 ? float(9 + 6 * i) - pb : 1e9);
-  float ec = min(j > 0 ? pc - float(3 + 6 * j) : 1e9, j < 2 ? float(9 + 6 * j) - pc : 1e9);
-  float cap = max(layer, min(eb, ec) + 1.0);
-  if (t < thin) return min(d, cap);
-  int depth = (t - thin) / (1.0 - thin) < 0.5 ? 1 : 2;
-  int n0 = min(plane + into * depth, plane - into * EXT), n1 = max(plane + into * depth, plane - into * EXT);
-  ivec3 bl = put(put(put(ivec3(0), a, n0), b, 4 + 6 * i), c, 4 + 6 * j);
-  ivec3 bh = put(put(put(ivec3(0), a, n1), b, 8 + 6 * i), c, 8 + 6 * j);
-  return min(unite(L, f, bl, bh, d, ray, reach, nrm), cap);
+// How deep the slot is in segment s (SEG long, along the way the slots run,
+// RUN) of course r of face \`face\` of the cell sid: s from -2 to SEGS + 1,
+// those outside 0 to SEGS - 1 being the next cells' (whose faces' slots run
+// on from these as sides says: before, after; -1 if they do not). Long runs
+// of the same depth, as a noise along the face has it, with some jitter; a
+// slot ending at a face's edge is left flush.
+uint salted(uint seed, uint salt, int n) { return seed ^ (salt + uint(n) * BAY_SALT); }
+ivec3 stepId(ivec3 id, int a, int by) { return wrapId(put(id, a, at3(id, a) + by)); }
+int slotDepth(ivec3 sid, int face, int r, int s, uint sides, uint seed) {
+  if ((s < 0 && (sides & 1u) == 0u) || (s >= SEGS && (sides & 2u) == 0u)) return -1;
+  if ((s == 0 && (sides & 1u) == 0u) || (s == SEGS - 1 && (sides & 2u) == 0u)) return 0;
+  int b = at3(RUN, face >> 1);
+  ivec3 cell = sid;
+  if (s < 0) { cell = stepId(sid, b, -1); s += SEGS; }
+  else if (s >= SEGS) { cell = stepId(sid, b, 1); s -= SEGS; }
+  float u = (float(s) + 0.5) * float(SEG) / float(R / 2), w = fract(u);
+  int g = int(floor(u)), n = (face * 4 + r) * 2;
+  float v0 = h01(hashCell(cell, salted(seed, STRATA_SALT, n + g)));
+  float v1 = g == 0 ? h01(hashCell(cell, salted(seed, STRATA_SALT, n + 1))) : h01(hashCell(stepId(cell, b, 1), salted(seed, STRATA_SALT, n)));
+  float t = v0 * (1.0 - w) + v1 * w + 0.35 * (h01(hashCell(cell, salted(seed, JITTER_SALT, (face * 4 + r) * SEGS + s))) - 0.5);
+  return t < 0.4 ? 0 : t < 0.55 ? 1 : t < 0.7 ? 2 : t < 0.82 ? 4 : DEEPEST;
+}
+
+// The slots of face k (+x, -x, +y, ...) of the cell sid near the point, as
+// boxes in this cell's lattice units: the face being on this cell's side k,
+// and the cell sid this one (inward -1) or the next one across it (inward
+// 1). In courses LAYER high, each slot a box over its segment from its
+// depth in to EXT out of the face, and a unit on into the next segment
+// along where that is as deep or deeper (so the two overlap). Returns how
+// far off any slot of the face is, at least (none further along than the
+// segments either side of ours is nearer than those segments' far ends, nor
+// any in another course than its edges; nor any nearer than the layer the
+// slots are in).
+float strata(ivec3 L, vec3 f, int k, ivec3 sid, int face, int inward, uint sides, uint seed, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int a = k >> 1, b = at3(RUN, a), c = at3(COURSE, a);
+  int plane = (k & 1) == 0 ? R : 0, side = (k & 1) == 0 ? 1 : -1, into = inward > 0 ? side : -side;
+  float x = float(at3(L, a)) + at3(f, a), pb = float(at3(L, b)) + at3(f, b), pc = float(at3(L, c)) + at3(f, c);
+  int s0 = clamp(int(floor(pb / float(SEG))), 0, SEGS - 1), r = clamp(int(floor(pc / float(LAYER))), 0, R / LAYER - 1);
+  float layer = max(float(min(plane + into * DEEPEST, plane - into * EXT)) - x, x - float(max(plane + into * DEEPEST, plane - into * EXT)));
+  float cap = max(layer, min(min(pb - float(SEG * s0 - SEG + 1), float(SEG * s0 + 2 * SEG - 1) - pb),
+                             min(pc - float(LAYER * r - 1), float(LAYER * r + LAYER + 1) - pc)));
+  int dm = slotDepth(sid, face, r, s0 - 2, sides, seed), d0 = slotDepth(sid, face, r, s0 - 1, sides, seed);
+  int d1 = slotDepth(sid, face, r, s0, sides, seed), d2 = slotDepth(sid, face, r, s0 + 1, sides, seed);
+  int dp = slotDepth(sid, face, r, s0 + 2, sides, seed);
+  for (int i = 0; i < 3; i++) {
+    int before = i == 0 ? dm : i == 1 ? d0 : d1, D = i == 0 ? d0 : i == 1 ? d1 : d2, after = i == 0 ? d1 : i == 1 ? d2 : dp;
+    if (D <= 0) continue;
+    int s = s0 + i - 1;
+    int n0 = min(plane + into * D, plane - into * EXT), n1 = max(plane + into * D, plane - into * EXT);
+    ivec3 bl = put(put(put(ivec3(0), a, n0), b, SEG * s - (before >= D ? 1 : 0)), c, LAYER * r + 1);
+    ivec3 bh = put(put(put(ivec3(0), a, n1), b, SEG * s + SEG + (after >= D ? 1 : 0)), c, LAYER * r + LAYER - 1);
+    d = unite(L, f, bl, bh, d, ray, reach, nrm);
+  }
+  return min(d, cap);
 }
 
 // The steps cut along diagonal s (see STAIR_AT) of this cell: squares of
@@ -387,17 +432,22 @@ float stairs(ivec3 L, vec3 f, int s, uint on, float d, bool ray, inout float rea
 }
 
 // A level-(CITY + 1) cell the table says something of: the halls' air in it
-// (d, reach and nrm being what the halls say of it), with the recesses of
-// its own coffered faces and the next cells', and its steps.
+// (d, reach and nrm being what the halls say of it), with the slots of its
+// own faces' strata and the next cells', and its steps. Where these are
+// what is nearest (or for a ray, what it goes furthest in), it says so
+// (gSkin): they are the city's surface, and coloured as the city.
 float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout float reach, inout vec3 nrm) {
   bool ray = gRay;
+  float d0 = d, reach0 = reach;
   for (int k = 0; k < 6; k++) {
     ivec3 e = put(ivec3(0), k >> 1, (k & 1) == 0 ? 1 : -1);
-    if ((m.x & (1u << uint(FACE_AT + k))) != 0u) d = coffer(L, f, k, id, k, -1, seed, d, ray, reach, nrm);
-    if ((m.x & (1u << uint(FRONT_AT + k))) != 0u) d = coffer(L, f, k, wrapId(id + e), k ^ 1, 1, seed, d, ray, reach, nrm);
+    uint sides = (m.y >> uint(SIDE_AT + 2 * k)) & 3u;
+    if ((m.x & (1u << uint(FACE_AT + k))) != 0u) d = strata(L, f, k, id, k, -1, sides, seed, d, ray, reach, nrm);
+    if ((m.x & (1u << uint(FRONT_AT + k))) != 0u) d = strata(L, f, k, wrapId(id + e), k ^ 1, 1, sides, seed, d, ray, reach, nrm);
     if ((m.x & (1u << uint(STAIR_AT + k))) != 0u) d = stairs(L, f, k, (m.x >> uint(ON_AT + 2 * k)) & 3u, d, ray, reach, nrm);
   }
   gRay = ray;
+  gSkin = ray ? reach > reach0 : d < d0;
   if (d <= 0.0 || (m.y & NEAR_BIT) == 0u) return d;
   float e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)),
                 min(float(R - L.z) - f.z, float(L.z) + f.z));
@@ -629,23 +679,38 @@ const put = (a, x, b, y, c, z) => {
   return v;
 };
 
-function coffer(L, f, k, sid, face, inward, seed, d) {
-  const a = k >> 1, b = a === 0 ? 1 : 0, c = a === 2 ? 1 : 2;
-  const plane = k & 1 ? 0 : R, side = k & 1 ? -1 : 1;
-  const pb = L[b] + f[b], pc = L[c] + f[c];
-  const i = Math.max(0, Math.min(2, Math.floor((pb - 3) / 6))), j = Math.max(0, Math.min(2, Math.floor((pc - 3) / 6)));
-  const thin = 0.25 + 0.4 * h01(hashCell(sid, (seed ^ ((COFFER_SALT + Math.imul(face, 0x85ebca6b)) >>> 0)) >>> 0));
-  const t = h01(hashCell(sid, (seed ^ ((COFFER_SALT + Math.imul(face * 9 + i * 3 + j, BAY_SALT)) >>> 0)) >>> 0));
-  const into = inward > 0 ? side : -side;
-  const x = L[a] + f[a];
-  const layer = Math.max(Math.min(plane + into * 2, plane - into * EXT) - x, x - Math.max(plane + into * 2, plane - into * EXT));
-  const eb = Math.min(i > 0 ? pb - (3 + 6 * i) : 1e9, i < 2 ? 9 + 6 * i - pb : 1e9);
-  const ec = Math.min(j > 0 ? pc - (3 + 6 * j) : 1e9, j < 2 ? 9 + 6 * j - pc : 1e9);
-  const cap = Math.max(layer, Math.min(eb, ec) + 1);
-  if (t < thin) return Math.min(d, cap);
-  const depth = (t - thin) / (1 - thin) < 0.5 ? 1 : 2;
-  const n0 = Math.min(plane + into * depth, plane - into * EXT), n1 = Math.max(plane + into * depth, plane - into * EXT);
-  return Math.min(d, boxAir(L, f, put(a, n0, b, 4 + 6 * i, c, 4 + 6 * j), put(a, n1, b, 8 + 6 * i, c, 8 + 6 * j)), cap);
+const salted = (seed, salt, n) => (seed ^ ((salt + Math.imul(n, BAY_SALT)) >>> 0)) >>> 0;
+const step = (id, a, by) => wrapId(id.map((x, b) => (b === a ? x + by : x)));
+
+function slotDepth(sid, face, r, s, sides, seed) {
+  if ((s < 0 && !(sides & 1)) || (s >= SEGS && !(sides & 2))) return -1;
+  if ((s === 0 && !(sides & 1)) || (s === SEGS - 1 && !(sides & 2))) return 0;
+  const b = RUN[face >> 1];
+  let cell = sid;
+  if (s < 0) (cell = step(sid, b, -1)), (s += SEGS);
+  else if (s >= SEGS) (cell = step(sid, b, 1)), (s -= SEGS);
+  const u = ((s + 0.5) * SEG) / (R / 2), g = Math.floor(u), w = u - g;
+  const at = (g) => (g < 2 ? h01(hashCell(cell, salted(seed, STRATA_SALT, (face * 4 + r) * 2 + g))) : h01(hashCell(step(cell, b, 1), salted(seed, STRATA_SALT, (face * 4 + r) * 2))));
+  const n = at(g) * (1 - w) + at(g + 1) * w + 0.35 * (h01(hashCell(cell, salted(seed, JITTER_SALT, (face * 4 + r) * SEGS + s))) - 0.5);
+  return n < 0.4 ? 0 : n < 0.55 ? 1 : n < 0.7 ? 2 : n < 0.82 ? 4 : DEEPEST;
+}
+
+function strata(L, f, k, sid, face, inward, sides, seed, d) {
+  const a = k >> 1, b = RUN[a], c = COURSE[a];
+  const plane = k & 1 ? 0 : R, side = k & 1 ? -1 : 1, into = inward > 0 ? side : -side;
+  const x = L[a] + f[a], pb = L[b] + f[b], pc = L[c] + f[c];
+  const s0 = Math.max(0, Math.min(SEGS - 1, Math.floor(pb / SEG))), r = Math.max(0, Math.min(R / LAYER - 1, Math.floor(pc / LAYER)));
+  const layer = Math.max(Math.min(plane + into * DEEPEST, plane - into * EXT) - x, x - Math.max(plane + into * DEEPEST, plane - into * EXT));
+  const cap = Math.max(layer, Math.min(pb - (SEG * s0 - SEG + 1), SEG * s0 + 2 * SEG - 1 - pb, pc - (LAYER * r - 1), LAYER * r + LAYER + 1 - pc));
+  const depth = [-2, -1, 0, 1, 2].map((i) => slotDepth(sid, face, r, s0 + i, sides, seed));
+  for (let i = 1; i <= 3; i++) {
+    const D = depth[i], s = s0 + i - 2;
+    if (D <= 0) continue;
+    const n0 = Math.min(plane + into * D, plane - into * EXT), n1 = Math.max(plane + into * D, plane - into * EXT);
+    const b0 = SEG * s - (depth[i - 1] >= D ? 1 : 0), b1 = SEG * s + SEG + (depth[i + 1] >= D ? 1 : 0);
+    d = Math.min(d, boxAir(L, f, put(a, n0, b, b0, c, LAYER * r + 1), put(a, n1, b, b1, c, LAYER * r + LAYER - 1)));
+  }
+  return Math.min(d, cap);
 }
 
 function stairs(L, f, s, on, d) {
@@ -662,8 +727,9 @@ function reliefCell(L, f, id, seed, [m, near], d) {
   for (let k = 0; k < 6; k++) {
     const e = [0, 0, 0];
     e[k >> 1] = k & 1 ? -1 : 1;
-    if (m & (1 << (FACE_AT + k))) d = coffer(L, f, k, id, k, -1, seed, d);
-    if (m & (1 << (FRONT_AT + k))) d = coffer(L, f, k, wrapId(id.map((x, a) => x + e[a])), k ^ 1, 1, seed, d);
+    const sides = (near >>> (SIDE_AT + 2 * k)) & 3;
+    if (m & (1 << (FACE_AT + k))) d = strata(L, f, k, id, k, -1, sides, seed, d);
+    if (m & (1 << (FRONT_AT + k))) d = strata(L, f, k, wrapId(id.map((x, a) => x + e[a])), k ^ 1, 1, sides, seed, d);
     if (m & (1 << (STAIR_AT + k))) d = stairs(L, f, k, (m >>> (ON_AT + 2 * k)) & 3, d);
   }
   if (d <= 0 || !(near & NEAR_BIT)) return d;
