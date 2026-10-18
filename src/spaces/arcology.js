@@ -228,6 +228,7 @@ export const VOLUME = (() => {
     const cells = cellsOf(b0, b1);
     if (!cells.every((c) => within(c) && deep[at(c)] && c[1] + lo[1] >= G && !kept[at(c)])) continue;
     // Each face: open all along, or solid all along.
+    const front = e[0] ? (e[0] > 0 ? 1 : 0) : e[2] > 0 ? 5 : 4;
     const opens = [];
     let ok = true;
     for (let a = 0; a < 3 && ok; a++) for (const side of [1, -1]) {
@@ -235,21 +236,25 @@ export const VOLUME = (() => {
       f0[a] = f1[a] = side > 0 ? b1[a] + 1 : b0[a] - 1;
       const across = cellsOf(f0, f1);
       if (!across.every(within)) { ok = false; break; }
-      if (across.every((c) => open[at(c)])) opens.push(2 * a + (side > 0 ? 0 : 1));
+      // (Open only on its front, top or bottom: across its back and its
+      // sides it is all solid, so that it never cuts through a shaft or
+      // round a corner.)
+      const way = 2 * a + (side > 0 ? 0 : 1);
+      if ((a === 1 || way === front) && across.every((c) => open[at(c)])) opens.push(way);
       else if (!across.every((c) => deep[at(c)])) { ok = false; break; }
     }
-    if (!ok || !opens.includes(e[0] ? (e[0] > 0 ? 1 : 0) : e[2] > 0 ? 5 : 4)) continue;
+    if (!ok || !opens.includes(front)) continue;
     // The cells its air reaches into, past its open faces (all must be
     // open air, none kept clear for another).
     const x0 = b0.slice(), x1 = b1.slice();
     for (const way of opens) (way & 1 ? (x0[way >> 1] -= 1) : (x1[way >> 1] += 1));
-    const front = cellsOf(x0, x1).filter((c) => c.some((v, a) => v < b0[a] || v > b1[a]));
-    if (!front.every((c) => within(c) && open[at(c)] && !kept[at(c)])) continue;
-    for (const c of [...cells, ...front]) for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const before = cellsOf(x0, x1).filter((c) => c.some((v, a) => v < b0[a] || v > b1[a]));
+    if (!before.every((c) => within(c) && open[at(c)] && !kept[at(c)])) continue;
+    for (const c of [...cells, ...before]) for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const m = [c[0] + dx, c[1] + dy, c[2] + dz];
       if (within(m)) kept[at(m)] = 1;
     }
-    boxes.push({ cells, front, lo: b0, hi: b1, opens });
+    boxes.push({ cells, front: before, lo: b0, hi: b1, opens });
   }
   const data = new Uint32Array(2 * n);
   for (const { cells, front, lo: bl, hi: bh, opens } of boxes) {
