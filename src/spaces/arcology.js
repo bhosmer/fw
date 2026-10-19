@@ -61,15 +61,17 @@ const BLOCKS = [];
     // The waist: a slab overhanging all round, a little more on two sides.
     const ox = int(1, 3), oz = int(1, 3);
     block(cx - w - ox, waist - 1, cz - w - oz, cx + w + ox, waist + 1, cz + w + oz);
-    // The upper: terraces, each stepping in as far as it rises (so, overall,
-    // 45 degrees), in steps of one to three.
+    // The upper: a pyramid, rising at 45 degrees from the waist, cut off
+    // flat where the crown stands. (Worked out as terraces once, stepping in
+    // as far as they rose, which is how high and how far in it comes to;
+    // and the rest of the city after it is as it was.)
     let y = waist, r = w;
     while (r > 1 && y < waist + hi) {
       const step = Math.min(int(1, 3), waist + hi - y, r - 1);
-      block(cx - r, y - 1, cz - r, cx + r, y + step, cz + r);
       y += step;
       r -= step;
     }
+    block(cx - w, waist - 1, cz - w, cx + w, y, cz + w, 3);
     // A crown: a small pyramid, or a block cut at its corners.
     if (y < TOP) block(cx - r - 1, y - 1, cz - r - 1, cx + r + 1, Math.min(TOP, y + 2), cz + r + 1, rnd() < 0.5 ? 3 : 4);
     // The shafts it stands on: in a ring under the lower pyramid, up into
