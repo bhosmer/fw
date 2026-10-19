@@ -150,11 +150,15 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 //   SIDE  (12 bits from 1): for each face of FACE or FRONT, whether the cells
 //         either side of the one whose face it is, before and after along
 //         the way its slots run (RUN), have that face too (so the slots run
-//         on into them).
-const FACE_AT = 0, FRONT_AT = 6, STAIR_AT = 12, ON_AT = 18, NEAR_BIT = 1, SIDE_AT = 1;
+//         on into them);
+//   SOLID (6 bits from 13): for each diagonal of STAIR, which side of it is
+//         in the building: 0 where the first of its pair of axes is the
+//         greater (for the other diagonal, where both are), 1 the other.
+const FACE_AT = 0, FRONT_AT = 6, STAIR_AT = 12, ON_AT = 18, NEAR_BIT = 1, SIDE_AT = 1, SOLID_AT = 13;
 const EXT = 3; // how far a slot runs on out of its face
 const SEG = 3, SEGS = R / SEG; // a slot's lengths come in SEGs along its face
 const LAYER = 6, DEEPEST = 7; // its courses' height, and the deepest a slot is
+const STAIR_DEEPEST = 5; // the deepest a step is cut on beyond its square
 const RUN = [2, 0, 0], COURSE = [1, 2, 1]; // for a face across each axis: which way its slots run, and its courses rise
 const STEP = 6; // the steps' size, in lattice units
 const THIRD = [2, 0, 1]; // the axis a pair of axes leaves out
@@ -248,14 +252,20 @@ export const VOLUME = (() => {
       seen[h].add(ins.length === 1 ? ins[0] : ins.length ? -2 : -1);
     }
     const one = (S) => S.size === 1 && [...S][0] >= 0, none = (S) => S.size === 1 && S.has(-1);
-    return (one(seen[0]) && none(seen[1])) || (none(seen[0]) && one(seen[1]));
+    // (1 + which side is in the building; 0 if it is not stepped.)
+    return one(seen[0]) && none(seen[1]) ? 1 : none(seen[0]) && one(seen[1]) ? 2 : 0;
   };
   const steps = [];
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = [x, y, z];
     if (deep[at(v)] || open[at(v)]) continue;
-    for (let p = 0; p < 3; p++) for (let o = 0; o < 2; o++)
-      if (stepped(v, p, o)) (data[2 * at(v)] |= 1 << (STAIR_AT + 2 * p + o)), steps.push(v);
+    for (let p = 0; p < 3; p++) for (let o = 0; o < 2; o++) {
+      const st = stepped(v, p, o);
+      if (!st) continue;
+      data[2 * at(v)] |= 1 << (STAIR_AT + 2 * p + o);
+      if (st === 2) data[2 * at(v) + 1] |= 1 << (SOLID_AT + 2 * p + o);
+      steps.push(v);
+    }
   }
   for (const v of steps) {
     const m = data[2 * at(v)];
@@ -317,7 +327,7 @@ const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `i
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
 const int FACE_AT = ${FACE_AT}, FRONT_AT = ${FRONT_AT}, STAIR_AT = ${STAIR_AT}, ON_AT = ${ON_AT}, SIDE_AT = ${SIDE_AT}, EXT = ${EXT}, STEP = ${STEP};
-const int SEG = ${SEG}, SEGS = ${SEGS}, LAYER = ${LAYER}, DEEPEST = ${DEEPEST};
+const int SEG = ${SEG}, SEGS = ${SEGS}, LAYER = ${LAYER}, DEEPEST = ${DEEPEST}, STAIR_DEEPEST = ${STAIR_DEEPEST}, SOLID_AT = ${SOLID_AT};
 const ivec3 RUN = ivec3(${RUN.join(', ')}), COURSE = ivec3(${COURSE.join(', ')});
 const uint NEAR_BIT = ${NEAR_BIT}u, STRATA_SALT = ${STRATA_SALT}u, BAY_SALT = ${BAY_SALT}u, JITTER_SALT = ${JITTER_SALT}u;
 
@@ -373,7 +383,7 @@ ivec3 stepId(ivec3 id, int a, int by) { return wrapId(put(id, a, at3(id, a) + by
 int slotDepth(ivec3 sid, int face, int r, int s, uint sides, uint seed) {
   if ((s < 0 && (sides & 1u) == 0u) || (s >= SEGS && (sides & 2u) == 0u)) return -1;
   if ((s == 0 && (sides & 1u) == 0u) || (s == SEGS - 1 && (sides & 2u) == 0u)) return 0;
-  int b = at3(RUN, face >> 1);
+  int b = face < 6 ? at3(RUN, face >> 1) : (face - 6) >> 1 == 0 ? 2 : (face - 6) >> 1 == 1 ? 0 : 1;
   ivec3 cell = sid;
   if (s < 0) { cell = stepId(sid, b, -1); s += SEGS; }
   else if (s >= SEGS) { cell = stepId(sid, b, 1); s -= SEGS; }
@@ -389,7 +399,8 @@ int slotDepth(ivec3 sid, int face, int r, int s, uint sides, uint seed) {
 // boxes in this cell's lattice units: the face being on this cell's side k,
 // and the cell sid this one (inward -1) or the next one across it (inward
 // 1). In courses LAYER high, each slot a box over its segment from its
-// depth in to EXT out of the face, and a unit on into the next segment
+// depth in to EXT out of the face (the deeper, the taller, so that a slot
+// is never taller than one deeper), and a unit on into the next segment
 // along where that is as deep or deeper (so the two overlap). Returns how
 // far off any slot of the face is, at least (none further along than the
 // segments either side of ours is nearer than those segments' far ends, nor
@@ -411,26 +422,49 @@ float strata(ivec3 L, vec3 f, int k, ivec3 sid, int face, int inward, uint sides
     if (D <= 0) continue;
     int s = s0 + i - 1;
     int n0 = min(plane + into * D, plane - into * EXT), n1 = max(plane + into * D, plane - into * EXT);
-    ivec3 bl = put(put(put(ivec3(0), a, n0), b, SEG * s - (before >= D ? 1 : 0)), c, LAYER * r + 1);
-    ivec3 bh = put(put(put(ivec3(0), a, n1), b, SEG * s + SEG + (after >= D ? 1 : 0)), c, LAYER * r + LAYER - 1);
+    ivec3 bl = put(put(put(ivec3(0), a, n0), b, SEG * s - (before >= D ? 1 : 0)), c, LAYER * r + (D >= 4 ? 1 : 2));
+    ivec3 bh = put(put(put(ivec3(0), a, n1), b, SEG * s + SEG + (after >= D ? 1 : 0)), c, LAYER * r + LAYER - (D >= 2 ? 1 : 2));
     d = unite(L, f, bl, bh, d, ray, reach, nrm);
   }
   return min(d, cap);
 }
 
-// The steps cut along diagonal s (see STAIR_AT) of this cell: squares of
-// STEP down it, each a box across the cell along the third axis (and on a
-// unit into the next cell where it is stepped the same, on: below, above).
-float stairs(ivec3 L, vec3 f, int s, uint on, float d, bool ray, inout float reach, inout vec3 nrm) {
-  int p = s >> 1, a = p == 1 ? 2 : 0, b = p == 2 ? 2 : 1, c = p == 0 ? 2 : p == 1 ? 0 : 1;
-  int c0 = (on & 1u) != 0u ? -1 : 0, c1 = (on & 2u) != 0u ? R + 1 : R;
-  for (int k = 0; k < R / STEP; k++) {
+// The steps cut along diagonal s (see STAIR_AT) of this cell, on its side
+// solid (see SOLID_AT): squares of STEP down it, and in segments along the
+// third axis (SEG long, as the strata's slots), each cut on into the
+// building by a depth of its own (as slotDepth has it, the steps being
+// faces 6 to 11), within the cell; and a unit on into the next segment
+// where that is cut as deep or deeper (and so on into the next cell where
+// it is stepped the same, on: below, above). Returns how far off any step
+// is, at least (across the diagonal, they are all within -STEP to STEP +
+// 2 STAIR_DEEPEST of it, on the building's side; along it, as strata).
+float stairs(ivec3 L, vec3 f, int s, uint on, int solid, ivec3 id, uint seed, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int p = s >> 1, a = p == 1 ? 2 : 0, b = p == 2 ? 2 : 1, c = p == 0 ? 2 : p == 1 ? 0 : 1, E = STAIR_DEEPEST;
+  float pa = float(at3(L, a)) + at3(f, a), pb = float(at3(L, b)) + at3(f, b), pc = float(at3(L, c)) + at3(f, c);
+  int s0 = clamp(int(floor(pc / float(SEG))), 0, SEGS - 1);
+  float u = ((s & 1) != 0 ? pa + pb - float(R) : pa - pb) * (solid != 0 ? -1.0 : 1.0);
+  float cap = max(max((u - float(STEP + 2 * E)) * 0.70710678, (-float(STEP) - u) * 0.70710678),
+                  min(pc - float(SEG * s0 - SEG + 1), float(SEG * s0 + 2 * SEG - 1) - pc));
+  bool bUp = (s & 1) != solid;
+  // (cap is never negative: the test is only so that the compiler cannot
+  // count the steps and copy the loop out four times over.)
+  for (int k = 0; k < R / STEP && cap >= 0.0; k++) {
+    int dm = min(slotDepth(id, 6 + s, k, s0 - 2, on, seed), E), d0 = min(slotDepth(id, 6 + s, k, s0 - 1, on, seed), E);
+    int d1 = min(slotDepth(id, 6 + s, k, s0, on, seed), E), d2 = min(slotDepth(id, 6 + s, k, s0 + 1, on, seed), E);
+    int dp = min(slotDepth(id, 6 + s, k, s0 + 2, on, seed), E);
     int b0 = (s & 1) == 0 ? STEP * k : R - STEP * (k + 1);
-    ivec3 lo = put(put(put(ivec3(0), a, STEP * k), b, b0), c, c0);
-    ivec3 hi = put(put(put(ivec3(0), a, STEP * (k + 1)), b, b0 + STEP), c, c1);
-    d = unite(L, f, lo, hi, d, ray, reach, nrm);
+    for (int i = 0; i < 3; i++) {
+      int before = i == 0 ? dm : i == 1 ? d0 : d1, e = i == 0 ? d0 : i == 1 ? d1 : d2, after = i == 0 ? d1 : i == 1 ? d2 : dp;
+      if (e < 0) continue;
+      int j = s0 + i - 1;
+      int a0 = solid != 0 ? STEP * k - e : STEP * k, a1 = solid != 0 ? STEP * (k + 1) : STEP * (k + 1) + e;
+      int lb = bUp ? b0 : b0 - e, hb = bUp ? b0 + STEP + e : b0 + STEP;
+      ivec3 lo = put(put(put(ivec3(0), a, clamp(a0, 0, R)), b, clamp(lb, 0, R)), c, SEG * j - (before >= e ? 1 : 0));
+      ivec3 hi = put(put(put(ivec3(0), a, clamp(a1, 0, R)), b, clamp(hb, 0, R)), c, SEG * j + SEG + (after >= e ? 1 : 0));
+      d = unite(L, f, lo, hi, d, ray, reach, nrm);
+    }
   }
-  return d;
+  return min(d, cap);
 }
 
 // A level-(CITY + 1) cell the table says something of: the halls' air in it
@@ -441,14 +475,22 @@ float stairs(ivec3 L, vec3 f, int s, uint on, float d, bool ray, inout float rea
 float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout float reach, inout vec3 nrm) {
   bool ray = gRay;
   float d0 = d, reach0 = reach;
-  for (int k = 0; k < 6; k++) {
+  // (Each over the bits that are set, so that the compiler cannot copy the
+  // loops out six times over.)
+  uint faces = (m.x >> uint(FACE_AT)) | (m.x >> uint(FRONT_AT));
+  faces &= 63u;
+  for (int k = 0; faces != 0u; k++, faces >>= 1) {
+    if ((faces & 1u) == 0u) continue;
     ivec3 e = put(ivec3(0), k >> 1, (k & 1) == 0 ? 1 : -1);
     uint sides = (m.y >> uint(SIDE_AT + 2 * k)) & 3u;
     // (A cell has a face's strata or the next cell's there, never both.)
     bool front = (m.x & (1u << uint(FRONT_AT + k))) != 0u;
-    if (front || (m.x & (1u << uint(FACE_AT + k))) != 0u)
-      d = strata(L, f, k, front ? wrapId(id + e) : id, front ? k ^ 1 : k, front ? 1 : -1, sides, seed, d, ray, reach, nrm);
-    if ((m.x & (1u << uint(STAIR_AT + k))) != 0u) d = stairs(L, f, k, (m.x >> uint(ON_AT + 2 * k)) & 3u, d, ray, reach, nrm);
+    d = strata(L, f, k, front ? wrapId(id + e) : id, front ? k ^ 1 : k, front ? 1 : -1, sides, seed, d, ray, reach, nrm);
+  }
+  uint diagonals = (m.x >> uint(STAIR_AT)) & 63u;
+  for (int k = 0; diagonals != 0u; k++, diagonals >>= 1) {
+    if ((diagonals & 1u) == 0u) continue;
+    d = stairs(L, f, k, (m.x >> uint(ON_AT + 2 * k)) & 3u, int((m.y >> uint(SOLID_AT + k)) & 1u), id, seed, d, ray, reach, nrm);
   }
   gRay = ray;
   gSkin = ray ? reach > reach0 : d < d0;
@@ -686,7 +728,7 @@ const step = (id, a, by) => wrapId(id.map((x, b) => (b === a ? x + by : x)));
 function slotDepth(sid, face, r, s, sides, seed) {
   if ((s < 0 && !(sides & 1)) || (s >= SEGS && !(sides & 2))) return -1;
   if ((s === 0 && !(sides & 1)) || (s === SEGS - 1 && !(sides & 2))) return 0;
-  const b = RUN[face >> 1];
+  const b = face < 6 ? RUN[face >> 1] : THIRD[(face - 6) >> 1];
   let cell = sid;
   if (s < 0) (cell = step(sid, b, -1)), (s += SEGS);
   else if (s >= SEGS) (cell = step(sid, b, 1)), (s -= SEGS);
@@ -709,19 +751,35 @@ function strata(L, f, k, sid, face, inward, sides, seed, d) {
     if (D <= 0) continue;
     const n0 = Math.min(plane + into * D, plane - into * EXT), n1 = Math.max(plane + into * D, plane - into * EXT);
     const b0 = SEG * s - (depth[i - 1] >= D ? 1 : 0), b1 = SEG * s + SEG + (depth[i + 1] >= D ? 1 : 0);
-    d = Math.min(d, boxAir(L, f, put(a, n0, b, b0, c, LAYER * r + 1), put(a, n1, b, b1, c, LAYER * r + LAYER - 1)));
+    d = Math.min(d, boxAir(L, f, put(a, n0, b, b0, c, LAYER * r + (D >= 4 ? 1 : 2)), put(a, n1, b, b1, c, LAYER * r + LAYER - (D >= 2 ? 1 : 2))));
   }
   return Math.min(d, cap);
 }
 
-function stairs(L, f, s, on, d) {
-  const p = s >> 1, [a, b] = PAIRS[p], c = THIRD[p];
-  const c0 = on & 1 ? -1 : 0, c1 = on & 2 ? R + 1 : R;
+function stairs(L, f, s, on, solid, id, seed, d) {
+  const p = s >> 1, [a, b] = PAIRS[p], c = THIRD[p], E = STAIR_DEEPEST;
+  const pa = L[a] + f[a], pb = L[b] + f[b], pc = L[c] + f[c];
+  const s0 = Math.max(0, Math.min(SEGS - 1, Math.floor(pc / SEG)));
+  // Across the diagonal (u), the steps are all within -STEP to STEP + 2E of
+  // it, on the building's side; along it, none further along than the
+  // segments either side of ours is nearer than those segments' far ends.
+  const u = (s & 1 ? pa + pb - R : pa - pb) * (solid ? -1 : 1);
+  const cap = Math.max((u - STEP - 2 * E) * Math.SQRT1_2, (-STEP - u) * Math.SQRT1_2, Math.min(pc - (SEG * s0 - SEG + 1), SEG * s0 + 2 * SEG - 1 - pc));
   for (let k = 0; k < R / STEP; k++) {
-    const b0 = s & 1 ? R - STEP * (k + 1) : STEP * k;
-    d = Math.min(d, boxAir(L, f, put(a, STEP * k, b, b0, c, c0), put(a, STEP * (k + 1), b, b0 + STEP, c, c1)));
+    const depth = [-2, -1, 0, 1, 2].map((i) => Math.min(slotDepth(id, 6 + s, k, s0 + i, on, seed), E));
+    for (let i = 1; i <= 3; i++) {
+      const e = depth[i], j = s0 + i - 2;
+      if (e < 0) continue;
+      // The step's square, and on into the building by e, within the cell.
+      const b0 = s & 1 ? R - STEP * (k + 1) : STEP * k;
+      const [a0, a1] = solid ? [STEP * k - e, STEP * (k + 1)] : [STEP * k, STEP * (k + 1) + e];
+      const [c0, c1] = [SEG * j - (depth[i - 1] >= e ? 1 : 0), SEG * j + SEG + (depth[i + 1] >= e ? 1 : 0)];
+      const [lb, hb] = (s & 1) !== solid ? [b0, b0 + STEP + e] : [b0 - e, b0 + STEP];
+      const clamp = (x) => Math.max(0, Math.min(R, x));
+      d = Math.min(d, boxAir(L, f, put(a, clamp(a0), b, clamp(lb), c, c0), put(a, clamp(a1), b, clamp(hb), c, c1)));
+    }
   }
-  return d;
+  return Math.min(d, cap);
 }
 
 function reliefCell(L, f, id, seed, [m, near], d) {
@@ -731,7 +789,7 @@ function reliefCell(L, f, id, seed, [m, near], d) {
     const sides = (near >>> (SIDE_AT + 2 * k)) & 3;
     if (m & (1 << (FACE_AT + k))) d = strata(L, f, k, id, k, -1, sides, seed, d);
     if (m & (1 << (FRONT_AT + k))) d = strata(L, f, k, wrapId(id.map((x, a) => x + e[a])), k ^ 1, 1, sides, seed, d);
-    if (m & (1 << (STAIR_AT + k))) d = stairs(L, f, k, (m >>> (ON_AT + 2 * k)) & 3, d);
+    if (m & (1 << (STAIR_AT + k))) d = stairs(L, f, k, (m >>> (ON_AT + 2 * k)) & 3, (near >>> (SOLID_AT + k)) & 1, id, seed, d);
   }
   if (d <= 0 || !(near & NEAR_BIT)) return d;
   return Math.min(d, R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
