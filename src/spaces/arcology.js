@@ -178,7 +178,7 @@ function planes([x0, y0, z0, x1, y1, z1, kind], [x, y, z]) {
   }
   return out;
 }
-const inBlock = (b, q) => planes(b, q).every(([d]) => d < 0);
+const inBlock = (b, q) => [0, 1, 2].every((a) => q[a] > b[a] && q[a] < b[a + 3]) && planes(b, q).every(([d]) => d < 0);
 
 export const VOLUME = (() => {
   const lo = [Infinity, 0, Infinity], hi = [-Infinity, TOP + 2, -Infinity];
@@ -196,6 +196,8 @@ export const VOLUME = (() => {
     const q = [x + lo[0] + 0.5, y + lo[1] + 0.5, z + lo[2] + 0.5];
     let clear = true;
     for (const b of BLOCKS) {
+      // (Half a unit outside its box, a cell is clear of a block.)
+      if ([0, 1, 2].some((a) => q[a] <= b[a] - 0.5 || q[a] >= b[a + 3] + 0.5)) continue;
       const ps = planes(b, q), reach = (nn) => 0.5 * (Math.abs(nn[0]) + Math.abs(nn[1]) + Math.abs(nn[2]));
       if (ps.every(([d, nn]) => d <= -reach(nn))) deep[at([x, y, z])] = 1;
       if (!ps.some(([d, nn]) => d >= reach(nn))) clear = false;
@@ -442,8 +444,10 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout f
   for (int k = 0; k < 6; k++) {
     ivec3 e = put(ivec3(0), k >> 1, (k & 1) == 0 ? 1 : -1);
     uint sides = (m.y >> uint(SIDE_AT + 2 * k)) & 3u;
-    if ((m.x & (1u << uint(FACE_AT + k))) != 0u) d = strata(L, f, k, id, k, -1, sides, seed, d, ray, reach, nrm);
-    if ((m.x & (1u << uint(FRONT_AT + k))) != 0u) d = strata(L, f, k, wrapId(id + e), k ^ 1, 1, sides, seed, d, ray, reach, nrm);
+    // (A cell has a face's strata or the next cell's there, never both.)
+    bool front = (m.x & (1u << uint(FRONT_AT + k))) != 0u;
+    if (front || (m.x & (1u << uint(FACE_AT + k))) != 0u)
+      d = strata(L, f, k, front ? wrapId(id + e) : id, front ? k ^ 1 : k, front ? 1 : -1, sides, seed, d, ray, reach, nrm);
     if ((m.x & (1u << uint(STAIR_AT + k))) != 0u) d = stairs(L, f, k, (m.x >> uint(ON_AT + 2 * k)) & 3u, d, ray, reach, nrm);
   }
   gRay = ray;
@@ -572,13 +576,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return 1e9;
   }
   if (level == ${CITY} && id.y >= ${ROW_ID} && id.y < ${ROW_ID + ROWS}) return city(L, f, id, seed, reach, nrm);
-  if (level == ${CITY + 1}) {
-    uvec2 m = relief(id, gUp);
-    if (m != uvec2(0u)) {
-      float d = hallsCell(L, f, id, seed, reach, nrm);
-      return reliefCell(L, f, id, seed, m, d, reach, nrm);
-    }
-  }
   // Over the city there is only sky, and the city's air comes right up to
   // the cells above it: all a cell up there can say is how far down it is.
   if (level == ${CITY} && id.y >= ${ROW_ID + ROWS} && id.y <= ${ROW_ID + ABOVE}) {
@@ -586,7 +583,11 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     nrm = vec3(0.0);
     return float(L.y + R * (id.y - ${ROW_ID + ROWS})) + f.y;
   }
-  return hallsCell(L, f, id, seed, reach, nrm);
+  // (The halls asked after in one place only: the compiler copies them out
+  // wherever they are asked after, and they are much the biggest part.)
+  float d = hallsCell(L, f, id, seed, reach, nrm);
+  uvec2 m = level == ${CITY + 1} ? relief(id, gUp) : uvec2(0u);
+  return m != uvec2(0u) ? reliefCell(L, f, id, seed, m, d, reach, nrm) : d;
 }
 `;
 
