@@ -404,15 +404,16 @@ export class Planner {
   // clearance at each. If the first is not in plain sight (we may be in an
   // opening, not in our room proper), by way of the middle of the room
   // `via` ({ k, c }) if that is; null if neither is, or if any point is not
-  // in air (furniture can stand over a way in through a floor).
-  points(way, via) {
+  // in air (furniture can stand over a way in through a floor). from: where
+  // the way sets out from, if not from us (the end of a way it carries on).
+  points(way, via, from = [0, 0, 0]) {
     const pts = way.points.map(([k, p]) => this.point(k, p));
     if (pts.some((p) => !(p[3] > 0))) return null;
-    if (this.clear([0, 0, 0], pts[0])) return pts;
+    if (this.clear(from, pts[0])) return pts;
     const r = via && this.frame(via.k) && this.room(via.k, via.c);
     if (!r) return null;
     const middle = this.point(via.k, this.middle(via.c, r));
-    return middle[3] > 0 && this.clear([0, 0, 0], middle) && this.clear(middle, pts[0]) ? [middle, ...pts] : null;
+    return middle[3] > 0 && this.clear(from, middle) && this.clear(middle, pts[0]) ? [middle, ...pts] : null;
   }
 
   // Out in air that is not a room of the halls (the arcology's city, or a
