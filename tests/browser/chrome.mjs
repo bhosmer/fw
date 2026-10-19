@@ -1,9 +1,9 @@
 // Headless Chrome, driven over the DevTools protocol with nothing but Node's
 // own WebSocket, and a static server for the app: enough to load pages and
 // evaluate code in them, with no packages to install.
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname, normalize } from 'node:path';
 
@@ -32,14 +32,52 @@ export function serve(root) {
   return new Promise((ok) => server.listen(0, '127.0.0.1', () => ok({ url: `http://127.0.0.1:${server.address().port}/`, close: () => server.close() })));
 }
 
+// Chromes of ours left running by runs that ended without closing them
+// (killed, or timed out): orphans, their parent gone. Each keeps drawing,
+// unthrottled, until stopped; so each launch stops them first, and removes
+// their profiles.
+function sweep() {
+  let ps = '';
+  try {
+    ps = execSync('ps -eo pid,ppid,command', { encoding: 'utf8' });
+  } catch {
+    return;
+  }
+  const used = new Set();
+  for (const line of ps.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+.*--user-data-dir=(\S*fw-chrome-\S+)/);
+    if (!m || line.includes('--type=')) continue;
+    if (m[2] !== '1') used.add(m[3]);
+    else
+      try {
+        process.kill(+m[1]);
+      } catch {}
+  }
+  // (And the profiles of any not still running. Best effort: one just
+  // stopped may still be writing to its own.)
+  for (const name of readdirSync(tmpdir())) {
+    const dir = join(tmpdir(), name);
+    if (!name.startsWith('fw-chrome-') || used.has(dir)) continue;
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {}
+  }
+}
+
 export async function launch() {
   if (!CHROME) throw new Error('no Chrome found (set CHROME to its path)');
+  sweep();
   const dir = mkdtempSync(join(tmpdir(), 'fw-chrome-'));
   const proc = spawn(CHROME, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${dir}`,
     '--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling',
     '--enable-unsafe-swiftshader', '--window-size=1280,720', 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // (However this process ends, short of being killed outright, Chrome goes
+  // with it.)
+  const stop = () => proc.kill();
+  process.once('exit', stop);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, () => (stop(), process.exit(130)));
   // Chrome says where it listens on stderr.
   const ws = await new Promise((ok, fail) => {
     let err = '';
