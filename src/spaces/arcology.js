@@ -48,47 +48,32 @@ const BLOCKS = [];
   const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const block = (x0, y0, z0, x1, y1, z1, kind = 0) => BLOCKS.push([x0, y0, z0, x1, y1, z1, kind]);
 
-  // A hexahedron about (cx, cz), w across at its waist either way from the
-  // middle, standing on shafts legs high.
+  // A hexahedron about (cx, cz), after the model of Soleri's: an upside-down
+  // pyramid w either way from the middle at its top, closed off flat by a
+  // keel, with a thin rim round its top; over it an open storey (the park
+  // and promenade), and over that a pyramid a little narrower, rising to a
+  // point, its base a lip a cell high. The upper is held up by four great
+  // shafts, standing on the plaza legs high under the lower and rising
+  // through it, and by a post under each of its corners.
   const hexahedron = (cx, cz, w, legs) => {
     const keel = int(2, 3);
     const lo = w - keel; // how far the lower pyramid hangs
-    const waist = G + legs + lo;
-    const hi = Math.min(w, TOP - waist - 2); // how far the upper rises
-    // The lower: an upside-down pyramid, closed off flat by a keel.
-    block(cx - w, waist - lo, cz - w, cx + w, waist, cz + w, 5);
-    block(cx - keel, waist - lo - 1, cz - keel, cx + keel, waist - lo + 1, cz + keel);
-    // The waist: a slab overhanging all round, a little more on two sides.
-    const ox = int(1, 3), oz = int(1, 3);
-    block(cx - w - ox, waist - 1, cz - w - oz, cx + w + ox, waist + 1, cz + w + oz);
-    // The upper: a pyramid, rising at 45 degrees from the waist, cut off
-    // flat where the crown stands. (Worked out as terraces once, stepping in
-    // as far as they rose, which is how high and how far in it comes to;
-    // and the rest of the city after it is as it was.)
-    let y = waist, r = w;
-    while (r > 1 && y < waist + hi) {
-      const step = Math.min(int(1, 3), waist + hi - y, r - 1);
-      y += step;
-      r -= step;
-    }
-    block(cx - w, waist - 1, cz - w, cx + w, y, cz + w, 3);
-    // A crown: a small pyramid, or a block cut at its corners.
-    if (y < TOP) block(cx - r - 1, y - 1, cz - r - 1, cx + r + 1, Math.min(TOP, y + 2), cz + r + 1, rnd() < 0.5 ? 3 : 4);
-    // The shafts it stands on: in a ring under the lower pyramid, up into
-    // its underside, and a few inside the ring, up to the keel; two cells
-    // square. Some rise on through the terraces as towers.
-    const ring = Math.floor(w / 2);
-    const shafts = [];
-    for (let k = -ring; k <= ring; k += int(2, 4)) shafts.push([k, -ring], [k, ring], [-ring, k], [ring, k]);
-    for (let n = int(1, 3); n > 0; n--) shafts.push([int(-keel, keel - 2), int(-keel, keel - 2)]);
-    for (const [a, b] of shafts) {
-      if (rnd() < 0.3) continue;
-      const x0 = cx + a - 1, z0 = cz + b - 1;
-      const out = Math.max(Math.abs(a), Math.abs(b));
-      // (Up to where it meets the underside, or on through the terraces
-      // and some way above them.)
-      const top = rnd() < 0.3 ? Math.min(TOP, waist + (w - out) + int(2, 6)) : waist - lo + out + 1;
-      block(x0, G - 1, z0, x0 + 2, top, z0 + 2, top > waist && rnd() < 0.4 ? 4 : 0);
+    const top = G + legs + lo; // the lower's top
+    const base = top + 4; // the upper's base (three cells of open storey under its lip)
+    const u = w - 2; // how far the upper reaches either way
+    block(cx - w, top - lo, cz - w, cx + w, top, cz + w, 5);
+    block(cx - w, top, cz - w, cx + w, top + 1, cz - w + 1);
+    block(cx - w, top, cz + w - 1, cx + w, top + 1, cz + w);
+    block(cx - w, top, cz - w + 1, cx - w + 1, top + 1, cz + w - 1);
+    block(cx + w - 1, top, cz - w + 1, cx + w, top + 1, cz + w - 1);
+    block(cx - u, base - 1, cz - u, cx + u, base + u, cz + u, 3);
+    // (The great shafts half a side across, s out from the middle either
+    // way; the posts a cell in from the upper's corners.)
+    const h = Math.max(1, Math.round(w / 8)), s = Math.round(w / 3);
+    for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      block(cx + a * s - h, G - 1, cz + b * s - h, cx + a * s + h, base, cz + b * s + h);
+      const x = cx + a * (u - 1), z = cz + b * (u - 1);
+      block(Math.min(x, x - a), G - 1, Math.min(z, z - b), Math.max(x, x - a), base, Math.max(z, z - b));
     }
   };
   hexahedron(C, C, 13, 9);
