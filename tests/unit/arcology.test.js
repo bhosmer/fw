@@ -184,3 +184,11 @@ test('close to a sloped face, many levels down, its distance keeps its precision
   const want = -(90 * Math.pow(R, -deep)) / Math.hypot(52, 90);
   assert.ok(Math.abs(got - want) < 1e-3 * Math.abs(want), `${got} against ${want}`);
 });
+
+// The masses have a skin (cells with pockets and no rooms), rooms deeper in,
+// and some cells left plain; none of the three is ever empty.
+test('the building has skin, deep and plain cells', () => {
+  const count = [0, 0, 0, 0];
+  for (const k of VOLUME.kind) count[k]++;
+  assert.ok(count[1] > 500 && count[2] > 1000 && count[3] > 500, `deep ${count[1]}, skin ${count[2]}, plain ${count[3]}`);
+});

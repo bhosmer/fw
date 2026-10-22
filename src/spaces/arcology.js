@@ -46,8 +46,9 @@ const ORIGIN = [C, G - 1, C];
 
 // Each plane's direction: an axis (0, 1, 2) where its normal is one, or else
 // a slant (3 on): the normal itself, in whole numbers, so that the plane
-// lies on a whole value of what is carried (a multiple of it would leave the
-// plane between two, where the small parts cancel). Scale: 1 or -1.
+// lies on a whole value of what is carried (a divisor of it, the primitive
+// direction, could leave the plane between two whole values, where the small
+// parts cancel). Scale: 1 or -1.
 const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
 export const SLANTS = [];
 function slantOf(n) {
@@ -175,6 +176,8 @@ function dot2(v) {
 // level, less `keep` (see LEVELS).
 for (const F of FACES)
   F.keep = LEVELS.map((lv, i) => F.others.map(({ n, K }) => (i ? R : 1) * K * F.len2 - Math.ceil(lv.keep * Math.hypot(...n) * F.len2)));
+// (A cell's table entry has a bit for each, six in all.)
+if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
 // How far behind a face the finer level's pockets can reach (in cells): the
 // deepest, and the face's run across a rectangle's height.
 const REACH = Math.max(...FACES.map((F) => (LEVELS[1].depths.at(-1) + (LEVELS[1].sby * Math.abs(F.ny)) / F.alpha / F.len) / R)) + 1;
@@ -214,7 +217,7 @@ export const VOLUME = (() => {
     let f = 0;
     FACES.forEach((F, i) => {
       if (cellOut(F.solid, c)) return;
-      const ds = corners(c).map((q) => (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]) - F.K0) / Math.hypot(...F.n));
+      const ds = corners(c).map((q) => (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]) - F.K) / Math.hypot(...F.n));
       if (Math.max(...ds) > -REACH) f |= 1 << i;
     });
     // Skin where pockets reach and only masses and their rims touch it; deep
@@ -522,7 +525,10 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout f
       if ((open & 16u) == 0u) airPlane(float(L.z - R) + f.z, EZ);
       if ((open & 32u) == 0u) airPlane(-float(L.z) - f.z, -EZ);
       if (pass == 0) {
+        // (Cut off at those sides; and the next cell's air, a skin's
+        // pockets, may be just across them.)
         d = max(d, gD);
+        if (d > 0.0) d = min(d, max(-gD, 0.0));
         if (!ray || reach < 0.0) break;
         gRay = true;
       } else if (gX < reach) { reach = gX; nrm = gN; }
@@ -646,9 +652,14 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return float(L.y + R * (id.y - ${ROW_ID + ROWS})) + f.y;
   }
   // (The halls asked after in one place only: the compiler copies them out
-  // wherever they are asked after, and they are much the biggest part.)
-  float d = hallsCell(L, f, id, seed, reach, nrm);
+  // wherever they are asked after, and they are much the biggest part. Not
+  // at all in the skin and plain cells, which have none.)
   uvec2 m = level == ${CITY + 1} ? relief(id, gUp) : uvec2(0u);
+  uint kind = m.x & 3u;
+  float d = 1e9;
+  reach = -1.0;
+  nrm = vec3(0.0);
+  if (m == uvec2(0u) || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, reach, nrm);
   return m != uvec2(0u) ? reliefCell(L, f, id, seed, m, d, reach, nrm) : d;
 }
 `;
@@ -858,7 +869,8 @@ function reliefCell(L, f, id, seed, [m], d) {
     if (!(open & 8)) plane(-L[1] - f[1]);
     if (!(open & 16)) plane(L[2] - R + f[2]);
     if (!(open & 32)) plane(-L[2] - f[2]);
-    return Math.max(d, gD);
+    d = Math.max(d, gD);
+    return d > 0 ? Math.min(d, Math.max(-gD, 0)) : d;
   }
   const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
   if (kind === PLAIN) return Math.max(e, 0);
