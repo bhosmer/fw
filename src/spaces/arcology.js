@@ -142,7 +142,7 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 // cut where the mass is less than THIN cells from its axis (near an apex).
 const THIN = 2;
 const LEVELS = [
-  { sb: 3, sby: 1, quant: 1, splits: 2, depths: [0, 0.25, 0.5, 1], weights: [0.2, 0.35, 0.3, 0.15], keep: 0.25 },
+  { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15], keep: 0.25 },
   { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1], keep: 2 },
 ];
 for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));

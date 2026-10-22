@@ -15,7 +15,7 @@ if (page.errors.length) console.log('errors', page.errors);
 let k = 0;
 for (const s of ['', ...steps]) {
   if (s) console.log('>', JSON.stringify(await page.eval(s)));
-  const png = await page.eval(`(() => { const w = 640, h = 360, px = fw.snap(w, h), o = new Uint8ClampedArray(w * h * 4);
+  const png = await page.eval(`(() => { const w = ${+(process.env.W ?? 640)}, h = ${+(process.env.H ?? 360)}, px = fw.snap(w, h), o = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) o.set(px.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
     const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(new ImageData(o, w, h), 0, 0);
     return c.toDataURL().split(',')[1]; })()`);
