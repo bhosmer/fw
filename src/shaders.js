@@ -27,19 +27,19 @@ uniform vec4 uFs[NLEV * NSL4];`;
 function slantGlsl(space) {
   if (!space.slants?.length) return '';
   return `const ivec3 SLANT[NSL] = ivec3[NSL](${space.slants.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ')});
-int gLs[NSL];
-float gFs[NSL];
-void splitSlants(int i, vec3 v, ivec3 c) {
-  float sg = uSig[i];
-  for (int k = 0; k < NSL; k++) {
-    ivec3 m = SLANT[k];
-    float s = uFs[i * NSL4 + k / 4][k % 4] + dot(vec3(m), v) * sg;
-    float r = floor(s + 0.5);
-    gFs[k] = s - r;
-    gLs[k] = uLs[i * NSL4 + k / 4][k % 4] + int(r) - (m.x * c.x + m.y * c.y + m.z * c.z) * R;
-  }
+// The point being asked about (set by levelRay), from which slantAt works
+// out m . (L + f) along slant k only when it is asked for: as a whole number
+// (n) and the rest (returned), as levelRay splits L and f.
+int gSi;
+vec3 gSv;
+ivec3 gSc;
+float slantAt(int k, out int n) {
+  ivec3 m = SLANT[k];
+  float s = uFs[gSi * NSL4 + k / 4][k % 4] + dot(vec3(m), gSv) * uSig[gSi];
+  float r = floor(s + 0.5);
+  n = uLs[gSi * NSL4 + k / 4][k % 4] + int(r) - (m.x * gSc.x + m.y * gSc.y + m.z * gSc.z) * R;
+  return s - r;
 }
-float slant(int k, int c) { return float(gLs[k] - c) + gFs[k]; }
 `;
 }
 
@@ -203,7 +203,7 @@ float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
   gFm = sm - rm;
   gLp = uLp[i] + ivec3(rp) - ivec3(c.x + c.y, c.z + c.y, c.x + c.z) * R;
   gLm = uLm[i] + ivec3(rm) - ivec3(c.x - c.y, c.z - c.y, c.x - c.z) * R;
-${space.slants?.length ? `  if (${space.slantLevels.map((l) => `uLevel[i] == ${l}`).join(' || ')}) splitSlants(i, v, c);` : ''}
+${space.slants?.length ? '  gSi = i;\n  gSv = v;\n  gSc = c;' : ''}
   // (The cell's index in its parent is its id's last digit; carried over
   // into the parent's neighbours as c goes past them.)
   vec3 own = vec3(uId[i] - R * ivec3(floor((vec3(uId[i]) + 0.5) / float(R))));

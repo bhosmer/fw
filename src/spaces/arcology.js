@@ -249,9 +249,9 @@ function solidGlsl(s, j) {
       return `  solidPlane((float(${p.scale} * L.${a} - (${p.K} - ${p.scale} * o.${a})) + ${glf(p.scale)} * f.${a}) * ${glf(1 / p.len)}, ${nrm});`;
     }
     const m = p.m, k = `${p.K} - ${p.scale} * (${m[0]} * o.x + ${m[1]} * o.y + ${m[2]} * o.z)`;
-    return `  solidPlane((float(${p.scale} * gLs[${p.dir - 3}] - (${k})) + ${glf(p.scale)} * gFs[${p.dir - 3}]) * ${glf(1 / p.len)}, ${nrm});`;
+    return `  fr = slantAt(${p.dir - 3}, n);\n  solidPlane((float(${p.scale} * n - (${k})) + ${glf(p.scale)} * fr) * ${glf(1 / p.len)}, ${nrm});`;
   });
-  return `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
+  return `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  int n;\n  float fr;\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
 }
 
 const glsl = /* glsl */ `
@@ -344,10 +344,10 @@ float pockets(ivec3 L, vec3 f, uint faces, float d, bool ray, inout float reach,
     ivec4 ht = FHT[k];
     ivec3 kan = FKAN[k], qy = FQY[k];
     // Where the point is, along the face (u) and across it (w).
-    int u = ht.w * gLs[ht.z] + FT[k].x * base.x + FT[k].z * base.z;
-    float fu = float(ht.w) * gFs[ht.z];
-    int w = ht.y * gLs[ht.x] + FH[k].x * base.x + FH[k].z * base.z;
-    float fw = float(ht.y) * gFs[ht.x];
+    int u, w;
+    float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);
+    u = ht.w * u + FT[k].x * base.x + FT[k].z * base.z;
+    w = ht.y * w + FH[k].x * base.x + FH[k].z * base.z;
     int y = base.y + L.y;
     rectangle(k, u, fu, y, f.y);
     float len = FLEN[k], inv = 1.0 / len;
@@ -742,10 +742,10 @@ const arcology = {
   glsl: hallsGlsl + glsl,
   cellAir,
   volume: VOLUME,
-  // The building's planes' normals, carried exactly at the city's level and
-  // the next (see Position.levels).
+  // The building's planes' normals, carried exactly across levels (see
+  // Position.levels): the city's level asks after them for its solids, the
+  // next for its pockets.
   slants: SLANTS,
-  slantLevels: [CITY, CITY + 1],
   // A plaza's air reaches up out of its cell, and its longest way runs
   // corner to corner across the cells either side.
   maxInterior: 0.65,
