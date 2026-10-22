@@ -20,17 +20,17 @@
 // plan is not resolved; four legs at the block's corners give two in either
 // elevation.
 
-// Rational points are kept in twelfths of a cell (thirds and quarters both
-// occur), and each plane is reduced to whole numbers n . X < K, X in cells.
-const T = 12;
+// Rational points are kept in 24ths of a cell (thirds and quarters both
+// occur, and the pillars' half sides need eighths), and each plane is reduced to whole numbers n . X < K, X in cells.
+const T = 24;
 const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
 const sub = (a, b) => a.map((x, i) => x - b[i]);
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const tw = (p) => p.map((x) => Math.round(x * T));
 
-// The plane n . X = K (X in cells) through three points given in twelfths,
-// facing away from the point `inside` (in twelfths).
+// The plane n . X = K (X in cells) through three points given in 24ths,
+// facing away from the point `inside` (in 24ths).
 function through(a, b, c, inside) {
   let n = cross(sub(b, a), sub(c, a));
   let K = dot(n, a); // n . (T X) = K, so (T n) . X = K
@@ -39,7 +39,7 @@ function through(a, b, c, inside) {
   const g = [...n, K].reduce(gcd);
   return { n: n.map((x) => x / g), K: K / g };
 }
-// The plane n . X = n . p + w |n| (rounded to a twelfth): a face w out from
+// The plane n . X = n . p + w |n| (rounded to a 24th): a face w out from
 // p, facing along n.
 function offset(n, p, w) {
   const len = Math.hypot(...n);

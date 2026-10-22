@@ -139,11 +139,13 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 // smaller boxes in those. Nothing thin is cut through: at its back wall's
 // corners a pocket is either at least `keep` inside each of the mass's other
 // faces, or out past it (it notches the ridge between them, S2); and none is
-// cut where the mass is less than THIN cells from its axis (near an apex).
-const THIN = 1;
+// cut where the mass is less than thin cells from its axis (near an apex):
+// more than the level's deepest, so that a core is always left (a fresh-eyes
+// review found a sliver all but loose at the lower's apex with one cell at
+// both levels).
 const LEVELS = [
-  { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15], keep: 0.25 },
-  { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1], keep: 2 },
+  { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15], keep: 0.25, thin: 1.25 },
+  { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1], keep: 2, thin: 3 },
 ];
 for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));
 const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
@@ -183,8 +185,8 @@ function dot2(v) {
 for (const F of FACES) {
   F.keep = LEVELS.map((lv, i) => F.others.map(({ n, K }) => (i ? R : 1) * K * F.len2 - Math.ceil(lv.keep * Math.hypot(...n) * F.len2)));
   F.on = LEVELS.map((lv, i) => F.others.map(({ K }) => (i ? R : 1) * K * F.len2));
-  // (sub (K - ny y), at least, for the face to be THIN from the axis.)
-  F.thin = LEVELS.map((lv, i) => Math.ceil((THIN * (i ? R : 1) * F.alpha * F.len) / F.sub) * F.sub);
+  // (sub (K - ny y), at least, for the face to be lv.thin cells from the axis.)
+  F.thin = LEVELS.map((lv, i) => Math.ceil((lv.thin * (i ? R : 1) * F.alpha * F.len) / F.sub) * F.sub);
 }
 // (A cell's table entry has a bit for each, six in all.)
 if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
@@ -480,7 +482,7 @@ float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, 
         if (x0 < BARE_HI[j].x * l2 && x1 > BARE_LO[j].x * l2 && z0 < BARE_HI[j].z * l2 && z1 > BARE_LO[j].z * l2 &&
             gY0 < BARE_HI[j].y && gY1 > BARE_LO[j].y) clear = false;
     }
-    // (Nothing thin cut through: see THIN.)
+    // (Nothing thin cut through: see LEVELS' thin.)
     if (min(wl, wh) < FTHIN[lv * NF + k]) clear = false;
     for (int c = 0; c < 4; c++) {
       int cu = (c & 1) == 0 ? gU0 : gU1, cy = (c & 2) == 0 ? gY0 : gY1;
