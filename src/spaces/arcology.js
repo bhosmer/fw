@@ -140,7 +140,7 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 // corners a pocket is either at least `keep` inside each of the mass's other
 // faces, or out past it (it notches the ridge between them, S2); and none is
 // cut where the mass is less than THIN cells from its axis (near an apex).
-const THIN = 2;
+const THIN = 1;
 const LEVELS = [
   { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15], keep: 0.25 },
   { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1], keep: 2 },
