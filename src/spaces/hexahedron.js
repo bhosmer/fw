@@ -92,7 +92,7 @@ export function hexahedron() {
   const solids = [];
   const upper = pyramid(UP, PLATE_HI, APEX_HI), lower = pyramid(DOWN, ROOF_LO, APEX_LO);
   solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: APEX_HI });
-  solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: APEX_LO, yhi: ROOF_LO });
+  solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO });
   solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true });
   solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true });
   // Pillars: squares facing the centre, from the ground (and a cell under
