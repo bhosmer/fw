@@ -193,7 +193,12 @@ if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with reli
 const REACH = Math.max(...FACES.map((F) => (LEVELS[1].depths.at(-1) + (LEVELS[1].sby * Math.abs(F.ny)) / F.alpha / F.len) / R)) + 1;
 // How far out past a face the city's pockets reach (cells): a unit past the
 // face at a rectangle's outermost, and the face's run across its height.
-const OUT_C = Math.max(...FACES.map((F) => 1 + Math.ceil(F.len) / F.len + (LEVELS[0].sby * Math.abs(F.ny)) / F.alpha / Math.hypot(...F.hv.map((x) => x / F.sub))));
+for (const F of FACES) {
+  const run = (LEVELS[0].sby * Math.abs(F.ny)) / F.alpha / Math.hypot(...F.hv.map((x) => x / F.sub));
+  F.outC = 1 + Math.ceil(F.len) / F.len + run;
+  F.reachC = LEVELS[0].depths.at(-1) + run + 1;
+}
+const OUT_C = Math.max(...FACES.map((F) => F.outC));
 // How far behind a face the city's pockets can reach (cells), likewise.
 const REACH_C = Math.max(...FACES.map((F) => LEVELS[0].depths.at(-1) + (LEVELS[0].sby * Math.abs(F.ny)) / F.alpha / F.len)) + 1;
 // The city's pockets keep clear of the solids that are neither masses nor
@@ -378,6 +383,7 @@ const int WIN_AT = ${WIN_AT}, WIN_H = ${WIN[1]}, PITCH_Y = ${PITCH[1]};
 const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
 const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
 const float REACH_C = ${glf(REACH_C)}, OUT_C = ${glf(OUT_C)};
+const vec2 FBAND[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.reachC)}, ${glf(F.outC)})`).join(', ')});
 const int NBARE = ${BARE.length};
 const ivec3 BARE_LO[NBARE] = ivec3[NBARE](${ivecs(BARE.map((b) => b[0]))});
 const ivec3 BARE_HI[NBARE] = ivec3[NBARE](${ivecs(BARE.map((b) => b[1]))});
@@ -541,7 +547,7 @@ float cityPockets(ivec3 L, vec3 f, ivec3 o, bool ray, inout float reach, inout v
   for (int k = 0; k < NF; k++) {
     // (Its pockets are within its mass's bounds and OUT_C: no
     // nearer than those, if it is outside them.)
-    vec3 off = max(vec3(FLO[k]) - OUT_C - q, q - vec3(FHI[k]) - OUT_C);
+    vec3 off = max(vec3(FLO[k]) - FBAND[k].y - q, q - vec3(FHI[k]) - FBAND[k].y);
     float away = max(max(off.x, off.y), off.z);
     if (away > 0.0) { d = min(d, away); continue; }
     ivec4 pl = FPLANE[k];
@@ -549,8 +555,8 @@ float cityPockets(ivec3 L, vec3 f, ivec3 o, bool ray, inout float reach, inout v
     int n;
     float fr = float(pl.y) * slantAt(pl.x, n);
     float s = (float(pl.y * n + pl.y * (m.x * base.x + m.y * base.y + m.z * base.z) - pl.z) + fr) / FNLEN[k];
-    if (s < -REACH_C) { d = min(d, -s - REACH_C); continue; }
-    if (s > OUT_C) { d = min(d, s - OUT_C); continue; }
+    if (s < -FBAND[k].x) { d = min(d, -s - FBAND[k].x); continue; }
+    if (s > FBAND[k].y) { d = min(d, s - FBAND[k].y); continue; }
     d = facePocket(0, k, L, f, base, d, ray, reach, nrm);
   }
   return d;
@@ -951,12 +957,12 @@ function cityPockets(L, f, o) {
   let d = NONE;
   const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
   FACES.forEach((F, k) => {
-    const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - OUT_C - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - OUT_C)));
+    const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - F.outC - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - F.outC)));
     if (away > 0) return void (d = Math.min(d, away));
     const m = SLANTS[F.plane.k], sg = F.plane.sign;
     const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / Math.hypot(...F.n);
-    if (s < -REACH_C) d = Math.min(d, -s - REACH_C);
-    else if (s > OUT_C) d = Math.min(d, s - OUT_C);
+    if (s < -F.reachC) d = Math.min(d, -s - F.reachC);
+    else if (s > F.outC) d = Math.min(d, s - F.outC);
     else d = facePocket(0, k, L, f, base, d);
   });
   return d;
