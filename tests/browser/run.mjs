@@ -129,8 +129,9 @@ check('from above, each world is stepped through truly', async () => {
 // Per place: at most how many pixels the exact way may see nearer, and at
 // most how many may disagree. (The relief: sphere tracing grazes the
 // arcology's long faces badly, there as elsewhere in it, and runs out of
-// steps in its pockets, short of the rooms the exact way sees in them.)
-const STEPPING = { court: [0.002, 0.07], ground: [0.002, 0.06], start: [0.002, 0.01], relief: [0.015, 0.09] };
+// steps in its pockets, short of the rooms the exact way sees in them:
+// there the exact way sees further, never nearer.)
+const STEPPING = { court: [0.002, 0.07], ground: [0.002, 0.06], start: [0.002, 0.01], relief: [0.015, 0.12] };
 check('the two ways of stepping rays agree', async () => {
   for (const [place, [nearer, most]] of Object.entries(STEPPING)) {
     await load(place);
