@@ -85,7 +85,8 @@ function pyramid(corners, yb, apex) {
 
 // The solids: each a list of planes, inside where n . X < K for all of them
 // (X in cells from the axis at the lower's apex). A rim (the plate, the roof
-// band) may meet a mass's relief; nothing else may. A mass's sloped faces carry
+// band) may meet a mass's relief; nothing else may. Pillars and towers have
+// window grids on their upright faces (S6). A mass's sloped faces carry
 // relief (see arcology.js), kept clear of its base: ylo, yhi bound the
 // relief's height.
 export function hexahedron() {
@@ -103,9 +104,9 @@ export function hexahedron() {
     const t = [-u[2], 0, u[0]];
     const c = [x, 0, z];
     const sides = [u, u.map((v) => -v), t, t.map((v) => -v)].map((n) => offset(n, c, PILLAR));
-    solids.push({ name: 'pillar', planes: [...sides, offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, PLATE_LO, 0], 0)] });
+    solids.push({ name: 'pillar', planes: [...sides, offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, PLATE_LO, 0], 0)], windows: true });
   }
-  solids.push({ name: 'tower', planes: box([-TOWER, TOWER_LO, -TOWER], [TOWER, ROOF_LO, TOWER]) });
+  solids.push({ name: 'tower', planes: box([-TOWER, TOWER_LO, -TOWER], [TOWER, ROOF_LO, TOWER]), windows: true });
   for (const sx of [-1, 1]) for (const sz of [-1, 1])
     solids.push({ name: 'leg', planes: box([sx * LEG_AT - LEG, GROUND - 1, sz * LEG_AT - LEG], [sx * LEG_AT + LEG, TOWER_LO, sz * LEG_AT + LEG]) });
   return solids;

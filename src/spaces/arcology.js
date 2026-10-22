@@ -192,6 +192,21 @@ const REACH_C = Math.max(...FACES.map((F) => LEVELS[0].depths.at(-1) + (LEVELS[0
 // The city's pockets keep clear of the solids that are neither masses nor
 // their rims (pillars, towers): those solids' bounds, from the building's origin.
 const BARE = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
+// Windows (S6): the upright faces of the solids that have them (pillars,
+// towers) carry a grid of small windows one level finer, in the face's own frame:
+// WIN wide and high (in the finer units), PITCH apart along and up, DEEP_WIN
+// into the face.
+const WIN = [6, 10], PITCH = [12, 16], DEEP_WIN = 3;
+const WINDOWS = [];
+SOLIDS.forEach((s) => {
+  if (!s.windows) return;
+  s.planes.forEach(({ n, K }) => {
+    if (n[1] !== 0) return;
+    const alpha = gcd(n[0], n[2]), h = [n[0] / alpha, 0, n[2] / alpha], t = [-h[2], 0, h[0]];
+    WINDOWS.push({ n, K, alpha, h: slantOf(h), t: slantOf(t), hv: h, tv: t, len: Math.hypot(...h), solid: s });
+  });
+});
+if (WINDOWS.length > 31) throw new Error(`arcology: ${WINDOWS.length} faces with windows, at most 31`);
 
 // The table, one cell of level CITY + 1 to an entry (see volume in
 // halls.js): in its first number, the cell's kind (KIND bits: 1 deep, its
@@ -200,7 +215,7 @@ const BARE = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, 
 // for each of its six sides (+x, -x, +y, -y, +z, -z), whether its rooms'
 // openings may run on across it (OPEN_AT: the next cell is deep too, or
 // clear of every solid).
-const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8;
+const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, WIN_AT = 14;
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
@@ -210,7 +225,7 @@ export const VOLUME = (() => {
   const n = size[0] * size[1] * size[2];
   const at = ([x, y, z]) => x + size[0] * (y + size[1] * z);
   const within = ([x, y, z]) => x >= 0 && y >= 0 && z >= 0 && x < size[0] && y < size[1] && z < size[2];
-  const kind = new Uint8Array(n), open = new Uint8Array(n), faces = new Uint8Array(n);
+  const kind = new Uint8Array(n), open = new Uint8Array(n), faces = new Uint8Array(n), win = new Uint8Array(n);
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const c = [x + lo[0], y + lo[1], z + lo[2]], v = at([x, y, z]);
     const touched = SOLIDS.filter((s) => !cellOut(s, c));
@@ -231,12 +246,21 @@ export const VOLUME = (() => {
     // pocket reaches; plain otherwise.
     if (f && touched.every((s) => s.relief || s.rim)) (kind[v] = SKIN), (faces[v] = f);
     else kind[v] = !f && touched.some((s) => cellIn(s, c)) ? DEEP : PLAIN;
+    // A plain cell that only one solid touches, crossed by just one of its
+    // upright faces (and by none of its others), has that face's windows.
+    if (kind[v] === PLAIN && touched.length === 1) {
+      const cs = corners(c), crossed = planesOf(touched[0]).filter((p) => cs.some((q) => side(p, q) < 0) && cs.some((q) => side(p, q) > 0));
+      if (crossed.length === 1) {
+        const w = WINDOWS.findIndex((W) => W.solid === touched[0] && W.n.every((x, a) => x === crossed[0].n[a]));
+        if (w >= 0) win[v] = w + 1;
+      }
+    }
   }
   const data = new Uint32Array(2 * n);
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = at([x, y, z]);
     if (!kind[v]) continue;
-    let word = kind[v] | (faces[v] << FACE_AT);
+    let word = kind[v] | (faces[v] << FACE_AT) | (win[v] << WIN_AT);
     if (kind[v] === DEEP)
       SIDES.forEach((e, k) => {
         const u = [x + e[0], y + e[1], z + e[2]];
@@ -331,6 +355,17 @@ const ivec3 FOTH[NF * 2] = ivec3[NF * 2](${ivecs(FACES.flatMap((F) => F.others.m
 const int FKEEP[2 * NF * 2] = int[2 * NF * 2](${[0, 1].flatMap((i) => FACES.flatMap((F) => F.keep[i])).join(', ')});
 const int FON[2 * NF * 2] = int[2 * NF * 2](${[0, 1].flatMap((i) => FACES.flatMap((F) => F.on[i])).join(', ')});
 const int FTHIN[2 * NF] = int[2 * NF](${[0, 1].flatMap((i) => FACES.map((F) => F.thin[i])).join(', ')});
+// The windows' faces (see WINDOWS): h and t as slants (index, sign); K, alpha
+// (w = h . Y < K R / alpha inside); len; and the grid: pitch and width along
+// (in u), the depth (in w).
+const int NW = ${Math.max(WINDOWS.length, 1)};
+const ivec4 WHT[NW] = ivec4[NW](${(WINDOWS.length ? WINDOWS : [{ h: { k: 0, sign: 1 }, t: { k: 0, sign: 1 } }]).map((W) => `ivec4(${W.h.k}, ${W.h.sign}, ${W.t.k}, ${W.t.sign})`).join(', ')});
+const ivec2 WKA[NW] = ivec2[NW](${(WINDOWS.length ? WINDOWS : [{ K: 0, alpha: 1 }]).map((W) => `ivec2(${W.K}, ${W.alpha})`).join(', ')});
+const ivec3 WH[NW] = ivec3[NW](${ivecs((WINDOWS.length ? WINDOWS : [{ hv: [1, 0, 0] }]).map((W) => W.hv))});
+const ivec3 WT[NW] = ivec3[NW](${ivecs((WINDOWS.length ? WINDOWS : [{ tv: [0, 0, 1] }]).map((W) => W.tv))});
+const float WLEN[NW] = float[NW](${(WINDOWS.length ? WINDOWS : [{ len: 1 }]).map((W) => glf(W.len)).join(', ')});
+const ivec3 WGRID[NW] = ivec3[NW](${(WINDOWS.length ? WINDOWS : [{ len: 1 }]).map((W) => `ivec3(${Math.round(PITCH[0] * W.len)}, ${Math.round(WIN[0] * W.len)}, ${Math.round(DEEP_WIN * W.len)})`).join(', ')});
+const int WIN_AT = ${WIN_AT}, WIN_H = ${WIN[1]}, PITCH_Y = ${PITCH[1]};
 // Each face's mass's bounds, from the building's origin, in cells.
 const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
 const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
@@ -513,6 +548,49 @@ float cityPockets(ivec3 L, vec3 f, ivec3 o, bool ray, inout float reach, inout v
   return d;
 }
 
+// Window j's grid where the point is, in a plain cell: the window of its
+// square of the grid (PITCH along and up), from DEEP_WIN behind the face to a
+// unit past it, within the cell; and where the point is in none, how far off
+// its square's edges are (the other windows are beyond them).
+float windowAir(int j, ivec3 L, vec3 f, float d, bool ray, inout float reach, inout vec3 nrm) {
+  ivec3 base = gCellB * R;
+  ivec4 ht = WHT[j];
+  ivec3 g = WGRID[j];
+  int u, w;
+  float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);
+  u = ht.w * u + WT[j].x * base.x + WT[j].z * base.z;
+  w = ht.y * w + WH[j].x * base.x + WH[j].z * base.z;
+  int y = base.y + L.y;
+  int cu = fdiv(u - (fu < 0.0 ? 1 : 0), g.x), cy = fdiv(y - (f.y < 0.0 ? 1 : 0), PITCH_Y);
+  float len = WLEN[j], inv = 1.0 / len;
+  int u0 = cu * g.x + (g.x - g.y) / 2, u1 = u0 + g.y, y0 = cy * PITCH_Y + (PITCH_Y - WIN_H) / 2, y1 = y0 + WIN_H;
+  float cap = min(min(float(u - cu * g.x) + fu, float((cu + 1) * g.x - u) - fu) * inv,
+                  min(float(y - cy * PITCH_Y) + f.y, float((cy + 1) * PITCH_Y - y) - f.y));
+  int K = WKA[j].x * R, a = WKA[j].y;
+  int back = fdiv(K, a) - g.z, outer = -fdiv(-K, a) + int(ceil(len));
+  gRay = false;
+  float gw = 1e9;
+  for (int pass = 0; pass < 2; pass++) {
+    airPiece();
+    airPlane((float(u0 - u) - fu) * inv, -vec3(WT[j]) * inv);
+    airPlane((float(u - u1) + fu) * inv, vec3(WT[j]) * inv);
+    airPlane((float(back - w) - fw) * inv, -vec3(WH[j]) * inv);
+    airPlane((float(w - outer) + fw) * inv, vec3(WH[j]) * inv);
+    airSpan(L.y, f.y, max(y0 - base.y, 0), min(y1 - base.y, R), EY);
+    airSpan(L.x, f.x, 0, R, EX);
+    airSpan(L.z, f.z, 0, R, EZ);
+    if (pass == 0) {
+      gw = gD;
+      if (!ray || gw + gO > 0.0) break;
+      gRay = true;
+    } else {
+      gRay = false;
+      if (gX > reach) { reach = gX; nrm = gN; }
+    }
+  }
+  return min(min(d, gw), max(cap, 0.0));
+}
+
 // A level-(CITY + 1) cell the table says something of: deep in the
 // building, the halls (d, reach and nrm being what they say of it), cut off
 // at its sides across which they may not run on; in its skin, pockets and no
@@ -551,8 +629,15 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout f
   reach = -1.0;
   nrm = vec3(0.0);
   if (kind == ${PLAIN}u) {
-    gSkin = false;
-    return max(e, 0.0);
+    int j = int((m.x >> uint(WIN_AT)) & 31u) - 1;
+    if (j < 0) {
+      gSkin = false;
+      return max(e, 0.0);
+    }
+    float a = windowAir(j, L, f, 1e9, ray, reach, nrm);
+    gRay = ray;
+    gSkin = ray ? reach >= 0.0 : a < 0.0;
+    return min(a, max(e, 0.0));
   }
   float a = pockets(L, f, (m.x >> uint(FACE_AT)) & 63u, 1e9, ray, reach, nrm);
   gRay = ray;
@@ -869,6 +954,28 @@ function cityPockets(L, f, o) {
   return d;
 }
 
+// See windowAir in the shader.
+function windowAir(j, L, f, d) {
+  const W = WINDOWS[j], base = cellB.map((x) => x * R);
+  const u = W.t.sign * dLs[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * dFs[W.t.k];
+  const w = W.h.sign * dLs[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * dFs[W.h.k];
+  const y = base[1] + L[1];
+  const pu = Math.round(PITCH[0] * W.len), wu = Math.round(WIN[0] * W.len), dw = Math.round(DEEP_WIN * W.len);
+  const cu = fdiv(u - (fu < 0 ? 1 : 0), pu), cy = fdiv(y - (f[1] < 0 ? 1 : 0), PITCH[1]);
+  const u0 = cu * pu + Math.trunc((pu - wu) / 2), u1 = u0 + wu, y0 = cy * PITCH[1] + Math.trunc((PITCH[1] - WIN[1]) / 2), y1 = y0 + WIN[1];
+  const cap = Math.min(Math.min(u - cu * pu + fu, (cu + 1) * pu - u - fu) / W.len, y - cy * PITCH[1] + f[1], (cy + 1) * PITCH[1] - y - f[1]);
+  const K = W.K * R, back = fdiv(K, W.alpha) - dw, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
+  piece();
+  plane((u0 - u - fu) / W.len);
+  plane((u - u1 + fu) / W.len);
+  plane((back - w - fw) / W.len);
+  plane((w - outer + fw) / W.len);
+  span(L[1], f[1], Math.max(y0 - base[1], 0), Math.min(y1 - base[1], R));
+  span(L[0], f[0], 0, R);
+  span(L[2], f[2], 0, R);
+  return Math.min(d, gD, Math.max(cap, 0));
+}
+
 function reliefCell(L, f, id, seed, [m], d) {
   const kind = m & 3;
   if (kind === DEEP) {
@@ -885,7 +992,10 @@ function reliefCell(L, f, id, seed, [m], d) {
     return d > 0 ? Math.min(d, Math.max(-gD, 0)) : d;
   }
   const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
-  if (kind === PLAIN) return Math.max(e, 0);
+  if (kind === PLAIN) {
+    const j = ((m >>> WIN_AT) & 31) - 1;
+    return j < 0 ? Math.max(e, 0) : Math.min(windowAir(j, L, f, NONE), Math.max(e, 0));
+  }
   return Math.min(pockets(L, f, (m >>> FACE_AT) & 63, NONE), Math.max(e, 0));
 }
 
