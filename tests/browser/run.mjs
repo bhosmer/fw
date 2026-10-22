@@ -32,8 +32,8 @@ const PLACES = {
   // In a small room, looking through a doorway into a great hall on the left.
   doorway: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6NSwiZnJhYyI6WzAuMTM4NDEyMzMxMzYzNzIzOCwwLjIxNDk5MDAyMjQwMTc0MTk4LDAuMTA2Nzk2NzA2MTM0MDM5MjRdLCJkaWdpdHMiOltbLTEsWzcsMTgsMTZdXSxbMCxbMTYsMTcsNV1dLFsxLFsxNSw2LDIxXV0sWzIsWzIwLDcsMl1dLFszLFsyMSw3LDEzXV0sWzQsWzAsMTAsMF1dLFs1LFswLDE2LDBdXV0sInlhdyI6MTMuOTYyNTg5NzIyMjkyMzM2LCJwaXRjaCI6LTAuMzM0NzMzNzg5OTMwOTczMTR9',
   // Close to a corner where two walls meet, facing into it.
-  // Galleries in the arcology's buildings, from in front of a terrace.
-  relief: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTEsImZyYWMiOlswLjUsMC41LDAuNV0sImRpZ2l0cyI6W1stMixbMTIsMTIsMTNdXSxbLTEsWzEyLDIyLDZdXV0sInlhdyI6MCwicGl0Y2giOi0wLjE1fQ==',
+  // Close in front of the Hexahedron's lower, its pockets filling the view.
+  relief: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjQ1LDAuNiwwLjk3XSwiZGlnaXRzIjpbXSwieWF3IjowLCJwaXRjaCI6MC4xNX0=',
   corner: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6MiwiZnJhYyI6WzAuNzMyOTI0NDcxMDI0NjE1NiwwLjIyODE0MzU3NzQxNjMwOTgzLDAuNzM0NDE2NTc4OTI4MTc5Nl0sImRpZ2l0cyI6W1stMSxbNywxOCwxNl1dLFswLFsxNiwxNyw1XV0sWzEsWzE1LDYsMjFdXSxbMixbMjEsNywyXV1dLCJ5YXciOjE0Ljk2OTQyMzUwNTYxNDc1MywicGl0Y2giOjAuMDAwMTE3NTk3OTM4MDI1Njk2NzZ9',
 };
 

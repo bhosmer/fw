@@ -20,9 +20,12 @@ const ALMOST_ONE = 1 - 2 ** -53;
 export const DIAGONALS = [[0, 1], [2, 1], [0, 2]];
 
 export class Position {
-  constructor(R, defaultDigit, frac = [0.5, 0.5, 0.5]) {
+  // slants: whole-number directions (other than the axes and DIAGONALS) whose
+  // planes a space needs exactly, at any depth: see levels.
+  constructor(R, defaultDigit, frac = [0.5, 0.5, 0.5], slants = []) {
     this.R = R;
     this.defaultDigit = defaultDigit;
+    this.slants = slants;
     this.F = 0;
     this.frac = frac.slice();
     this.digits = new Map();
@@ -188,6 +191,26 @@ export class Position {
           rec[Ls][p] = n + r;
           rec[fs][p] = g - r;
         }
+      });
+      // And the same for each slant m: m . (L + f), carried as Ls + fs. (A
+      // plane across m is then exact however close we are to it, as the
+      // diagonals' are.)
+      rec.Ls = this.slants.map(() => 0);
+      rec.fs = this.slants.map(() => 0);
+      this.slants.forEach((m, k) => {
+        let n, g;
+        if (!finer) {
+          n = m[0] * rec.L[0] + m[1] * rec.L[1] + m[2] * rec.L[2];
+          g = m[0] * rec.f[0] + m[1] * rec.f[1] + m[2] * rec.f[2];
+        } else {
+          const q = Math.round(finer.Ls[k] / R);
+          const mm = finer.Ls[k] - q * R;
+          n = m[0] * d[0] + m[1] * d[1] + m[2] * d[2] + q;
+          g = mm === 0 ? finer.fs[k] / R : (mm + finer.fs[k]) / R;
+        }
+        const r = Math.round(g);
+        rec.Ls[k] = n + r;
+        rec.fs[k] = g - r;
       });
     }
     return out;

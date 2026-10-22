@@ -160,3 +160,27 @@ test('where relief crosses from one cell to the next, both cells say so', () => 
   }
   assert.ok(crossed > 100, `${crossed} points in air on a face`);
 });
+
+// A sloped face is exact however close we are to it (see Position.levels):
+// a point 24^-12 of a city lattice unit outside the upper's face toward -z
+// (its plane 52 y - 90 z = 1781 from the building's origin), at a place on
+// it where L and f each say much and their sum nearly nothing.
+test('close to a sloped face, many levels down, its distance keeps its precision', () => {
+  const flight = new Flight(arcology, controls());
+  const pos = flight.pos, deep = 12;
+  // (0, 30.5, -2 - 4/24) is on the face; the building's origin is (12, 2, 12)
+  // in the middle city cell, so in lattice units it is (12, 32.5, 9 + 20/24):
+  // y in the row above, 8.5 into it. Less 24^-12 along z: z's digits are 9,
+  // 19, and then 23s.
+  pos.F = CITY + 1 + deep;
+  pos.digits.set(CITY, [12, (ROW_ID % R) + 1, 12]);
+  pos.digits.set(CITY + 1, [12, 8, 9]);
+  pos.digits.set(CITY + 2, [0, 12, 19]);
+  for (let j = 3; j <= deep + 1; j++) pos.digits.set(CITY + j, [0, 0, 23]);
+  pos.frac = [0, 0, 0];
+  flight.begin?.();
+  const rec = pos.levels(CITY, pos.F).find((r) => r.level === CITY);
+  const got = flight.airAt(rec);
+  const want = -(90 * Math.pow(R, -deep)) / Math.hypot(52, 90);
+  assert.ok(Math.abs(got - want) < 1e-3 * Math.abs(want), `${got} against ${want}`);
+});

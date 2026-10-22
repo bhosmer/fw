@@ -1,4 +1,4 @@
-import { VERT, SMOOTH_FRAG, probeFrag, viewFrag } from './shaders.js';
+import { VERT, SMOOTH_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
 import { levelSeed } from './util.js';
 
 function compile(gl, type, src) {
@@ -24,7 +24,7 @@ function link(gl, frag, names) {
   return { prog, u };
 }
 
-const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm'];
+const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm', 'uLs', 'uFs'];
 
 // The texture unit a space's volume is kept on (0 and 1 are the picture's).
 const VOLUME_UNIT = 2;
@@ -139,6 +139,16 @@ export class Renderer {
     gl.uniform3fv(p.u.uFp, fp);
     gl.uniform3iv(p.u.uLm, Lm);
     gl.uniform3fv(p.u.uFm, fm);
+    const k4 = slantCount4(this.space);
+    if (k4) {
+      const Ls = new Int32Array(n * k4 * 4), Fs = new Float32Array(n * k4 * 4);
+      recs.forEach((r, i) => {
+        Ls.set(r.Ls, i * k4 * 4);
+        Fs.set(r.fs, i * k4 * 4);
+      });
+      gl.uniform4iv(p.u.uLs, Ls);
+      gl.uniform4fv(p.u.uFs, Fs);
+    }
   }
 
   // Each level's air distance at the camera, in that level's lattice units.

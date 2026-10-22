@@ -3,12 +3,45 @@ const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 // Lattice units of margin on "this level is solid for at least this far"
 // (here, and in how far off main.js says each level's air is).
 export const SLACK = 0.05;
+export { slantCount4 };
 
 export const VERT = /* glsl */ `#version 300 es
 void main() {
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
+
+// A space's slants (see Position.levels): for each level, each slant's
+// m . (L + f) as a lattice number and a small offset, four to a uniform.
+const slantCount4 = (space) => Math.ceil((space.slants?.length ?? 0) / 4);
+function slantUniforms(space) {
+  if (!space.slants?.length) return '';
+  return `#define NSL ${space.slants.length}
+#define NSL4 ${slantCount4(space)}
+uniform ivec4 uLs[NLEV * NSL4];
+uniform vec4 uFs[NLEV * NSL4];`;
+}
+// The point being asked about, along the slants (set by levelRay), and the
+// signed distance numerator of a plane across slant k: m . X - c, for X in
+// the cell's lattice units, as diag() is for the diagonals.
+function slantGlsl(space) {
+  if (!space.slants?.length) return '';
+  return `const ivec3 SLANT[NSL] = ivec3[NSL](${space.slants.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ')});
+int gLs[NSL];
+float gFs[NSL];
+void splitSlants(int i, vec3 v, ivec3 c) {
+  float sg = uSig[i];
+  for (int k = 0; k < NSL; k++) {
+    ivec3 m = SLANT[k];
+    float s = uFs[i * NSL4 + k / 4][k % 4] + dot(vec3(m), v) * sg;
+    float r = floor(s + 0.5);
+    gFs[k] = s - r;
+    gLs[k] = uLs[i * NSL4 + k / 4][k % 4] + int(r) - (m.x * c.x + m.y * c.y + m.z * c.z) * R;
+  }
+}
+float slant(int k, int c) { return float(gLs[k] - c) + gFs[k]; }
+`;
+}
 
 // Shared by the programs that look at the world (the probe and both ways of
 // drawing it): the per-level description of where the camera is
@@ -41,6 +74,7 @@ uniform ivec3 uLp[NLEV];
 uniform vec3 uFp[NLEV];
 uniform ivec3 uLm[NLEV];
 uniform vec3 uFm[NLEV];
+${slantUniforms(space)}
 
 uint hashCell(ivec3 p, uint s) {
   uint h = (uint(p.x) * 0x9E3779B1u) ^ (uint(p.y) * 0x85EBCA77u) ^ (uint(p.z) * 0xC2B2AE3Du) ^ s;
@@ -147,6 +181,7 @@ float diag(int p, int sa, int sb, int ca, int cb, int k) {
                   : float(sa * (gLm[p] - ca + cb) - k) + float(sa) * gFm[p];
 }
 
+${slantGlsl(space)}
 ${space.glsl}
 
 // One level at the camera-relative point v: its air distance and, for the ray
@@ -168,6 +203,7 @@ float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
   gFm = sm - rm;
   gLp = uLp[i] + ivec3(rp) - ivec3(c.x + c.y, c.z + c.y, c.x + c.z) * R;
   gLm = uLm[i] + ivec3(rm) - ivec3(c.x - c.y, c.z - c.y, c.x - c.z) * R;
+${space.slants?.length ? `  if (${space.slantLevels.map((l) => `uLevel[i] == ${l}`).join(' || ')}) splitSlants(i, v, c);` : ''}
   // (The cell's index in its parent is its id's last digit; carried over
   // into the parent's neighbours as c goes past them.)
   vec3 own = vec3(uId[i] - R * ivec3(floor((vec3(uId[i]) + 0.5) / float(R))));
