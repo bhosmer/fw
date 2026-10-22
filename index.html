@@ -17,6 +17,10 @@
       #help.error { color: #f88; white-space: pre-wrap; }
       #help.hidden { display: none; }
       #help pre { margin: 0; font: inherit; }
+      #loading {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
+        font: 14px ui-monospace, Menlo, monospace; color: #fff; opacity: 0.8;
+      }
       .touch, #buttons { display: none; }
       @media (pointer: coarse) {
         .keys { display: none; }
@@ -34,6 +38,8 @@
   </head>
   <body>
     <canvas id="view"></canvas>
+    <!-- Shown until the first picture: building the shaders holds the page for some seconds. -->
+    <div id="loading">loading…</div>
     <div id="help"><pre class="keys">drag         look            W A S D     fly
 right-drag   slide           space / C   up / down
 wheel        forward / back  shift       faster

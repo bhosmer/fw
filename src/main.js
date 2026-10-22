@@ -56,6 +56,7 @@ try {
 } catch (err) {
   help.textContent = err.message;
   help.classList.add('error');
+  document.getElementById('loading')?.remove();
   throw err;
 }
 const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN));
@@ -269,6 +270,7 @@ function frame(now) {
   } else moved = flight.step(dt, controls.wish(), controls.nudge(dt));
 
   const drew = present();
+  if (drew) document.getElementById('loading')?.remove();
   if (pilot.on) look(now);
   if (drew && moved && raw < 0.25) {
     // Resolution gives way quickly when frames run long and returns slowly

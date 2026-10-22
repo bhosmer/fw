@@ -128,24 +128,18 @@ for (const k of NEAR.keys()) NEAR_START.push(NEAR_START.at(-1) + NEAR.get(k).len
 const NEAR_BLOCKS = [...NEAR.values()].flat();
 
 // Pockets: a face is cut, along it and up it, into rectangles: super-blocks
-// sb long in rows sby high, each row shifted along by its own whole number
-// of quanta (so that no line runs on up the face), each split `splits` times
-// at whole quanta (along it, quanta of its own measure). Each rectangle is
-// cut into the face to its own depth (depths, as often as weights) behind
-// the face's deepest point over it: a box with an upright back wall parallel
-// to the face's edge, and level floor and ceiling. The same rule at two
-// levels: the city's own (lengths in its lattice units, cells), whose boxes
-// make the masses and the ragged silhouettes; and the next (in its units),
-// smaller boxes in those. Nothing thin is cut through: at its back wall's
-// corners a pocket is either at least `keep` inside each of the mass's other
-// faces, or out past it (it notches the ridge between them, S2); and none is
-// cut where the mass is less than thin cells from its axis (near an apex):
-// more than the level's deepest, so that a core is always left (a fresh-eyes
-// review found a sliver all but loose at the lower's apex with one cell at
-// both levels).
+// sb long in rows sby high (rows by the height of the point's projection onto
+// the face), each row shifted along by its own whole number of quanta (so
+// that no line runs on up the face), each split `splits` times at whole
+// quanta (along it, quanta of its own measure). Each rectangle is cut into
+// the face to its own depth (depths, as often as weights), square to it. The
+// same rule at two levels: the city's own (lengths in its lattice units,
+// cells), whose boxes make the masses and the ragged silhouettes; and the
+// next (in its units), smaller boxes cut into those. What keeps anything
+// from being cut loose is in the setup after BARE.
 const LEVELS = [
-  { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15], keep: 0.25, thin: 1.25 },
-  { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1], keep: 2, thin: 3 },
+  { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15] },
+  { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
 ];
 for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));
 const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
@@ -171,41 +165,145 @@ SOLIDS.forEach((s) => {
     const len = Math.hypot(...h);
     FACES.push({ n, K, alpha, sub, ny: n[1], plane: slantOf(n), h: slantOf(h), t: slantOf(t), hv: h, tv: t, len, len2: dot2(h),
                  q: LEVELS.map((lv) => Math.round(lv.quant * len)),
-                 back: LEVELS.map((lv) => lv.depths.map((d) => Math.round(d * len))),
-                 lo4: Math.round(s.ylo * 4), hi4: Math.round(s.yhi * 4), solid: s,
-                 others: s.relief.filter((j) => j !== i).map((j) => s.planes[j]) });
+                 lo4: Math.round(s.ylo * 4), hi4: Math.round(s.yhi * 4), solid: s });
   }
 });
 function dot2(v) {
   return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
 }
-// For the thickness rule: each other plane n . X < K of a face's mass, as a
-// whole-number bound on n . X times the face's len2 (its h . h), at each
-// level, less `keep` (see LEVELS).
-for (const F of FACES) {
-  F.keep = LEVELS.map((lv, i) => F.others.map(({ n, K }) => (i ? R : 1) * K * F.len2 - Math.ceil(lv.keep * Math.hypot(...n) * F.len2)));
-  F.on = LEVELS.map((lv, i) => F.others.map(({ K }) => (i ? R : 1) * K * F.len2));
-  // (sub (K - ny y), at least, for the face to be lv.thin cells from the axis.)
-  F.thin = LEVELS.map((lv, i) => Math.ceil((lv.thin * (i ? R : 1) * F.alpha * F.len) / F.sub) * F.sub);
-}
 // (A cell's table entry has a bit for each, six in all.)
 if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
-// How far behind a face the finer level's pockets can reach (in cells): the
-// deepest, and the face's run across a rectangle's height.
-const REACH = Math.max(...FACES.map((F) => (LEVELS[1].depths.at(-1) + (LEVELS[1].sby * Math.abs(F.ny)) / F.alpha / F.len) / R)) + 1;
-// How far out past a face the city's pockets reach (cells): a unit past the
-// face at a rectangle's outermost, and the face's run across its height.
-for (const F of FACES) {
-  const run = (LEVELS[0].sby * Math.abs(F.ny)) / F.alpha / Math.hypot(...F.hv.map((x) => x / F.sub));
-  F.outC = 1 + Math.ceil(F.len) / F.len + run;
-  F.reachC = LEVELS[0].depths.at(-1) + run + 1;
-}
-const OUT_C = Math.max(...FACES.map((F) => F.outC));
-// How far behind a face the city's pockets can reach (cells), likewise.
-const REACH_C = Math.max(...FACES.map((F) => LEVELS[0].depths.at(-1) + (LEVELS[0].sby * Math.abs(F.ny)) / F.alpha / F.len)) + 1;
+// How far behind a face anything is cut (cells): DMAX, along its normal (see below).
+const REACH = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R + 0.05;
 // The city's pockets keep clear of the solids that are neither masses nor
 // their rims (pillars, towers): those solids' bounds, from the building's origin.
 const BARE = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
+// Relief v2 (.claude/design/relief-v2.md): pockets that follow the face's
+// slope, and nothing ever cut loose. A pocket is a box over a rectangle of
+// its face, along it (u) and up it by the height of the point's projection
+// onto the face (yp), cut to its depth along the face's normal: its walls
+// stand square to the face. The finer level's are cut into the city's (their
+// depths add), tiled afresh in each city rectangle. Along each ridge, the
+// two faces share notches, in rows by true height. And so that nothing is
+// cut loose: a face's own pockets keep Z clear of its mass's other faces all
+// the way down (Z = DMAX (1 + c), c the mass's largest cosine between two of
+// its faces' normals), and nothing is cut near an apex (HCAP). Then from any
+// point left, a way runs into the core (DMAX in from every face, never cut)
+// through nothing cut: see the design note.
+const DMAX = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R;
+// How far in from a face, and out past it, anything of the city's is cut (cells).
+const BAND_IN = LEVELS[0].depths.at(-1) + 0.01, BAND_OUT = 1.01;
+const NOTCH = [{ sb: 4, quant: 1, splits: 2, arm: 0.25 }, { sb: 24, quant: 2, splits: 3, arm: 2 }];
+const NOTCH_SALT = 0x2f6b9a1d, TILE_SALT = 0x6c8e9cf5;
+const solve3 = (M, b) => {
+  const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+  const D = det(M);
+  return [0, 1, 2].map((c) => det(M.map((row, i) => row.map((x, j) => (j === c ? b[i] : x)))) / D);
+};
+for (const F of FACES) {
+  F.nn = dot2(F.n);
+  F.nl = Math.sqrt(F.nn);
+  const raw = [-F.ny * F.n[0], F.nn - F.ny * F.ny, -F.ny * F.n[2]], gs = raw.reduce(gcd);
+  F.sv = raw.map((x) => x / gs);
+  F.gs = gs;
+  F.s = slantOf(F.sv);
+  F.slen = Math.hypot(...F.sv);
+  F.q2 = [F.q[0], (F.q[0] * LEVELS[1].quant) / LEVELS[0].quant];
+  // The point on the face at (u, yp) (city measure, cells), and DELTA cells in.
+  const M = [F.n, F.tv, [0, 1, 0]];
+  F.at = (u, y, delta) => solve3(M, [F.K, u, y]).map((x, a) => x - (delta * F.n[a]) / F.nl);
+}
+FACES.forEach((F, k) => (F.index = k));
+for (const F of FACES) {
+  const mass = FACES.filter((G) => G.solid === F.solid);
+  F.near = mass.filter((G) => G !== F);
+  // Each other face's depth (cells) at (u, yp, delta), as c0 + cu u + cy yp + cd delta.
+  F.aff = F.near.map((G) => {
+    const d = (u, y, delta) => (G.K - dot(G.n, F.at(u, y, delta))) / G.nl;
+    const c0 = d(0, 0, 0);
+    return { c0, cu: d(1, 0, 0) - c0, cy: d(0, 1, 0) - c0, cd: d(0, 0, 1) - c0 };
+  });
+  let c = 0;
+  for (const A of mass) for (const B of mass) if (A !== B) c = Math.max(c, -dot(A.n, B.n) / A.nl / B.nl);
+  F.Z = DMAX * (1 + c) + 1e-3;
+  const apex = solve3(mass.map((G) => G.n), mass.map((G) => G.K));
+  const ny = Math.min(...mass.map((G) => Math.abs(G.ny) / G.nl));
+  const hcap = F.Z / ny + 0.25;
+  // Where anything may be cut, in height (cells).
+  [F.cutLo, F.cutHi] = F.ny > 0 ? [F.solid.ylo, Math.min(F.solid.yhi, apex[1] - hcap)] : [Math.max(F.solid.ylo, apex[1] + hcap), F.solid.yhi];
+}
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+// The ridges: each pair of faces of a mass.
+const RIDGES = [];
+FACES.forEach((F, i) => FACES.forEach((G, j) => {
+  if (i < j && F.solid === G.solid) RIDGES.push({ a: i, b: j, F, G });
+}));
+for (const r of RIDGES) {
+  // The ridge's line: where the two planes meet, at heights y (cells).
+  const dir = [r.F.n[1] * r.G.n[2] - r.F.n[2] * r.G.n[1], r.F.n[2] * r.G.n[0] - r.F.n[0] * r.G.n[2], r.F.n[0] * r.G.n[1] - r.F.n[1] * r.G.n[0]];
+  r.at = (y) => solve3([r.F.n, r.G.n, [0, 1, 0]], [r.F.K, r.G.K, y]);
+  r.dir = dir;
+}
+// Depths are a quarter cell's whole number (the city's) and a twelfth's
+// (one level finer's): a face's depth plane at (ci, fi), in whole numbers of
+// its measure (n . X) at each level (rounded in, so never deeper).
+const NDQ = 5;
+// (floor(p |n| / 12) for p twelfths, exactly: the largest m with (12 m)^2 <= p^2 nn.)
+const depthN = (nn, p) => {
+  let m = Math.floor(Math.sqrt(p * p * nn) / 12);
+  while (144 * (m + 1) * (m + 1) <= p * p * nn) m++;
+  while (m > 0 && 144 * m * m > p * p * nn) m--;
+  return m;
+};
+for (const F of FACES) F.dn = [1, R].map((S) => Array.from({ length: NDQ * NDQ }, (_, i) => depthN(F.nn, (3 * Math.floor(i / NDQ) + (i % NDQ)) * S)));
+if (Math.max(...FACES.map((F) => (3 * (NDQ - 1) + NDQ - 1) ** 2 * R * R * F.nn)) >= 2 ** 31) throw new Error('arcology: depths overflow');
+const quarters = (x) => Math.round(x * 4), twelfths = (x) => Math.round(x * 12);
+FACES.forEach((F) => (F.ridges = RIDGES.map((r, i) => (r.F === F ? i : r.G === F ? i : -1)).filter((i) => i >= 0)));
+// The city's pockets and notches keep clear of the solids without relief
+// (pillars, towers), half a cell around: worked out here once, so that the
+// shader only compares a few whole numbers. For each face, the rectangles of
+// it (u in its city measure, yp in cells, rounded out) over which a pocket
+// could meet one; for each ridge, the heights (cells, rounded out) at which
+// its notches could.
+for (const F of FACES) {
+  F.bare = [];
+  // (Only the part of each box that a pocket could reach: from a cell out
+  // to DMAX in, at the heights pockets are cut; sampled every quarter cell,
+  // and rounded out by more than that.)
+  const Q = 0.25;
+  for (const [lo, hi] of BARE) {
+    const a = [lo[0] - 0.5, Math.max(lo[1] - 0.5, F.solid.ylo), lo[2] - 0.5], b = [hi[0] + 0.5, Math.min(hi[1] + 0.5, F.solid.yhi), hi[2] + 0.5];
+    let u0 = Infinity, u1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let x = a[0]; x <= b[0] + 1e-9; x += Q)
+      for (let y = a[1]; y <= b[1] + 1e-9; y += Q)
+        for (let z = a[2]; z <= b[2] + 1e-9; z += Q) {
+          const X = [x, y, z], depth = (F.K - dot(F.n, X)) / F.nl;
+          if (depth < -1 - Q || depth > DMAX + Q) continue;
+          const u = dot(F.tv, X), yp = y + (depth * F.nl * F.ny) / F.nn;
+          (u0 = Math.min(u0, u)), (u1 = Math.max(u1, u)), (y0 = Math.min(y0, yp)), (y1 = Math.max(y1, yp));
+        }
+    if (u0 > u1) continue;
+    const yLo = Math.floor(y0 - Q), yHi = Math.ceil(y1 + Q);
+    if (yHi <= F.cutLo || yLo >= F.cutHi) continue;
+    F.bare.push([Math.floor(u0 - Q * F.len), Math.ceil(u1 + Q * F.len), yLo, yHi]);
+  }
+}
+const rectBare = (F, u0, u1, y0, y1) => F.bare.some(([a, b, c, d]) => u0 < b && u1 > a && y0 < d && y1 > c);
+for (const r of RIDGES) {
+  r.bare = [];
+  const m = DMAX + 1;
+  for (let y = Math.floor(r.F.cutLo); y < Math.ceil(r.F.cutHi); y += 0.25) {
+    const a = r.at(y), b = r.at(y + 0.25);
+    const lo = [0, 1, 2].map((k) => Math.min(a[k], b[k]) - m), hi = [0, 1, 2].map((k) => Math.max(a[k], b[k]) + m);
+    if (!BARE.some(([p, q]) => [0, 1, 2].every((k) => lo[k] < q[k] + 0.5 && hi[k] > p[k] - 0.5))) continue;
+    const y0 = Math.floor(y), y1 = Math.ceil(y + 0.25), last = r.bare.at(-1);
+    if (last && y0 <= last[1]) last[1] = Math.max(last[1], y1);
+    else r.bare.push([y0, y1]);
+  }
+}
+const rowBare = (r, y0, y1) => r.bare.some(([a, b]) => y0 < b && y1 > a);
 // Windows (S6): the upright faces of the solids that have them (pillars,
 // towers) carry a grid of small windows one level finer, in the face's own frame:
 // WIN wide and high (in the finer units), PITCH apart along and up, DEEP_WIN
@@ -231,6 +329,8 @@ if (WINDOWS.length > 31) throw new Error(`arcology: ${WINDOWS.length} faces with
 // clear of every solid).
 const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, WIN_AT = 14;
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+// (For the checks in .claude/verify.)
+export const _V2 = { FACES, RIDGES, DMAX };
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
   const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -349,27 +449,46 @@ const int ND = ${ND};
 const ivec4 LV[2] = ivec4[2](${LEVELS.map((l) => `ivec4(${l.sb}, ${l.sby}, ${l.quant}, ${l.splits})`).join(', ')});
 const float CUM[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.cumulative, ...Array(ND - l.depths.length).fill(2)]).map(glf).join(', ')});
 const int NF = ${FACES.length};
-// Each face: n's slant (index, sign), K, alpha, ny; its h and t as slants
-// (index, sign); its measure along (q, a level each); lo, hi (4 y); and each
-// level's depths, in units across it.
+// Each face (relief v2, see FACES and the setup after BARE): n's slant
+// (index, sign), K, alpha; ny; its unit normal; its h and t as slants (index,
+// sign); its quanta along (q2, a level each); lo, hi (4 y); s's slant (index,
+// sign), gs and nn (see faceAt); |n|, gs |s|, and s's unit vector; Z; the
+// heights it may be cut between (cells); its depth along the mass's other
+// faces (c0, cu, cy, cd, see F.aff); and the point on it at (u, yp, delta)
+// (X0, Xu, Xy, Xd).
 const ivec4 FPLANE[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.plane.k}, ${F.plane.sign}, ${F.K}, ${F.alpha})`).join(', ')});
 const int FNY[NF] = int[NF](${FACES.map((F) => F.ny).join(', ')});
-const int FSUB[NF] = int[NF](${FACES.map((F) => F.sub).join(', ')});
-const float FNLEN[NF] = float[NF](${FACES.map((F) => glf(Math.hypot(...F.n))).join(', ')});
+const vec3 FN[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.n.map((x) => glf(x / F.nl)).join(', ')})`).join(', ')});
 const ivec4 FHT[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.h.k}, ${F.h.sign}, ${F.t.k}, ${F.t.sign})`).join(', ')});
-const ivec4 FQY[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.q[0]}, ${F.q[1]}, ${F.lo4}, ${F.hi4})`).join(', ')});
-const ivec3 FH[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.hv))});
+const ivec4 FQY[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.q2[0]}, ${F.q2[1]}, ${F.lo4}, ${F.hi4})`).join(', ')});
 const ivec3 FT[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.tv))});
 const float FLEN[NF] = float[NF](${FACES.map((F) => glf(F.len)).join(', ')});
-const int FLEN2[NF] = int[NF](${FACES.map((F) => F.len2).join(', ')});
-const int FBACK[2 * NF * ND] = int[2 * NF * ND](${LEVELS.flatMap((l, i) => FACES.flatMap((F) => [...F.back[i], ...Array(ND - l.depths.length).fill(0)])).join(', ')});
+const ivec4 FSL[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.s.k}, ${F.s.sign}, ${F.gs}, ${F.nn})`).join(', ')});
+const vec2 FNS[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.nl)}, ${glf(F.gs * F.slen)})`).join(', ')});
+const vec3 FSV[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.sv.map((x) => glf(x / F.slen)).join(', ')})`).join(', ')});
+const float FZ[NF] = float[NF](${FACES.map((F) => glf(F.Z)).join(', ')});
+const vec2 FCUT[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.cutLo)}, ${glf(F.cutHi)})`).join(', ')});
+const vec4 FAFF[NF * 2] = vec4[NF * 2](${FACES.flatMap((F) => F.aff.map((a) => `vec4(${[a.c0, a.cu, a.cy, a.cd].map(glf).join(', ')})`)).join(', ')});
+const vec3 FAT[NF * 4] = vec3[NF * 4](${FACES.flatMap((F) => {
+  const x0 = F.at(0, 0, 0), xu = F.at(1, 0, 0), xy = F.at(0, 1, 0), xd = F.at(0, 0, 1);
+  return [x0, xu.map((x, a) => x - x0[a]), xy.map((x, a) => x - x0[a]), xd.map((x, a) => x - x0[a])].map((v) => `vec3(${v.map(glf).join(', ')})`);
+}).join(', ')});
 const int FOUR = ${FOUR.k};
-// Each face's mass's other planes, and the thickness rule's bounds on them
-// (see FACES' keep), a level after another.
-const ivec3 FOTH[NF * 2] = ivec3[NF * 2](${ivecs(FACES.flatMap((F) => F.others.map((o) => o.n)))});
-const int FKEEP[2 * NF * 2] = int[2 * NF * 2](${[0, 1].flatMap((i) => FACES.flatMap((F) => F.keep[i])).join(', ')});
-const int FON[2 * NF * 2] = int[2 * NF * 2](${[0, 1].flatMap((i) => FACES.flatMap((F) => F.on[i])).join(', ')});
-const int FTHIN[2 * NF] = int[2 * NF](${[0, 1].flatMap((i) => FACES.map((F) => F.thin[i])).join(', ')});
+// Each level's depths (its own units), and its deepest; the ridges' notches
+// (sb, quant, splits) and their arms' quantum; the ridges: their faces, and
+// the point on each at height y (P0 + Py y, cells).
+const float DEPTHS[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]).map(glf).join(', ')});
+const float DTOP[2] = float[2](${LEVELS.map((l) => glf(l.depths.at(-1))).join(', ')});
+const ivec4 NOTCHP[2] = ivec4[2](${NOTCH.map((N) => `ivec4(${N.sb}, ${N.quant}, ${N.splits}, 0)`).join(', ')});
+const float NARM[2] = float[2](${NOTCH.map((N) => glf(N.arm)).join(', ')});
+const uint NOTCH_SALT = ${NOTCH_SALT}u, TILE_SALT = ${TILE_SALT}u;
+const int NRG = ${RIDGES.length};
+const ivec2 RAB[NRG] = ivec2[NRG](${RIDGES.map((r) => `ivec2(${r.a}, ${r.b})`).join(', ')});
+const vec3 RP[NRG * 2] = vec3[NRG * 2](${RIDGES.flatMap((r) => {
+  const p0 = r.at(0), p1 = r.at(1);
+  return [p0, p1.map((x, a) => x - p0[a])].map((v) => `vec3(${v.map(glf).join(', ')})`);
+}).join(', ')});
+const float DMAX = ${glf(DMAX)}, BAND_IN = ${glf(BAND_IN)}, BAND_OUT = ${glf(BAND_OUT)};
 // The windows' faces (see WINDOWS): h and t as slants (index, sign); K, alpha
 // (w = h . Y < K R / alpha inside); len; and the grid: pitch and width along
 // (in u), the depth (in w).
@@ -384,8 +503,6 @@ const int WIN_AT = ${WIN_AT}, WIN_H = ${WIN[1]}, PITCH_Y = ${PITCH[1]};
 // Each face's mass's bounds, from the building's origin, in cells.
 const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
 const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
-const float REACH_C = ${glf(REACH_C)}, OUT_C = ${glf(OUT_C)};
-const vec2 FBAND[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.reachC)}, ${glf(F.outC)})`).join(', ')});
 const int NBARE = ${BARE.length};
 const ivec3 BARE_LO[NBARE] = ivec3[NBARE](${ivecs(BARE.map((b) => b[0]))});
 const ivec3 BARE_HI[NBARE] = ivec3[NBARE](${ivecs(BARE.map((b) => b[1]))});
@@ -412,15 +529,16 @@ int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); } // floor
 int cdiv(int a, int b) { return -fdiv(-a, b); } // ceiling, b > 0
 
 // The rectangle of face k at level lv that the point is in (u along the
-// face, in its own measure, y up, each a whole number and the rest), and
-// its depth's index.
+// face, in its own measure, y up by its projection's height, each a whole
+// number and the rest), and its depth's index. One level finer, tiled afresh
+// in each city rectangle (tile, from its corner; no rows shifted).
 int gU0, gU1, gY0, gY1, gDepth;
-void rectangle(int lv, int k, int u, float fu, int y, float fy) {
+void rectangle(int lv, int k, int u, float fu, int y, float fy, uint tile) {
   ivec4 lvp = LV[lv];
   int q = lv == 0 ? FQY[k].x : FQY[k].y, n = lvp.x / lvp.z, su = n * q;
-  uint salt = uint(lv * 0x5bd1e995);
+  uint salt = uint(lv * 0x5bd1e995) ^ tile;
   int row = fdiv(y - (fy < 0.0 ? 1 : 0), lvp.y);
-  int shift = q * int(hashCell(ivec3(row, k, lv), ROW_SALT ^ salt) % uint(n));
+  int shift = lv == 0 ? q * int(hashCell(ivec3(row, k, lv), ROW_SALT ^ salt) % uint(n)) : 0;
   int col = fdiv(u - (fu < 0.0 ? 1 : 0) - shift, su);
   int u0 = col * su + shift, u1 = u0 + su, y0 = row * lvp.y, y1 = y0 + lvp.y;
   uint h = hashCell(ivec3(col, row, k), POCKET_SALT ^ salt);
@@ -443,80 +561,250 @@ void rectangle(int lv, int k, int u, float fu, int y, float fy) {
   gU0 = u0; gU1 = u1; gY0 = y0; gY1 = y1; gDepth = j;
 }
 
-// The pocket of face k at level lv where the point is: a box in the face's
-// frame, between its rectangle's sides, from its back wall (its depth behind
-// the face's deepest point over the rectangle) to a unit past the face,
-// kept within the mass's heights (and, one level finer, within the cell;
-// at the city's, off the pillars and towers). base: the point's cell's
-// corner from the building's origin, in this level's units. United with d
-// (and for a ray, reach and nrm); and where the point is in none, how far
-// off its rectangle's edges are at least (the face's other pockets are
-// beyond them).
-float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {
-  ivec4 ht = FHT[k], pl = FPLANE[k];
-  int scale = lv == 0 ? 1 : R;
-  // Where the point is, along the face (u) and across it (w).
-  int u, w;
-  float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);
-  u = ht.w * u + FT[k].x * base.x + FT[k].z * base.z;
-  w = ht.y * w + FH[k].x * base.x + FH[k].z * base.z;
-  int y = base.y + L.y;
-  rectangle(lv, k, u, fu, y, f.y);
-  float len = FLEN[k], inv = 1.0 / len;
-  float cap = min(min(float(u - gU0) + fu, float(gU1 - u) - fu) * inv, min(float(y - gY0) + f.y, float(gY1 - y) - f.y));
-  int back = FBACK[(lv * NF + k) * ND + gDepth];
-  if (back > 0) {
-    // The face across it, at the rectangle's floor and ceiling: w = (K - ny y) / alpha.
-    int K = pl.z * scale, a = pl.w, wl = (K - FNY[k] * gY0) * FSUB[k], wh = (K - FNY[k] * gY1) * FSUB[k];
-    back = fdiv(min(wl, wh), a) - back;
-    int outer = cdiv(max(wl, wh), a) + int(ceil(len));
-    bool clear = true;
-    if (lv == 0) {
-      // (Its bounds, across, times len2: x len2 = u t.x + w h.x, and z alike.)
-      int l2 = FLEN2[k];
-      ivec2 xs = ivec2(gU0 * FT[k].x, gU1 * FT[k].x), ws = ivec2(back * FH[k].x, outer * FH[k].x);
-      ivec2 zs = ivec2(gU0 * FT[k].z, gU1 * FT[k].z), vs = ivec2(back * FH[k].z, outer * FH[k].z);
-      int x0 = min(xs.x, xs.y) + min(ws.x, ws.y), x1 = max(xs.x, xs.y) + max(ws.x, ws.y);
-      int z0 = min(zs.x, zs.y) + min(vs.x, vs.y), z1 = max(zs.x, zs.y) + max(vs.x, vs.y);
-      for (int j = 0; j < NBARE; j++)
-        if (x0 < BARE_HI[j].x * l2 && x1 > BARE_LO[j].x * l2 && z0 < BARE_HI[j].z * l2 && z1 > BARE_LO[j].z * l2 &&
-            gY0 < BARE_HI[j].y && gY1 > BARE_LO[j].y) clear = false;
+// Ridge r's notch row at level lv (see notchRow in the JS): its ends, depth
+// and arms' reach.
+int gNY0, gNY1;
+float gND, gNA;
+void notchRow(int lv, int r, int y, float fy, int origin, uint salt) {
+  ivec4 N = NOTCHP[lv];
+  int yr = y - origin;
+  int row = fdiv(yr - (fy < 0.0 ? 1 : 0), N.x);
+  int y0 = row * N.x, y1 = y0 + N.x;
+  uint h = hashCell(ivec3(row, r, lv), NOTCH_SALT ^ salt);
+  for (int i = 0; i < N.z; i++) {
+    int ny = (y1 - y0) / N.y;
+    if (ny >= 2) {
+      int k = 1 + int((h >> 8) % uint(ny - 1));
+      if (beyond(yr, fy, y0 + k * N.y)) y0 += k * N.y; else y1 = y0 + k * N.y;
     }
-    // (Nothing thin cut through: see LEVELS' thin.)
-    if (min(wl, wh) < FTHIN[lv * NF + k]) clear = false;
-    for (int c = 0; c < 4; c++) {
-      int cu = (c & 1) == 0 ? gU0 : gU1, cy = (c & 2) == 0 ? gY0 : gY1;
-      int xx = cu * FT[k].x + back * FH[k].x, zz = cu * FT[k].z + back * FH[k].z, yy = cy * FLEN2[k];
-      for (int j = 0; j < 2; j++) {
-        ivec3 on = FOTH[k * 2 + j];
-        int v = on.x * xx + on.y * yy + on.z * zz, at = (lv * NF + k) * 2 + j;
-        if (v > FKEEP[at] && v <= FON[at]) clear = false;
+    h = hashCell(ivec3(y0, y1, r), NOTCH_SALT ^ salt ^ uint(lv));
+  }
+  float t = h01(hashCell(ivec3(y0, r, lv), DEPTH_SALT ^ NOTCH_SALT ^ salt));
+  int j = 0;
+  for (int i = 0; i < ND - 1; i++) if (t >= CUM[lv * ND + i]) j = i + 1;
+  float d = DEPTHS[lv * ND + j];
+  int steps = int(floor((DTOP[lv] - d) / NARM[lv] + 1e-6));
+  gNY0 = y0 + origin; gNY1 = y1 + origin; gND = d;
+  gNA = d + float(min(steps, int(floor(h01(h) * float(steps + 1))))) * NARM[lv];
+}
+
+// Whether face k's pocket over [u0, u1] x [y0, y1] (the city's measure and
+// cells), or ridge i's notch row over [y0, y1], could meet a solid without
+// relief (see F.bare and r.bare): straight comparisons, no loops.
+bool rectBare(int k, int u0, int u1, int y0, int y1) {
+${FACES.map((F, k) => `  if (k == ${k}) return ${F.bare.length ? F.bare.map(([a, b, c, d]) => `(u0 < ${b} && u1 > ${a} && y0 < ${d} && y1 > ${c})`).join(' || ') : 'false'};`).join('\n')}
+  return false;
+}
+bool rowBare(int i, int y0, int y1) {
+${RIDGES.map((r, i) => `  if (i == ${i}) return ${r.bare.length ? r.bare.map(([a, b]) => `(y0 < ${b} && y1 > ${a})`).join(' || ') : 'false'};`).join('\n')}
+  return false;
+}
+bool inCut(int k, float S, int y0, int y1) {
+  return float(y0) >= FCUT[k].x * S - 1e-6 && float(y1) <= FCUT[k].y * S + 1e-6;
+}
+
+// See allowed in the JS: [gA0, gA1], or false.
+int gA0, gA1;
+bool allowed(int k, int lv, int u0, int u1, int y0, int y1, float D, int q) {
+  float sc = lv == 0 ? 1.0 : float(R), lo = float(u0), hi = float(u1);
+  bool none = false;
+  for (int j = 0; j < 2; j++) {
+    vec4 a = FAFF[k * 2 + j];
+    for (int c = 0; c < 2; c++) {
+      float rest = a.x + a.z * float(c == 0 ? y0 : y1) / sc + a.w * D;
+      if (a.y > 1e-9) lo = max(lo, (FZ[k] - rest) * sc / a.y);
+      else if (a.y < -1e-9) hi = min(hi, (FZ[k] - rest) * sc / a.y);
+      else none = none || rest < FZ[k];
+    }
+  }
+  if (none) return false;
+  gA0 = u0 + int(ceil((lo - float(u0)) / float(q) - 1e-6)) * q;
+  gA1 = u0 + int(floor((hi - float(u0)) / float(q) + 1e-6)) * q;
+  return gA0 < gA1;
+}
+
+// Where the point is on face k (see faceAt in the JS).
+int gPu, gPy, gPYi, gPni;
+float gPfu, gPfy, gPYf, gPnf;
+void faceAt(int k, int S, ivec3 base) {
+  ivec4 ht = FHT[k], sl = FSL[k], pl = FPLANE[k];
+  int u, sn, nn;
+  gPfu = float(ht.w) * slantAt(ht.z, u);
+  gPu = ht.w * u + FT[k].x * base.x + FT[k].z * base.z;
+  ivec3 ms = SLANT[sl.x], mn = SLANT[pl.x];
+  float sf = float(sl.y) * slantAt(sl.x, sn);
+  gPYi = sl.z * (sl.y * sn + sl.y * (ms.x * base.x + ms.y * base.y + ms.z * base.z)) + FNY[k] * pl.z * S;
+  gPYf = float(sl.z) * sf;
+  gPy = fdiv(gPYi + int(floor(gPYf)), sl.w);
+  gPfy = (float(gPYi - gPy * sl.w) + gPYf) / float(sl.w);
+  gPnf = float(pl.y) * slantAt(pl.x, nn);
+  gPni = pl.y * (nn + mn.x * base.x + mn.y * base.y + mn.z * base.z);
+}
+
+// A face's depth planes (see notch and pocketAir): inside when more than x
+// cells in (units at level scale S), or at most a unit out.
+void depthIn(int k, int S, ivec2 x, int ni, float nf) {
+  // (floor(p |n| / 12) for p twelfths, exactly: see depthN in the JS.)
+  int p = (3 * x.x + x.y) * S, q = p * p * FSL[k].w;
+  int dn = int(floor(sqrt(float(q)) / 12.0));
+  if (144 * (dn + 1) * (dn + 1) <= q) dn++;
+  if (dn > 0 && 144 * dn * dn > q) dn--;
+  airPlane((float(FPLANE[k].z * S - dn - ni) - nf) / FNS[k].x, -FN[k]);
+}
+void depthOut(int k, int S, int ni, float nf) {
+  float nl = FNS[k].x;
+  airPlane((float(ni - FPLANE[k].z * S - int(ceil(nl))) + nf) / nl, FN[k]);
+}
+
+// The true heights lo..hi (in 4 y at the city's level; in units one level
+// finer, and within the cell).
+void heights(int lv, ivec3 L, vec3 f, ivec3 base, int lo4, int hi4) {
+  if (lv == 1) {
+    airSpan(L.y, f.y, max(lo4 * R / 4 - base.y, 0), min(hi4 * R / 4 - base.y, R), EY);
+    airSpan(L.x, f.x, 0, R, EX);
+    airSpan(L.z, f.z, 0, R, EZ);
+  } else {
+    int n4;
+    float f4 = slantAt(FOUR, n4);
+    n4 += 4 * base.y;
+    airPlane((float(lo4 - n4) - f4) * 0.25, -EY);
+    airPlane((float(n4 - hi4) + f4) * 0.25, EY);
+  }
+}
+
+// The air of a pocket of face k over [u0, u1] x [y0, y1], D cells deep (the
+// point's place on the face from faceAt), united with d.
+float pocketAir(int k, int lv, ivec3 L, vec3 f, ivec3 base, int u0, int u1, int y0, int y1, ivec2 D, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int S = lv == 0 ? 1 : R;
+  float inv = 1.0 / FLEN[k], ys = FNS[k].y;
+  int nn = FSL[k].w;
+  vec3 tn = vec3(FT[k]) * inv;
+  gRay = false;
+  float g = 1e9;
+  for (int pass = 0; pass < 2; pass++) {
+    airPiece();
+    airPlane((float(u0 - gPu) - gPfu) * inv, -tn);
+    airPlane((float(gPu - u1) + gPfu) * inv, tn);
+    airPlane((float(y0 * nn - gPYi) - gPYf) / ys, -FSV[k]);
+    airPlane((float(gPYi - y1 * nn) + gPYf) / ys, FSV[k]);
+    depthIn(k, S, D, gPni, gPnf);
+    depthOut(k, S, gPni, gPnf);
+    heights(lv, L, f, base, FQY[k].z, FQY[k].w);
+    if (pass == 0) {
+      g = gD;
+      if (!ray || g + gO > 0.0) break;
+      gRay = true;
+    } else {
+      gRay = false;
+      if (gX > reach) { reach = gX; nrm = gN; }
+    }
+  }
+  return min(d, g);
+}
+
+// Face k's pockets where the point is, at level lv (see facePocket in the
+// JS), united with d; and where it is in none, how far off its rectangle's
+// edges are at least (the face's other pockets are beyond them). (Each
+// part is asked after in one place only, in a loop over the levels: the
+// compiler copies a function out wherever it is called.)
+float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int S = lv == 0 ? 1 : R;
+  faceAt(k, S, base);
+  int ru = gPu, ry = gPy;
+  float rfu = gPfu, rfy = gPfy;
+  if (lv == 1) {
+    ru = fdiv(gPu + (gPfu < 0.0 ? -1 : 0), R);
+    rfu = (float(gPu - R * ru) + gPfu) / float(R);
+    ry = fdiv(gPy, R);
+    rfy = (float(gPy - R * ry) + gPfy) / float(R);
+  }
+  int uc = ru;
+  uint tile = 0u;
+  int o0 = 0, o1 = 0, b0 = 0, b1 = 0, cu0 = 0, cu1 = 0, cy0 = 0, cy1 = 0, a0 = 0, a1 = 0, y0 = 0, y1 = 0;
+  float Dc = 0.0, cap = 0.0;
+  bool has = false, cut = false;
+  ivec2 D = ivec2(0);
+  float inv = 1.0 / FLEN[k], ys = FNS[k].y;
+  int nn = FSL[k].w;
+  for (int l = 0; l <= lv; l++) {
+    rectangle(l, k, ru, rfu, ry, rfy, tile);
+    int u0 = gU0 + o0, u1 = gU1 + o0;
+    y0 = gY0 + o1; y1 = gY1 + o1;
+    float Sl = l == 0 ? 1.0 : float(R), dl = DEPTHS[l * ND + gDepth];
+    // (The city's pocket; one level finer, within it or out of it: the tiles align with its edges.)
+    b0 = u0; b1 = u1;
+    if (l == 0) { cu0 = u0; cu1 = u1; cy0 = y0; cy1 = y1; }
+    else if (has) {
+      if (uc >= a0 && uc < a1) { b0 = max(b0, R * a0); b1 = min(b1, R * a1); }
+      else {
+        Dc = 0.0;
+        if (float(gPu) + gPfu < float(R * a0)) b1 = min(b1, R * a0); else b0 = max(b0, R * a1);
       }
     }
-    int y0 = gY0, y1 = gY1;
-    if (lv == 1) { y0 = max(y0 - base.y, max(FQY[k].z * R / 4 - base.y, 0)); y1 = min(y1 - base.y, min(FQY[k].w * R / 4 - base.y, R)); }
-    else { y0 -= base.y; y1 -= base.y; }
-    if (clear && y0 < y1) {
-      int n4;
-      float f4 = slantAt(FOUR, n4);
-      n4 += 4 * base.y;
+    float Dt = (l == 0 ? 0.0 : Dc) + dl / Sl;
+    bool ok = dl > 0.0 && b0 < b1 && inCut(k, Sl, y0, y1) && (l == 1 || !rectBare(k, b0, b1, y0, y1)) && allowed(k, l, b0, b1, y0, y1, Dt, l == 0 ? FQY[k].x : FQY[k].y);
+    if (l == 0) {
+      has = ok; a0 = gA0; a1 = gA1; Dc = has ? dl : 0.0;
+      D = ivec2(int(round(Dc * 4.0)), 0);
+      // (One level finer: tiled afresh from this rectangle's corner.)
+      o0 = R * u0; o1 = R * y0;
+      ru = gPu - o0; rfu = gPfu; ry = gPy - o1; rfy = gPfy;
+      tile = hashCell(ivec3(u0, y0, k), TILE_SALT);
+      cut = has && lv == 0;
+      b0 = a0; b1 = a1;
+    } else {
+      cut = ok;
+      b0 = gA0; b1 = gA1;
+      D = ivec2(int(round(Dc * 4.0)), int(round(dl / 2.0)));
+    }
+    cap = min(min(float(gPu - u0) + gPfu, float(u1 - gPu) - gPfu) * inv,
+              min((float(gPYi - y0 * nn) + gPYf) / ys, (float(y1 * nn - gPYi) - gPYf) / ys));
+  }
+  if (cut) d = pocketAir(k, lv, L, f, base, b0, b1, y0, y1, D, d, ray, reach, nrm);
+  return min(d, max(cap, 0.0));
+}
+
+// Ridge i's notches where the point is, at level lv (see notch in the JS),
+// united with d; and where it is in none, how far off its row's ends are.
+float notch(int lv, int i, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {
+  int S = lv == 0 ? 1 : R;
+  int a = RAB[i].x, b = RAB[i].y;
+  int y = base.y + L.y;
+  float fy = f.y;
+  int ry = lv == 0 ? y : fdiv(y + (fy < 0.0 ? -1 : 0), R), origin = 0;
+  float rfy = lv == 0 ? fy : (float(y - R * ry) + fy) / float(R);
+  uint salt = 0u;
+  int ry0 = 0, ry1 = 0;
+  ivec2 dd = ivec2(0), A = ivec2(0);
+  for (int l = 0; l <= lv; l++) {
+    notchRow(l, i, ry, rfy, origin, salt);
+    ry0 = gNY0; ry1 = gNY1;
+    float Sl = l == 0 ? 1.0 : float(R);
+    if (gND > 0.0 && inCut(a, Sl, ry0, ry1) && (l == 1 || !rowBare(i, ry0, ry1))) {
+      if (l == 0) { dd.x = int(round(gND * 4.0)); A.x = int(round(gNA * 4.0)); }
+      else { dd.y = int(round(gND / 2.0)); A.y = int(round(gNA / 2.0)); }
+    }
+    ry = y; rfy = fy; origin = R * ry0; salt = hashCell(ivec3(ry0, i, 1), TILE_SALT);
+  }
+  float cap = min(float(y - ry0) + fy, float(ry1 - y) - fy);
+  if (dd.x + dd.y > 0) {
+    int ni[2];
+    float nf[2];
+    for (int s = 0; s < 2; s++) {
+      faceAt(s == 0 ? a : b, S, base);
+      ni[s] = gPni; nf[s] = gPnf;
+    }
+    for (int side = 0; side < 2; side++) {
       gRay = false;
       float g = 1e9;
       for (int pass = 0; pass < 2; pass++) {
         airPiece();
-        airPlane((float(gU0 - u) - fu) * inv, -vec3(FT[k]) * inv);
-        airPlane((float(u - gU1) + fu) * inv, vec3(FT[k]) * inv);
-        airPlane((float(back - w) - fw) * inv, -vec3(FH[k]) * inv);
-        airPlane((float(w - outer) + fw) * inv, vec3(FH[k]) * inv);
-        airSpan(L.y, f.y, y0, y1, EY);
-        if (lv == 1) {
-          airSpan(L.x, f.x, 0, R, EX);
-          airSpan(L.z, f.z, 0, R, EZ);
-        } else {
-          // (The rims, at quarter cells: 4 y between lo and hi.)
-          airPlane((float(FQY[k].z - n4) - f4) * 0.25, -EY);
-          airPlane((float(n4 - FQY[k].w) + f4) * 0.25, EY);
-        }
+        depthIn(a, S, side == 0 ? dd : A, ni[0], nf[0]);
+        depthIn(b, S, side == 0 ? A : dd, ni[1], nf[1]);
+        depthOut(a, S, ni[0], nf[0]);
+        depthOut(b, S, ni[1], nf[1]);
+        airSpan(L.y, f.y, ry0 - base.y, ry1 - base.y, EY);
+        heights(lv, L, f, base, FQY[a].z, FQY[a].w);
         if (pass == 0) {
           g = gD;
           if (!ray || g + gO > 0.0) break;
@@ -532,36 +820,49 @@ float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, 
   return min(d, max(cap, 0.0));
 }
 
-// The pockets of the faces near a skin cell (faces, a bit each).
-float pockets(ivec3 L, vec3 f, uint faces, float d, bool ray, inout float reach, inout vec3 nrm) {
-  for (int k = 0; k < NF; k++)
-    if ((faces & (1u << uint(k))) != 0u) d = facePocket(1, k, L, f, gCellB * R, d, ray, reach, nrm);
+// The pockets and notches at level lv of the faces with a bit in faces
+// (base: the point's cell's corner from the building's origin, in the
+// level's units). Asked after from one place (see cell): what asks for them
+// leaves the level (or -1), the faces, base and the cell's own bound here.
+int lowBit(uint m) { return int(round(log2(float(m & (~m + 1u))))); } // (findLSB, for small m)
+int gCarve;
+uint gCarveFaces;
+ivec3 gCarveBase;
+float gCarveE;
+float carve(int lv, ivec3 L, vec3 f, ivec3 base, uint faces, float d, bool ray, inout float reach, inout vec3 nrm) {
+  // (Over the bits set, so that the compiler makes one copy of each, not
+  // one for every face or ridge.)
+  uint ridges = 0u;
+  for (int i = 0; i < NRG; i++)
+    if ((faces & (1u << uint(RAB[i].x))) != 0u && (faces & (1u << uint(RAB[i].y))) != 0u) ridges |= 1u << uint(i);
+  for (uint m = faces; m != 0u; m &= m - 1u) d = facePocket(lv, lowBit(m), L, f, base, d, ray, reach, nrm);
+  for (uint m = ridges; m != 0u; m &= m - 1u) d = notch(lv, lowBit(m), L, f, base, d, ray, reach, nrm);
   return d;
 }
 
-// The city's own pockets near the point (o its cell's corner from the
-// middle cell's): of each face it is near, inside or just out; where it is
-// further in, they are at least that far off, less how deep they go.
-float cityPockets(ivec3 L, vec3 f, ivec3 o, bool ray, inout float reach, inout vec3 nrm) {
+// Which faces the city's pockets and notches may reach the point from (o
+// its cell's corner from the middle cell's: from a cell past each to
+// BAND_IN in); and, in gFar, how far off the rest are at least.
+float gFar;
+uint cityFaces(ivec3 L, vec3 f, ivec3 o) {
   ivec3 base = o - ORIGIN;
-  float d = 1e9;
+  gFar = 1e9;
+  uint near = 0u;
   vec3 q = vec3(base + L) + f;
   for (int k = 0; k < NF; k++) {
-    // (Its pockets are within its mass's bounds and OUT_C: no
-    // nearer than those, if it is outside them.)
-    vec3 off = max(vec3(FLO[k]) - FBAND[k].y - q, q - vec3(FHI[k]) - FBAND[k].y);
+    vec3 off = max(vec3(FLO[k]) - 2.0 - q, q - vec3(FHI[k]) - 2.0);
     float away = max(max(off.x, off.y), off.z);
-    if (away > 0.0) { d = min(d, away); continue; }
+    if (away > 0.0) { gFar = min(gFar, away); continue; }
     ivec4 pl = FPLANE[k];
     ivec3 m = SLANT[pl.x];
     int n;
     float fr = float(pl.y) * slantAt(pl.x, n);
-    float s = (float(pl.y * n + pl.y * (m.x * base.x + m.y * base.y + m.z * base.z) - pl.z) + fr) / FNLEN[k];
-    if (s < -FBAND[k].x) { d = min(d, -s - FBAND[k].x); continue; }
-    if (s > FBAND[k].y) { d = min(d, s - FBAND[k].y); continue; }
-    d = facePocket(0, k, L, f, base, d, ray, reach, nrm);
+    float s = (float(pl.y * n + pl.y * (m.x * base.x + m.y * base.y + m.z * base.z) - pl.z) + fr) / FNS[k].x;
+    if (s < -BAND_IN) { gFar = min(gFar, -s - BAND_IN); continue; }
+    if (s > BAND_OUT) { gFar = min(gFar, s - BAND_OUT); continue; }
+    near |= 1u << uint(k);
   }
-  return d;
+  return near;
 }
 
 // Window j's grid where the point is, in a plain cell: the window of its
@@ -655,10 +956,12 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout f
     gSkin = ray ? reach >= 0.0 : a < 0.0;
     return min(a, max(e, 0.0));
   }
-  float a = pockets(L, f, (m.x >> uint(FACE_AT)) & 63u, 1e9, ray, reach, nrm);
-  gRay = ray;
-  gSkin = ray ? reach >= 0.0 : a < 0.0;
-  return min(a, max(e, 0.0));
+  // (Its pockets: see cell.)
+  gCarve = 1;
+  gCarveFaces = (m.x >> uint(FACE_AT)) & 63u;
+  gCarveBase = gCellB * R;
+  gCarveE = e;
+  return 1e9;
 }
 
 // The light well, if any, that the hall below opens up through the plaza:
@@ -731,7 +1034,6 @@ float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) 
   gRay = false;
   float w = id.y == ${ROW_ID} ? well(L, f, id, seed) : 1e9;
   float p = plaza(L, f, id);
-  float c = cityPockets(L, f, fromMiddle(id), ray, reach, nrm);
   if (ray && p + gO <= 0.0) {
     gRay = true;
     plaza(L, f, id);
@@ -745,7 +1047,11 @@ float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) 
     if (gX > reach) { reach = gX; nrm = gN; }
   }
   gRay = ray;
-  return min(min(p, w), c);
+  // (Its pockets and notches: see cell.)
+  gCarve = 0;
+  gCarveFaces = cityFaces(L, f, fromMiddle(id));
+  gCarveBase = fromMiddle(id) - ORIGIN;
+  return min(min(p, w), gFar);
 }
 
 float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {
@@ -754,24 +1060,39 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     nrm = vec3(0.0);
     return 1e9;
   }
-  if (level == ${CITY} && id.y >= ${ROW_ID} && id.y < ${ROW_ID + ROWS}) return city(L, f, id, seed, reach, nrm);
-  // Over the city there is only sky, and the city's air comes right up to
-  // the cells above it: all a cell up there can say is how far down it is.
-  if (level == ${CITY} && id.y >= ${ROW_ID + ROWS} && id.y <= ${ROW_ID + ABOVE}) {
+  gCarve = -1;
+  float d = 1e9;
+  if (level == ${CITY} && id.y >= ${ROW_ID} && id.y < ${ROW_ID + ROWS}) d = city(L, f, id, seed, reach, nrm);
+  else {
+    // Over the city there is only sky, and the city's air comes right up to
+    // the cells above it: all a cell up there can say is how far down it is.
+    if (level == ${CITY} && id.y >= ${ROW_ID + ROWS} && id.y <= ${ROW_ID + ABOVE}) {
+      reach = -1.0;
+      nrm = vec3(0.0);
+      return float(L.y + R * (id.y - ${ROW_ID + ROWS})) + f.y;
+    }
+    // (The halls asked after in one place only: the compiler copies them out
+    // wherever they are asked after, and they are much the biggest part. Not
+    // at all in the skin and plain cells, which have none.)
+    uvec2 m = level == ${CITY + 1} ? relief(id, gUp) : uvec2(0u);
+    uint kind = m.x & 3u;
     reach = -1.0;
     nrm = vec3(0.0);
-    return float(L.y + R * (id.y - ${ROW_ID + ROWS})) + f.y;
+    if (m == uvec2(0u) || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, reach, nrm);
+    if (m != uvec2(0u)) d = reliefCell(L, f, id, seed, m, d, reach, nrm);
   }
-  // (The halls asked after in one place only: the compiler copies them out
-  // wherever they are asked after, and they are much the biggest part. Not
-  // at all in the skin and plain cells, which have none.)
-  uvec2 m = level == ${CITY + 1} ? relief(id, gUp) : uvec2(0u);
-  uint kind = m.x & 3u;
-  float d = 1e9;
-  reach = -1.0;
-  nrm = vec3(0.0);
-  if (m == uvec2(0u) || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, reach, nrm);
-  return m != uvec2(0u) ? reliefCell(L, f, id, seed, m, d, reach, nrm) : d;
+  // (The buildings' relief, asked after in one place only, as the halls are.)
+  if (gCarve >= 0) {
+    bool ray = gRay;
+    float a = carve(gCarve, L, f, gCarveBase, gCarveFaces, 1e9, ray, reach, nrm);
+    gRay = ray;
+    if (gCarve == 0) d = min(d, a);
+    else {
+      gSkin = ray ? reach >= 0.0 : a < 0.0;
+      d = min(a, max(gCarveE, 0.0));
+    }
+  }
+  return d;
 }
 `;
 
@@ -865,11 +1186,12 @@ function relief(id, up) {
 }
 
 // See rectangle in the shader.
-export function rectangle(lv, k, u, fu, y, fy) {
-  const P = LEVELS[lv], q = FACES[k].q[lv], n = P.sb / P.quant, su = n * q;
-  const salt = Math.imul(lv, 0x5bd1e995) >>> 0;
+export function rectangle(lv, k, u, fu, y, fy, tile = 0) {
+  const P = LEVELS[lv], q = FACES[k].q2[lv], n = P.sb / P.quant, su = n * q;
+  const salt = (Math.imul(lv, 0x5bd1e995) ^ tile) >>> 0;
   const row = fdiv(y - (fy < 0 ? 1 : 0), P.sby);
-  const shift = q * (hashCell([row, k, lv], (ROW_SALT ^ salt) >>> 0) % n);
+  // (One level finer, tiled afresh in each city rectangle: no shift, so that the tiles align with its edges.)
+  const shift = lv ? 0 : q * (hashCell([row, k, lv], (ROW_SALT ^ salt) >>> 0) % n);
   const col = fdiv(u - (fu < 0 ? 1 : 0) - shift, su);
   let u0 = col * su + shift, u1 = u0 + su, y0 = row * P.sby, y1 = y0 + P.sby;
   let h = hashCell([col, row, k], (POCKET_SALT ^ salt) >>> 0);
@@ -895,51 +1217,158 @@ export function rectangle(lv, k, u, fu, y, fy) {
   return { u0, u1, y0, y1, depth: j };
 }
 
-// See facePocket in the shader.
-function facePocket(lv, k, L, f, base, d) {
-  const F = FACES[k], scale = lv === 0 ? 1 : R;
+// The rows of ridge r's notches at level lv (y in its units, from origin):
+// super-rows of sb, split at whole quanta; each with its depth and its arms'
+// reach (at least the depth, at most the level's deepest).
+function notchRow(lv, r, y, fy, origin, salt) {
+  const N = NOTCH[lv], P = LEVELS[lv], yr = y - origin;
+  const row = fdiv(yr - (fy < 0 ? 1 : 0), N.sb);
+  let y0 = row * N.sb, y1 = y0 + N.sb;
+  let h = hashCell([row, r, lv], (NOTCH_SALT ^ salt) >>> 0);
+  for (let i = 0; i < N.splits; i++) {
+    const ny = (y1 - y0) / N.quant;
+    if (ny >= 2) {
+      const k = 1 + ((h >>> 8) % (ny - 1));
+      if (beyond(yr, fy, y0 + k * N.quant)) y0 += k * N.quant;
+      else y1 = y0 + k * N.quant;
+    }
+    h = hashCell([y0, y1, r], (NOTCH_SALT ^ salt ^ lv) >>> 0);
+  }
+  const t = h01(hashCell([y0, r, lv], (DEPTH_SALT ^ NOTCH_SALT ^ salt) >>> 0));
+  let j = 0;
+  for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
+  const d = P.depths[j] ?? 0, top = P.depths.at(-1);
+  const steps = Math.floor((top - d) / N.arm + 1e-6);
+  const A = d + Math.min(steps, Math.floor(h01(h) * (steps + 1))) * N.arm;
+  return { y0: y0 + origin, y1: y1 + origin, d, A };
+}
+
+// Whether face F's pocket over [u0, u1] x [y0, y1] (level lv's measure and
+// units), D cells deep, keeps Z clear of the mass's other faces all the way
+// down: if not, it is narrowed along u (in whole quanta q from u0) until it
+// does, or dropped (null). Its depth along the face is affine (see F.aff).
+function allowed(F, lv, u0, u1, y0, y1, D, q) {
+  const sc = lv ? R : 1;
+  let lo = u0, hi = u1;
+  for (const a of F.aff)
+    for (const y of [y0, y1]) {
+      const rest = a.c0 + (a.cy * y) / sc + a.cd * D;
+      if (a.cu > 1e-9) lo = Math.max(lo, ((F.Z - rest) * sc) / a.cu);
+      else if (a.cu < -1e-9) hi = Math.min(hi, ((F.Z - rest) * sc) / a.cu);
+      else if (rest < F.Z) return null;
+    }
+  lo = u0 + Math.ceil((lo - u0) / q - 1e-6) * q;
+  hi = u0 + Math.floor((hi - u0) / q + 1e-6) * q;
+  return lo < hi ? [lo, hi] : null;
+}
+
+// Where the point is on face F at level lv (base its cell's corner from the
+// building's origin, in this level's units): along (u, fu), up by its
+// projection's height (y, fy, whole units and the rest, at least 0; and
+// Y, the same times nn, as a whole number and the rest), and how deep (n . X,
+// as a whole number and the rest).
+function faceAt(F, lv, base) {
+  const S = lv ? R : 1;
   const u = F.t.sign * dLs[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * dFs[F.t.k];
-  const w = F.h.sign * dLs[F.h.k] + F.hv[0] * base[0] + F.hv[2] * base[2], fw = F.h.sign * dFs[F.h.k];
-  const y = base[1] + L[1];
-  const r = rectangle(lv, k, u, fu, y, f[1]);
-  const cap = Math.min(Math.min(u - r.u0 + fu, r.u1 - u - fu) / F.len, y - r.y0 + f[1], r.y1 - y - f[1]);
-  let back = F.back[lv][r.depth] ?? 0;
-  if (back > 0) {
-    const K = F.K * scale, wl = (K - F.ny * r.y0) * F.sub, wh = (K - F.ny * r.y1) * F.sub;
-    back = fdiv(Math.min(wl, wh), F.alpha) - back;
-    const outer = cdiv(Math.max(wl, wh), F.alpha) + Math.ceil(F.len);
-    let clear = true;
-    if (lv === 0) {
-      const l2 = F.len2;
-      const xs = [r.u0 * F.tv[0], r.u1 * F.tv[0]], ws = [back * F.hv[0], outer * F.hv[0]];
-      const zs = [r.u0 * F.tv[2], r.u1 * F.tv[2]], vs = [back * F.hv[2], outer * F.hv[2]];
-      const x0 = Math.min(...xs) + Math.min(...ws), x1 = Math.max(...xs) + Math.max(...ws);
-      const z0 = Math.min(...zs) + Math.min(...vs), z1 = Math.max(...zs) + Math.max(...vs);
-      for (const [lo, hi] of BARE)
-        if (x0 < hi[0] * l2 && x1 > lo[0] * l2 && z0 < hi[2] * l2 && z1 > lo[2] * l2 && r.y0 < hi[1] && r.y1 > lo[1]) clear = false;
+  const ms = SLANTS[F.s.k], mn = SLANTS[F.plane.k];
+  const Yi = F.gs * (F.s.sign * dLs[F.s.k] + F.s.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.ny * F.K * S;
+  const Yf = F.gs * F.s.sign * dFs[F.s.k];
+  const y = fdiv(Yi + Math.floor(Yf), F.nn), fy = (Yi - y * F.nn + Yf) / F.nn;
+  const ni = F.plane.sign * (dLs[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * dFs[F.plane.k];
+  return { u, fu, y, fy, Yi, Yf, ni, nf, S };
+}
+
+// The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
+// D cells deep, to a unit past the face, within true heights lo to hi
+// (level units) and, one level finer, within the cell.
+function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, ci, fi, lo, hi) {
+  const Dn = F.dn[lv][ci * NDQ + fi], Y = p.Yi + p.Yf, ys = F.gs * F.slen;
+  piece();
+  plane((u0 - p.u - p.fu) / F.len);
+  plane((p.u - u1 + p.fu) / F.len);
+  plane((y0 * F.nn - Y) / ys);
+  plane((Y - y1 * F.nn) / ys);
+  plane((F.K * p.S - Dn - p.ni - p.nf) / F.nl);
+  plane((p.ni + p.nf - F.K * p.S - Math.ceil(F.nl)) / F.nl);
+  span(L[1], f[1], lo, hi);
+  if (lv === 1) span(L[0], f[0], 0, R), span(L[2], f[2], 0, R);
+  return gD;
+}
+
+// Face k's pockets where the point is, at level lv, united with d; and
+// where it is in none, how far off its rectangle's edges are at least.
+function facePocket(lv, k, L, f, base, d) {
+  const F = FACES[k], p = faceAt(F, lv, base), S = p.S;
+  // The city's rectangle (from one level finer: the point's place in the city's measure).
+  const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
+  const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
+  const c = rectangle(0, k, uc, fuc, yc, fyc);
+  let Dc = LEVELS[0].depths[c.depth] ?? 0;
+  const inCut = (y0, y1) => y0 >= F.cutLo * S - 1e-9 && y1 <= F.cutHi * S + 1e-9;
+  // (The city's pocket, narrowed or dropped: [a0, a1] in the city's measure.)
+  let span0 = null;
+  if (Dc > 0 && inCut(c.y0, c.y1) && !rectBare(F, c.u0, c.u1, c.y0, c.y1)) span0 = allowed(F, 0, c.u0, c.u1, c.y0, c.y1, Dc, F.q2[0]);
+  const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1];
+  let cap;
+  if (!lv) {
+    cap = Math.min(Math.min(p.u - c.u0 + p.fu, c.u1 - p.u - p.fu) / F.len, (p.Yi + p.Yf - c.y0 * F.nn) / (F.gs * F.slen), (c.y1 * F.nn - p.Yi - p.Yf) / (F.gs * F.slen));
+    if (span0) d = Math.min(d, pocketAir(F, 0, p, L, f, span0[0], span0[1], c.y0, c.y1, quarters(Dc), 0, lo, hi));
+    return Math.min(d, Math.max(cap, 0));
+  }
+  // One level finer: tiled afresh from the city rectangle's corner.
+  const inC = span0 && uc >= span0[0] && uc < span0[1];
+  if (!inC) Dc = 0;
+  const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
+  const r = rectangle(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
+  const u0 = r.u0 + ou, u1 = r.u1 + ou, y0 = r.y0 + oy, y1 = r.y1 + oy;
+  const ys = F.gs * F.slen, Y = p.Yi + p.Yf;
+  cap = Math.min(Math.min(p.u - u0 + p.fu, u1 - p.u - p.fu) / F.len, (Y - y0 * F.nn) / ys, (y1 * F.nn - Y) / ys);
+  const Df = LEVELS[1].depths[r.depth] ?? 0;
+  if (Df > 0) {
+    // (Within the city's pocket or out of it: the tiles align with its edges.)
+    let a0 = u0, a1 = u1;
+    if (span0) {
+      if (inC) (a0 = Math.max(a0, R * span0[0])), (a1 = Math.min(a1, R * span0[1]));
+      else if (p.u + p.fu < R * span0[0]) a1 = Math.min(a1, R * span0[0]);
+      else a0 = Math.max(a0, R * span0[1]);
     }
-    if (Math.min(wl, wh) < F.thin[lv]) clear = false;
-    for (let c = 0; c < 4; c++) {
-      const cu = c & 1 ? r.u1 : r.u0, cy = c & 2 ? r.y1 : r.y0;
-      const xx = cu * F.tv[0] + back * F.hv[0], zz = cu * F.tv[2] + back * F.hv[2], yy = cy * F.len2;
-      F.others.forEach(({ n }, j) => {
-        const v = n[0] * xx + n[1] * yy + n[2] * zz;
-        if (v > F.keep[lv][j] && v <= F.on[lv][j]) clear = false;
-      });
-    }
-    let y0, y1;
-    if (lv === 1) (y0 = Math.max(r.y0 - base[1], (F.lo4 * R) / 4 - base[1], 0)), (y1 = Math.min(r.y1 - base[1], (F.hi4 * R) / 4 - base[1], R));
-    else (y0 = r.y0 - base[1]), (y1 = r.y1 - base[1]);
-    if (clear && y0 < y1) {
-      const n4 = dLs[FOUR.k] + 4 * base[1], f4 = dFs[FOUR.k];
+    const D = Dc + Df / R;
+    // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and within the cell.)
+    const ok = a0 < a1 && inCut(y0, y1) ? allowed(F, 1, a0, a1, y0, y1, D, F.q2[1]) : null;
+    if (ok) d = Math.min(d, pocketAir(F, 1, p, L, f, ok[0], ok[1], y0, y1, quarters(Dc), twelfths(Df / R), Math.max(lo, 0), Math.min(hi, R)));
+  }
+  return Math.min(d, Math.max(cap, 0));
+}
+
+// Ridge i's notches where the point is, at level lv, united with d (and
+// where it is in none, how far off its row's ends are).
+function notch(lv, i, L, f, base, d) {
+  const rg = RIDGES[i], { F, G } = rg, S = lv ? R : 1;
+  const y = base[1] + L[1], fy = f[1];
+  const yc = lv ? fdiv(y + (fy < 0 ? -1 : 0), R) : y, fyc = lv ? (y - R * yc + fy) / R : fy;
+  const c = notchRow(0, i, yc, fyc, 0, 0);
+  const inCut = (y0, y1) => y0 >= F.cutLo * S - 1e-9 && y1 <= F.cutHi * S + 1e-9;
+  const cityOk = c.d > 0 && inCut(c.y0, c.y1) && !rowBare(rg, c.y0, c.y1);
+  let r = c, dd = cityOk ? [quarters(c.d), 0] : [0, 0], A = cityOk ? [quarters(c.A), 0] : [0, 0];
+  if (lv) {
+    r = notchRow(1, i, y, fy, R * c.y0, hashCell([c.y0, i, 1], TILE_SALT) >>> 0);
+    if (r.d > 0 && inCut(r.y0, r.y1)) (dd[1] = r.d / 2), (A[1] = r.A / 2);
+  }
+  const cap = Math.min(y - r.y0 + fy, r.y1 - y - fy);
+  if (dd[0] + dd[1] > 0) {
+    let lo = Math.max(r.y0, (F.lo4 * S) / 4) - base[1], hi = Math.min(r.y1, (F.hi4 * S) / 4) - base[1];
+    if (lv) (lo = Math.max(lo, 0)), (hi = Math.min(hi, R));
+    const pF = faceAt(F, lv, base), pG = faceAt(G, lv, base);
+    const side = (P, p, x) => (P.K * S - P.dn[lv][x[0] * NDQ + x[1]] - p.ni - p.nf) / P.nl;
+    const out = (P, p) => (p.ni + p.nf - P.K * S - Math.ceil(P.nl)) / P.nl;
+    for (const [P, p, Q, q] of [[F, pF, G, pG], [G, pG, F, pF]]) {
       piece();
-      plane((r.u0 - u - fu) / F.len);
-      plane((u - r.u1 + fu) / F.len);
-      plane((back - w - fw) / F.len);
-      plane((w - outer + fw) / F.len);
-      span(L[1], f[1], y0, y1);
-      if (lv === 1) span(L[0], f[0], 0, R), span(L[2], f[2], 0, R);
-      else plane((F.lo4 - n4 - f4) * 0.25), plane((n4 - F.hi4 + f4) * 0.25);
+      plane(side(P, p, dd));
+      plane(side(Q, q, A));
+      plane(out(P, p));
+      plane(out(Q, q));
+      span(L[1], f[1], lo, hi);
+      if (lv) span(L[0], f[0], 0, R), span(L[2], f[2], 0, R);
       d = Math.min(d, gD);
     }
   }
@@ -948,24 +1377,33 @@ function facePocket(lv, k, L, f, base, d) {
 
 function pockets(L, f, faces, d) {
   const base = cellB.map((x) => x * R);
-  FACES.forEach((_, k) => {
+  FACES.forEach((F, k) => {
     if (faces & (1 << k)) d = facePocket(1, k, L, f, base, d);
+  });
+  RIDGES.forEach((r, i) => {
+    if (faces & (1 << r.a) && faces & (1 << r.b)) d = notch(1, i, L, f, base, d);
   });
   return d;
 }
 
+// The city's own pockets and notches near the point (o its cell's corner
+// from the middle cell's): of each face it is near, from a cell past it to
+// DMAX in; elsewhere, at least that far off.
 function cityPockets(L, f, o) {
   const base = o.map((x, a) => x - ORIGIN[a]);
-  let d = NONE;
+  let d = NONE, near = 0;
   const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
   FACES.forEach((F, k) => {
-    const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - F.outC - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - F.outC)));
+    const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - 2 - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - 2)));
     if (away > 0) return void (d = Math.min(d, away));
     const m = SLANTS[F.plane.k], sg = F.plane.sign;
-    const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / Math.hypot(...F.n);
-    if (s < -F.reachC) d = Math.min(d, -s - F.reachC);
-    else if (s > F.outC) d = Math.min(d, s - F.outC);
-    else d = facePocket(0, k, L, f, base, d);
+    const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / F.nl;
+    if (s < -BAND_IN) d = Math.min(d, -s - BAND_IN);
+    else if (s > BAND_OUT) d = Math.min(d, s - BAND_OUT);
+    else (near |= 1 << k), (d = facePocket(0, k, L, f, base, d));
+  });
+  RIDGES.forEach((r, i) => {
+    if (near & (1 << r.a) && near & (1 << r.b)) d = notch(0, i, L, f, base, d);
   });
   return d;
 }
