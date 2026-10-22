@@ -136,9 +136,11 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 // to the face's edge, and level floor and ceiling. The same rule at two
 // levels: the city's own (lengths in its lattice units, cells), whose boxes
 // make the masses and the ragged silhouettes; and the next (in its units),
-// smaller boxes in those. A pocket keeps at least `keep` inside the mass's
-// other planes at its back wall's corners, so that nothing thin is cut
-// through (near an apex, along a ridge).
+// smaller boxes in those. Nothing thin is cut through: at its back wall's
+// corners a pocket is either at least `keep` inside each of the mass's other
+// faces, or out past it (it notches the ridge between them, S2); and none is
+// cut where the mass is less than THIN cells from its axis (near an apex).
+const THIN = 2;
 const LEVELS = [
   { sb: 3, sby: 1, quant: 1, splits: 2, depths: [0, 0.25, 0.5, 1], weights: [0.2, 0.35, 0.3, 0.15], keep: 0.25 },
   { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1], keep: 2 },
@@ -174,8 +176,12 @@ function dot2(v) {
 // For the thickness rule: each other plane n . X < K of a face's mass, as a
 // whole-number bound on n . X times the face's len2 (its h . h), at each
 // level, less `keep` (see LEVELS).
-for (const F of FACES)
+for (const F of FACES) {
   F.keep = LEVELS.map((lv, i) => F.others.map(({ n, K }) => (i ? R : 1) * K * F.len2 - Math.ceil(lv.keep * Math.hypot(...n) * F.len2)));
+  F.on = LEVELS.map((lv, i) => F.others.map(({ K }) => (i ? R : 1) * K * F.len2));
+  // (K - ny y, at least, for the face to be THIN from the axis.)
+  F.thin = LEVELS.map((lv, i) => Math.ceil(THIN * (i ? R : 1) * F.alpha * F.len));
+}
 // (A cell's table entry has a bit for each, six in all.)
 if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
 // How far behind a face the finer level's pockets can reach (in cells): the
@@ -323,6 +329,8 @@ const int FOUR = ${FOUR.k};
 // (see FACES' keep), a level after another.
 const ivec3 FOTH[NF * 2] = ivec3[NF * 2](${ivecs(FACES.flatMap((F) => F.others.map((o) => o.n)))});
 const int FKEEP[2 * NF * 2] = int[2 * NF * 2](${[0, 1].flatMap((i) => FACES.flatMap((F) => F.keep[i])).join(', ')});
+const int FON[2 * NF * 2] = int[2 * NF * 2](${[0, 1].flatMap((i) => FACES.flatMap((F) => F.on[i])).join(', ')});
+const int FTHIN[2 * NF] = int[2 * NF](${[0, 1].flatMap((i) => FACES.map((F) => F.thin[i])).join(', ')});
 // Each face's mass's bounds, from the building's origin, in cells.
 const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
 const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
@@ -423,13 +431,15 @@ float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, 
         if (x0 < BARE_HI[j].x * l2 && x1 > BARE_LO[j].x * l2 && z0 < BARE_HI[j].z * l2 && z1 > BARE_LO[j].z * l2 &&
             gY0 < BARE_HI[j].y && gY1 > BARE_LO[j].y) clear = false;
     }
-    // (The thickness rule, at the back wall's corners.)
+    // (Nothing thin cut through: see THIN.)
+    if (min(wl, wh) < FTHIN[lv * NF + k]) clear = false;
     for (int c = 0; c < 4; c++) {
       int cu = (c & 1) == 0 ? gU0 : gU1, cy = (c & 2) == 0 ? gY0 : gY1;
       int xx = cu * FT[k].x + back * FH[k].x, zz = cu * FT[k].z + back * FH[k].z, yy = cy * FLEN2[k];
       for (int j = 0; j < 2; j++) {
         ivec3 on = FOTH[k * 2 + j];
-        if (on.x * xx + on.y * yy + on.z * zz > FKEEP[(lv * NF + k) * 2 + j]) clear = false;
+        int v = on.x * xx + on.y * yy + on.z * zz, at = (lv * NF + k) * 2 + j;
+        if (v > FKEEP[at] && v <= FON[at]) clear = false;
       }
     }
     int y0 = gY0, y1 = gY1;
@@ -807,11 +817,13 @@ function facePocket(lv, k, L, f, base, d) {
       for (const [lo, hi] of BARE)
         if (x0 < hi[0] * l2 && x1 > lo[0] * l2 && z0 < hi[2] * l2 && z1 > lo[2] * l2 && r.y0 < hi[1] && r.y1 > lo[1]) clear = false;
     }
+    if (Math.min(wl, wh) < F.thin[lv]) clear = false;
     for (let c = 0; c < 4; c++) {
       const cu = c & 1 ? r.u1 : r.u0, cy = c & 2 ? r.y1 : r.y0;
       const xx = cu * F.tv[0] + back * F.hv[0], zz = cu * F.tv[2] + back * F.hv[2], yy = cy * F.len2;
       F.others.forEach(({ n }, j) => {
-        if (n[0] * xx + n[1] * yy + n[2] * zz > F.keep[lv][j]) clear = false;
+        const v = n[0] * xx + n[1] * yy + n[2] * zz;
+        if (v > F.keep[lv][j] && v <= F.on[lv][j]) clear = false;
       });
     }
     let y0, y1;
