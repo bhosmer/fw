@@ -138,8 +138,8 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 // next (in its units), smaller boxes cut into those. What keeps anything
 // from being cut loose is in the setup after BARE.
 const LEVELS = [
-  { sb: 4, sby: 2, quant: 1, splits: 3, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15] },
-  { sb: 24, sby: 12, quant: 2, splits: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
+  { sb: 4, sby: 2, quant: 1, splits: 3, min: 1, depths: [0, 0.25, 0.5, 1], weights: [0.25, 0.35, 0.25, 0.15] },
+  { sb: 24, sby: 24, quant: 2, splits: 3, min: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
 ];
 for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));
 const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
@@ -193,7 +193,7 @@ const BARE = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, 
 const DMAX = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R;
 // How far in from a face, and out past it, anything of the city's is cut (cells).
 const BAND_IN = LEVELS[0].depths.at(-1) + 0.01, BAND_OUT = 1.01;
-const NOTCH = [{ sb: 4, quant: 1, splits: 2, arm: 0.25 }, { sb: 24, quant: 2, splits: 3, arm: 2 }];
+const NOTCH = [{ sb: 4, quant: 1, splits: 2, min: 1, arm: 0.25 }, { sb: 24, quant: 2, splits: 2, min: 3, arm: 2 }];
 const NOTCH_SALT = 0x2f6b9a1d, TILE_SALT = 0x6c8e9cf5;
 const solve3 = (M, b) => {
   const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
@@ -481,6 +481,7 @@ const uint POCKET_SALT = ${POCKET_SALT}u, ROW_SALT = ${ROW_SALT}u, DEPTH_SALT = 
 // depths' shares, ND to a level.
 const int ND = ${ND};
 const ivec4 LV[2] = ivec4[2](${LEVELS.map((l) => `ivec4(${l.sb}, ${l.sby}, ${l.quant}, ${l.splits})`).join(', ')});
+const int LV_MIN[2] = int[2](${LEVELS.map((l) => l.min).join(', ')});
 const float CUM[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.cumulative, ...Array(ND - l.depths.length).fill(2)]).map(glf).join(', ')});
 const int NF = ${FACES.length};
 // Each face (relief v2, see FACES and the setup after BARE): n's slant
@@ -513,7 +514,7 @@ const int FOUR = ${FOUR.k};
 // the point on each at height y (P0 + Py y, cells).
 const float DEPTHS[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]).map(glf).join(', ')});
 const float DTOP[2] = float[2](${LEVELS.map((l) => glf(l.depths.at(-1))).join(', ')});
-const ivec4 NOTCHP[2] = ivec4[2](${NOTCH.map((N) => `ivec4(${N.sb}, ${N.quant}, ${N.splits}, 0)`).join(', ')});
+const ivec4 NOTCHP[2] = ivec4[2](${NOTCH.map((N) => `ivec4(${N.sb}, ${N.quant}, ${N.splits}, ${N.min})`).join(', ')});
 const float NARM[2] = float[2](${NOTCH.map((N) => glf(N.arm)).join(', ')});
 const uint NOTCH_SALT = ${NOTCH_SALT}u, TILE_SALT = ${TILE_SALT}u;
 const int NRG = ${RIDGES.length};
@@ -576,14 +577,13 @@ void rectangle(int lv, int k, int u, float fu, int y, float fy, uint tile) {
   int col = fdiv(u - (fu < 0.0 ? 1 : 0) - shift, su);
   int u0 = col * su + shift, u1 = u0 + su, y0 = row * lvp.y, y1 = y0 + lvp.y;
   uint h = hashCell(ivec3(col, row, k), POCKET_SALT ^ salt);
+  int m = LV_MIN[lv];
   for (int i = 0; i < lvp.w; i++) {
     int nu = (u1 - u0) / q, ny = (y1 - y0) / lvp.z;
-    bool alongU = (i & 1) == 0 ? (h & 4u) != 0u : (h & 4u) == 0u;
-    if (alongU && nu < 2) alongU = false;
-    if (!alongU && ny < 2) alongU = nu >= 2;
-    int w = alongU ? nu : ny;
-    if (w >= 2) {
-      int s = 1 + int((h >> 8) % uint(w - 1));
+    bool cu = nu >= 2 * m, cy = ny >= 2 * m;
+    if (cu || cy) {
+      bool alongU = cu && (!cy || (h & 0xffu) * uint(nu + ny) < 256u * uint(nu));
+      int s = m + int((h >> 8) % uint((alongU ? nu : ny) - 2 * m + 1));
       if (alongU) { if (beyond(u, fu, u0 + s * q)) u0 += s * q; else u1 = u0 + s * q; }
       else { if (beyond(y, fy, y0 + s * lvp.z)) y0 += s * lvp.z; else y1 = y0 + s * lvp.z; }
     }
@@ -607,8 +607,8 @@ void notchRow(int lv, int r, int y, float fy, int origin, uint salt) {
   uint h = hashCell(ivec3(row, r, lv), NOTCH_SALT ^ salt);
   for (int i = 0; i < N.z; i++) {
     int ny = (y1 - y0) / N.y;
-    if (ny >= 2) {
-      int k = 1 + int((h >> 8) % uint(ny - 1));
+    if (ny >= 2 * N.w) {
+      int k = N.w + int((h >> 8) % uint(ny - 2 * N.w + 1));
       if (beyond(yr, fy, y0 + k * N.y)) y0 += k * N.y; else y1 = y0 + k * N.y;
     }
     h = hashCell(ivec3(y0, y1, r), NOTCH_SALT ^ salt ^ uint(lv));
@@ -1264,13 +1264,13 @@ export function rectangle(lv, k, u, fu, y, fy, tile = 0) {
   let u0 = col * su + shift, u1 = u0 + su, y0 = row * P.sby, y1 = y0 + P.sby;
   let h = hashCell([col, row, k], (POCKET_SALT ^ salt) >>> 0);
   for (let i = 0; i < P.splits; i++) {
-    const nu = (u1 - u0) / q, ny = (y1 - y0) / P.quant;
-    let alongU = (i & 1) === 0 ? (h & 4) !== 0 : (h & 4) === 0;
-    if (alongU && nu < 2) alongU = false;
-    if (!alongU && ny < 2) alongU = nu >= 2;
-    const w = alongU ? nu : ny;
-    if (w >= 2) {
-      const s = 1 + ((h >>> 8) % (w - 1));
+    // Across the longer side more likely than the shorter (in proportion),
+    // and never leaving a part under min quanta: no thin slices.
+    const nu = (u1 - u0) / q, ny = (y1 - y0) / P.quant, m = P.min;
+    const cu = nu >= 2 * m, cy = ny >= 2 * m;
+    if (cu || cy) {
+      const alongU = cu && (!cy || (h & 0xff) * (nu + ny) < 256 * nu);
+      const s = m + ((h >>> 8) % ((alongU ? nu : ny) - 2 * m + 1));
       if (alongU) {
         if (beyond(u, fu, u0 + s * q)) u0 += s * q;
         else u1 = u0 + s * q;
@@ -1294,9 +1294,10 @@ function notchRow(lv, r, y, fy, origin, salt) {
   let y0 = row * N.sb, y1 = y0 + N.sb;
   let h = hashCell([row, r, lv], (NOTCH_SALT ^ salt) >>> 0);
   for (let i = 0; i < N.splits; i++) {
+    // (No row under min quanta, as for the pockets.)
     const ny = (y1 - y0) / N.quant;
-    if (ny >= 2) {
-      const k = 1 + ((h >>> 8) % (ny - 1));
+    if (ny >= 2 * N.min) {
+      const k = N.min + ((h >>> 8) % (ny - 2 * N.min + 1));
       if (beyond(yr, fy, y0 + k * N.quant)) y0 += k * N.quant;
       else y1 = y0 + k * N.quant;
     }
