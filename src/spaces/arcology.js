@@ -193,7 +193,18 @@ const BARE = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, 
 const DMAX = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R;
 // How far in from a face, and out past it, anything of the city's is cut (cells).
 const BAND_IN = LEVELS[0].depths.at(-1) + 0.01, BAND_OUT = 1.01;
-const NOTCH = [{ sb: 4, quant: 1, splits: 2, min: 1, arm: 0.25 }, { sb: 24, quant: 2, splits: 2, min: 3, arm: 2 }];
+// (A notch row's depth goes by cum, its share of each of the level's depths;
+// its arm reaches the level's deepest, as far as it may toward the pockets,
+// in a share long of rows, and otherwise anywhere from its depth to there.
+// The city's rows are seldom empty and mostly long, so that the ridges are
+// cut along most of their length and the cuts reach across to the pockets;
+// one level finer they are as the pockets', since long, deep notches in its
+// thin rows leave thin plates between them.)
+const NOTCH = [
+  { sb: 4, quant: 1, splits: 2, min: 1, arm: 0.25, cum: [0.1, 0.4, 0.7, 1], long: 0.7 },
+  { sb: 24, quant: 2, splits: 2, min: 3, arm: 2, cum: LEVELS[1].cumulative, long: 0 },
+];
+for (const N of NOTCH) N.armLong = Math.floor(N.long * 16777216);
 const NOTCH_SALT = 0x2f6b9a1d, TILE_SALT = 0x6c8e9cf5;
 const solve3 = (M, b) => {
   const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
@@ -205,18 +216,57 @@ for (const F of FACES) {
   F.nl = Math.sqrt(F.nn);
   const raw = [-F.ny * F.n[0], F.nn - F.ny * F.ny, -F.ny * F.n[2]], gs = raw.reduce(gcd);
   F.sv = raw.map((x) => x / gs);
-  F.gs = gs;
-  F.s = slantOf(F.sv);
   F.slen = Math.hypot(...F.sv);
   F.q2 = [F.q[0], (F.q[0] * LEVELS[1].quant) / LEVELS[0].quant];
-  // The point on the face at (u, yp) (city measure, cells), and DELTA cells in.
-  const M = [F.n, F.tv, [0, 1, 0]];
-  F.at = (u, y, delta) => solve3(M, [F.K, u, y]).map((x, a) => x - (delta * F.n[a]) / F.nl);
 }
 FACES.forEach((F, k) => (F.index = k));
+// Pockets are cut into a face along its draft, v = -n^ + kappa d^ (d^ along
+// the face toward its mass's base), with kappa just enough that along v no
+// other face of the mass comes nearer: then a pocket's whole column is as far
+// from them as its mouth, and pockets need only keep DMAX clear of them, not
+// DMAX (1 + c) (.claude/design/relief-edges.md). Their walls hold t and v; a
+// point's height on the face (yp) is where v carries it to the face, counted
+// across the planes m . X = p yp + q n . X, m = p e_y + q n, m . v = 0.
+const DRAFT_MARGIN = 0.01;
 for (const F of FACES) {
   const mass = FACES.filter((G) => G.solid === F.solid);
   F.near = mass.filter((G) => G !== F);
+  const nh = F.n.map((x) => x / F.nl), sy = F.sv[1] / F.slen;
+  let draft = null;
+  for (const sg of [1, -1]) {
+    let k = 0, ok = true;
+    for (const G of F.near) {
+      const a = dot(G.n, nh) / G.nl, b = (sg * dot(G.n, F.sv)) / F.slen / G.nl;
+      if (a >= 0) continue;
+      if (b >= 0) ok = false;
+      else k = Math.max(k, a / b);
+    }
+    if (ok && (!draft || k < draft.k)) draft = { sg, k };
+  }
+  // (p the least multiple of nn that brings kappa within 0.03 of the least.)
+  let P, q, kOf;
+  for (let j = 1; ; j++) {
+    P = j * F.nn;
+    kOf = (q) => ((q / P + F.ny / F.nn) * F.nn) / (draft.sg * sy * F.nl);
+    q = Math.round((-F.ny / F.nn + ((draft.k + DRAFT_MARGIN) * draft.sg * sy * F.nl) / F.nn) * P);
+    while (kOf(q) < draft.k + DRAFT_MARGIN / 2) q += kOf(q + 1) > kOf(q) ? 1 : -1;
+    if (kOf(q) < draft.k + 0.03 || j >= 16) break;
+  }
+  const m = [q * F.n[0], P + q * F.n[1], q * F.n[2]], gm = m.reduce(gcd);
+  F.kappa = kOf(q);
+  F.mv = m.map((x) => x / gm);
+  F.gm = gm;
+  F.ms = slantOf(F.mv);
+  F.mlen = Math.hypot(...F.mv);
+  F.p = P;
+  F.yk = -q;
+  const v = nh.map((x, a) => -x + (F.kappa * draft.sg * F.sv[a]) / F.slen);
+  // The point on the face at (u, yp) (city measure, cells), and DELTA cells in along the draft.
+  const M = [F.n, F.tv, [0, 1, 0]];
+  F.at = (u, y, delta) => solve3(M, [F.K, u, y]).map((x, a) => x + delta * v[a]);
+}
+for (const F of FACES) {
+  const mass = FACES.filter((G) => G.solid === F.solid);
   // Each other face's depth (cells) at (u, yp, delta), as c0 + cu u + cy yp + cd delta.
   F.aff = F.near.map((G) => {
     const d = (u, y, delta) => (G.K - dot(G.n, F.at(u, y, delta))) / G.nl;
@@ -225,7 +275,8 @@ for (const F of FACES) {
   });
   let c = 0;
   for (const A of mass) for (const B of mass) if (A !== B) c = Math.max(c, -dot(A.n, B.n) / A.nl / B.nl);
-  F.Z = DMAX * (1 + c) + 1e-3;
+  // (Along the draft no other face comes nearer, so Z is DMAX: see above.)
+  F.Z = DMAX + 1e-3;
   const apex = solve3(mass.map((G) => G.n), mass.map((G) => G.K));
   const ny = Math.min(...mass.map((G) => Math.abs(G.ny) / G.nl));
   const hcap = F.Z / ny + 0.25;
@@ -283,7 +334,7 @@ for (const F of FACES) {
         for (let z = a[2]; z <= b[2] + 1e-9; z += Q) {
           const X = [x, y, z], depth = (F.K - dot(F.n, X)) / F.nl;
           if (depth < -1 - Q || depth > DMAX + Q) continue;
-          const u = dot(F.tv, X), yp = y + (depth * F.nl * F.ny) / F.nn;
+          const u = dot(F.tv, X), yp = (F.gm * dot(F.mv, X) + F.yk * F.K) / F.p;
           for (let r = Math.floor(yp - Q); r <= Math.floor(yp + Q); r++) {
             const o = rows.get(r) ?? [Infinity, -Infinity];
             rows.set(r, [Math.min(o[0], u), Math.max(o[1], u)]);
@@ -491,6 +542,8 @@ const int ND = ${ND};
 const ivec4 LV[2] = ivec4[2](${LEVELS.map((l) => `ivec4(${l.sb}, ${l.sby}, ${l.quant}, ${l.splits})`).join(', ')});
 const int LV_MIN[2] = int[2](${LEVELS.map((l) => l.min).join(', ')});
 const float CUM[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.cumulative, ...Array(ND - l.depths.length).fill(2)]).map(glf).join(', ')});
+const float NCUM[2 * ND] = float[2 * ND](${NOTCH.flatMap((N) => [...N.cum, ...Array(ND - N.cum.length).fill(2)]).map(glf).join(', ')});
+const uint NLONG[2] = uint[2](${NOTCH.map((N) => `${N.armLong}u`).join(', ')});
 const int NF = ${FACES.length};
 // Each face (relief v2, see FACES and the setup after BARE): n's slant
 // (index, sign), K, alpha; ny; its unit normal; its h and t as slants (index,
@@ -500,15 +553,16 @@ const int NF = ${FACES.length};
 // faces (c0, cu, cy, cd, see F.aff); and the point on it at (u, yp, delta)
 // (X0, Xu, Xy, Xd).
 const ivec4 FPLANE[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.plane.k}, ${F.plane.sign}, ${F.K}, ${F.alpha})`).join(', ')});
-const int FNY[NF] = int[NF](${FACES.map((F) => F.ny).join(', ')});
+const int FNY[NF] = int[NF](${FACES.map((F) => F.yk).join(', ')});
+const int FNN[NF] = int[NF](${FACES.map((F) => F.nn).join(', ')});
 const vec3 FN[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.n.map((x) => glf(x / F.nl)).join(', ')})`).join(', ')});
 const ivec4 FHT[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.h.k}, ${F.h.sign}, ${F.t.k}, ${F.t.sign})`).join(', ')});
 const ivec4 FQY[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.q2[0]}, ${F.q2[1]}, ${F.lo4}, ${F.hi4})`).join(', ')});
 const ivec3 FT[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.tv))});
 const float FLEN[NF] = float[NF](${FACES.map((F) => glf(F.len)).join(', ')});
-const ivec4 FSL[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.s.k}, ${F.s.sign}, ${F.gs}, ${F.nn})`).join(', ')});
-const vec2 FNS[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.nl)}, ${glf(F.gs * F.slen)})`).join(', ')});
-const vec3 FSV[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.sv.map((x) => glf(x / F.slen)).join(', ')})`).join(', ')});
+const ivec4 FSL[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.ms.k}, ${F.ms.sign}, ${F.gm}, ${F.p})`).join(', ')});
+const vec2 FNS[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.nl)}, ${glf(F.gm * F.mlen)})`).join(', ')});
+const vec3 FSV[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.mv.map((x) => glf(x / F.mlen)).join(', ')})`).join(', ')});
 const float FZ[NF] = float[NF](${FACES.map((F) => glf(F.Z)).join(', ')});
 const vec2 FCUT[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.cutLo)}, ${glf(F.cutHi)})`).join(', ')});
 const vec4 FAFF[NF * 2] = vec4[NF * 2](${FACES.flatMap((F) => F.aff.map((a) => `vec4(${[a.c0, a.cu, a.cy, a.cd].map(glf).join(', ')})`)).join(', ')});
@@ -623,11 +677,13 @@ void notchRow(int lv, int r, int y, float fy, int origin, uint salt) {
   }
   float t = h01(hashCell(ivec3(y0, r, lv), DEPTH_SALT ^ NOTCH_SALT ^ salt));
   int j = 0;
-  for (int i = 0; i < ND - 1; i++) if (t >= CUM[lv * ND + i]) j = i + 1;
+  for (int i = 0; i < ND - 1; i++) if (t >= NCUM[lv * ND + i]) j = i + 1;
   float d = DEPTHS[lv * ND + j];
   int steps = int(floor((DTOP[lv] - d) / NARM[lv] + 1e-6));
+  uint hh = h >> 8;
+  int k = hh < NLONG[lv] ? steps : int(((hh - NLONG[lv]) * uint(steps + 1)) / (16777216u - NLONG[lv]));
   gNY0 = y0 + origin; gNY1 = y1 + origin; gND = d;
-  gNA = d + float(min(steps, int(floor(h01(h) * float(steps + 1))))) * NARM[lv];
+  gNA = d + float(min(steps, k)) * NARM[lv];
 }
 
 // Whether face k's pocket over [u0, u1] x [y0, y1] (the city's measure and
@@ -653,7 +709,7 @@ bool allowed(int k, int lv, int u0, int u1, int y0, int y1, float D, int q) {
   for (int j = 0; j < 2; j++) {
     vec4 a = FAFF[k * 2 + j];
     for (int c = 0; c < 2; c++) {
-      float rest = a.x + a.z * float(c == 0 ? y0 : y1) / sc + a.w * D;
+      float rest = a.x + a.z * float(c == 0 ? y0 : y1) / sc;
       if (a.y > 1e-9) lo = max(lo, (FZ[k] - rest) * sc / a.y);
       else if (a.y < -1e-9) hi = min(hi, (FZ[k] - rest) * sc / a.y);
       else none = none || rest < FZ[k];
@@ -687,7 +743,7 @@ void faceAt(int k, int S, ivec3 base) {
 // cells in (units at level scale S), or at most a unit out.
 void depthIn(int k, int S, ivec2 x, int ni, float nf) {
   // (floor(p |n| / 12) for p twelfths, exactly: see depthN in the JS.)
-  int p = (3 * x.x + x.y) * S, q = p * p * FSL[k].w;
+  int p = (3 * x.x + x.y) * S, q = p * p * FNN[k];
   int dn = int(floor(sqrt(float(q)) / 12.0));
   if (144 * (dn + 1) * (dn + 1) <= q) dn++;
   if (dn > 0 && 144 * dn * dn > q) dn--;
@@ -1313,10 +1369,11 @@ function notchRow(lv, r, y, fy, origin, salt) {
   }
   const t = h01(hashCell([y0, r, lv], (DEPTH_SALT ^ NOTCH_SALT ^ salt) >>> 0));
   let j = 0;
-  for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
+  for (let i = 0; i < ND - 1; i++) if (t >= (N.cum[i] ?? 2)) j = i + 1;
   const d = P.depths[j] ?? 0, top = P.depths.at(-1);
-  const steps = Math.floor((top - d) / N.arm + 1e-6);
-  const A = d + Math.min(steps, Math.floor(h01(h) * (steps + 1))) * N.arm;
+  const steps = Math.floor((top - d) / N.arm + 1e-6), hh = h >>> 8;
+  const k = hh < N.armLong ? steps : Math.floor(((hh - N.armLong) * (steps + 1)) / (16777216 - N.armLong));
+  const A = d + Math.min(steps, k) * N.arm;
   return { y0: y0 + origin, y1: y1 + origin, d, A };
 }
 
@@ -1329,7 +1386,8 @@ function allowed(F, lv, u0, u1, y0, y1, D, q) {
   let lo = u0, hi = u1;
   for (const a of F.aff)
     for (const y of [y0, y1]) {
-      const rest = a.c0 + (a.cy * y) / sc + a.cd * D;
+      // (At the pocket's mouth: along the draft the other faces only recede.)
+      const rest = a.c0 + (a.cy * y) / sc;
       if (a.cu > 1e-9) lo = Math.max(lo, ((F.Z - rest) * sc) / a.cu);
       else if (a.cu < -1e-9) hi = Math.min(hi, ((F.Z - rest) * sc) / a.cu);
       else if (rest < F.Z) return null;
@@ -1347,10 +1405,10 @@ function allowed(F, lv, u0, u1, y0, y1, D, q) {
 function faceAt(F, lv, base) {
   const S = lv ? R : 1;
   const u = F.t.sign * dLs[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * dFs[F.t.k];
-  const ms = SLANTS[F.s.k], mn = SLANTS[F.plane.k];
-  const Yi = F.gs * (F.s.sign * dLs[F.s.k] + F.s.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.ny * F.K * S;
-  const Yf = F.gs * F.s.sign * dFs[F.s.k];
-  const y = fdiv(Yi + Math.floor(Yf), F.nn), fy = (Yi - y * F.nn + Yf) / F.nn;
+  const ms = SLANTS[F.ms.k], mn = SLANTS[F.plane.k];
+  const Yi = F.gm * (F.ms.sign * dLs[F.ms.k] + F.ms.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.yk * F.K * S;
+  const Yf = F.gm * F.ms.sign * dFs[F.ms.k];
+  const y = fdiv(Yi + Math.floor(Yf), F.p), fy = (Yi - y * F.p + Yf) / F.p;
   const ni = F.plane.sign * (dLs[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * dFs[F.plane.k];
   return { u, fu, y, fy, Yi, Yf, ni, nf, S };
 }
@@ -1360,13 +1418,13 @@ function faceAt(F, lv, base) {
 // (level units) and, one level finer, within the cell or a cell past each
 // side in cellOpen (see runOn).
 function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, ci, fi, lo, hi) {
-  const Dn = F.dn[lv][ci * NDQ + fi], Y = p.Yi + p.Yf, ys = F.gs * F.slen;
+  const Dn = F.dn[lv][ci * NDQ + fi], Y = p.Yi + p.Yf, ys = F.gm * F.mlen;
   return eachPiece(lv, () => {
     piece();
     plane((u0 - p.u - p.fu) / F.len);
     plane((p.u - u1 + p.fu) / F.len);
-    plane((y0 * F.nn - Y) / ys);
-    plane((Y - y1 * F.nn) / ys);
+    plane((y0 * F.p - Y) / ys);
+    plane((Y - y1 * F.p) / ys);
     plane((F.K * p.S - Dn - p.ni - p.nf) / F.nl);
     plane((p.ni + p.nf - F.K * p.S - Math.ceil(F.nl)) / F.nl);
     span(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi);
@@ -1392,7 +1450,7 @@ function facePocket(lv, k, L, f, base, d) {
   const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1];
   let cap;
   if (!lv) {
-    cap = Math.min(Math.min(p.u - c.u0 + p.fu, c.u1 - p.u - p.fu) / F.len, (p.Yi + p.Yf - c.y0 * F.nn) / (F.gs * F.slen), (c.y1 * F.nn - p.Yi - p.Yf) / (F.gs * F.slen));
+    cap = Math.min(Math.min(p.u - c.u0 + p.fu, c.u1 - p.u - p.fu) / F.len, (p.Yi + p.Yf - c.y0 * F.p) / (F.gm * F.mlen), (c.y1 * F.p - p.Yi - p.Yf) / (F.gm * F.mlen));
     if (span0) d = Math.min(d, pocketAir(F, 0, p, L, f, span0[0], span0[1], c.y0, c.y1, quarters(Dc), 0, lo, hi));
     return Math.min(d, Math.max(cap, 0));
   }
@@ -1402,8 +1460,8 @@ function facePocket(lv, k, L, f, base, d) {
   const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
   const r = rectangle(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
   const u0 = r.u0 + ou, u1 = r.u1 + ou, y0 = r.y0 + oy, y1 = r.y1 + oy;
-  const ys = F.gs * F.slen, Y = p.Yi + p.Yf;
-  cap = Math.min(Math.min(p.u - u0 + p.fu, u1 - p.u - p.fu) / F.len, (Y - y0 * F.nn) / ys, (y1 * F.nn - Y) / ys);
+  const ys = F.gm * F.mlen, Y = p.Yi + p.Yf;
+  cap = Math.min(Math.min(p.u - u0 + p.fu, u1 - p.u - p.fu) / F.len, (Y - y0 * F.p) / ys, (y1 * F.p - Y) / ys);
   const Df = LEVELS[1].depths[r.depth] ?? 0;
   if (Df > 0) {
     // (Within the city's pocket or out of it: the tiles align with its edges.)
