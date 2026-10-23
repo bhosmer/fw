@@ -326,8 +326,10 @@ if (WINDOWS.length > 31) throw new Error(`arcology: ${WINDOWS.length} faces with
 // whose pockets reach into it (FACE_AT, a bit each), and for a deep cell,
 // for each of its six sides (+x, -x, +y, -y, +z, -z), whether its rooms'
 // openings may run on across it (OPEN_AT: the next cell is deep too, or
-// clear of every solid).
-const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, WIN_AT = 14;
+// clear of every solid); for a skin cell, whether its pockets one level
+// finer may, and whether they run on as one box or three (CROSS_AT: see
+// runOn below).
+const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, WIN_AT = 14, CROSS_AT = 19;
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // (For the checks in .claude/verify.)
 export const _V2 = { FACES, RIDGES, DMAX };
@@ -370,6 +372,37 @@ export const VOLUME = (() => {
       if (w >= 0) win[v] = w + 1;
     }
   }
+  // A skin cell's pockets one level finer run on a cell past each side in
+  // OPEN_AT, so that a pocket across the side is one piece and not two that
+  // only touch (shrunk with distance, two would leave a sheet between them).
+  // A side is open unless the next cell is one that a pocket of the cell's
+  // faces could reach (from its lip past the face to REACH in) and that would
+  // not cut it (deaf): a deep or plain cell. A skin cell cuts the same
+  // pockets (they are the point's alone), and a cell clear of every solid is
+  // the city's air. The open sides make one box, across edges and corners
+  // too; where that box would take in a deaf cell, each piece is three
+  // instead, each run on along one axis only (CROSS_AT).
+  const lip = Math.max(...FACES.map((F) => Math.ceil(F.nl) / F.nl)) / R + 1e-3;
+  const deaf = new Uint8Array(n);
+  for (let v = 0; v < n; v++) {
+    if (kind[v] !== DEEP && kind[v] !== PLAIN) continue;
+    const c = [v % size[0], Math.floor(v / size[0]) % size[1], Math.floor(v / size[0] / size[1])].map((x, a) => x + lo[a]);
+    FACES.forEach((F, i) => {
+      const ds = corners(c).map((q) => (F.K - (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]))) / F.nl);
+      if (Math.min(...ds) < REACH && Math.max(...ds) > -lip) deaf[v] |= 1 << i;
+    });
+  }
+  const runOn = (x, y, z, f) => {
+    const ok = (dx, dy, dz) => {
+      const u = [x + dx, y + dy, z + dz];
+      return !within(u) || !(deaf[at(u)] & f);
+    };
+    let open = 0;
+    SIDES.forEach((e, k) => ok(...e) && (open |= 1 << k));
+    const ax = [0, 1, 2].map((a) => [0, ...(open & (1 << (2 * a)) ? [1] : []), ...(open & (2 << (2 * a)) ? [-1] : [])]);
+    const box = ax[0].every((dx) => ax[1].every((dy) => ax[2].every((dz) => ok(dx, dy, dz))));
+    return (open << OPEN_AT) | (box ? 0 : 1 << CROSS_AT);
+  };
   const data = new Uint32Array(2 * n);
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = at([x, y, z]);
@@ -380,6 +413,7 @@ export const VOLUME = (() => {
         const u = [x + e[0], y + e[1], z + e[2]];
         if (!within(u) || open[at(u)] || kind[at(u)] === DEEP) word |= 1 << (OPEN_AT + k);
       });
+    if (kind[v] === SKIN) word |= runOn(x, y, z, faces[v]);
     data[2 * v] = word >>> 0;
   }
   return { lo, size, data, kind, open, at, within };
@@ -441,7 +475,7 @@ const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `i
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
 const ivec3 ORIGIN = ivec3(${ORIGIN.join(', ')});
-const int FACE_AT = ${FACE_AT}, OPEN_AT = ${OPEN_AT};
+const int FACE_AT = ${FACE_AT}, OPEN_AT = ${OPEN_AT}, CROSS_AT = ${CROSS_AT};
 const uint POCKET_SALT = ${POCKET_SALT}u, ROW_SALT = ${ROW_SALT}u, DEPTH_SALT = ${DEPTH_SALT}u;
 // The two levels' pockets (see LEVELS): sb, sby, quant, splits; and their
 // depths' shares, ND to a level.
@@ -657,12 +691,20 @@ void depthOut(int k, int S, int ni, float nf) {
 }
 
 // The true heights lo..hi (in 4 y at the city's level; in units one level
-// finer, and within the cell).
+// finer, and within the cell, or a cell past each side in gCarveOpen; as
+// three pieces (gCarveCross), the piece gAxis runs on along that axis only:
+// see runOn in the JS. (Set with gCarve, below.)
+uint gCarveOpen;
+bool gCarveCross;
+int gAxis;
+bool runsOn(int a, uint side) { return (gCarveOpen & (side << uint(2 * a))) != 0u && (gAxis < 0 || gAxis == a); }
+int openLo(int a) { return runsOn(a, 2u) ? -R : 0; }
+int openHi(int a) { return runsOn(a, 1u) ? 2 * R : R; }
 void heights(int lv, ivec3 L, vec3 f, ivec3 base, int lo4, int hi4) {
   if (lv == 1) {
-    airSpan(L.y, f.y, max(lo4 * R / 4 - base.y, 0), min(hi4 * R / 4 - base.y, R), EY);
-    airSpan(L.x, f.x, 0, R, EX);
-    airSpan(L.z, f.z, 0, R, EZ);
+    airSpan(L.y, f.y, max(lo4 * R / 4 - base.y, openLo(1)), min(hi4 * R / 4 - base.y, openHi(1)), EY);
+    airSpan(L.x, f.x, openLo(0), openHi(0), EX);
+    airSpan(L.z, f.z, openLo(2), openHi(2), EZ);
   } else {
     int n4;
     float f4 = slantAt(FOUR, n4);
@@ -679,27 +721,33 @@ float pocketAir(int k, int lv, ivec3 L, vec3 f, ivec3 base, int u0, int u1, int 
   float inv = 1.0 / FLEN[k], ys = FNS[k].y;
   int nn = FSL[k].w;
   vec3 tn = vec3(FT[k]) * inv;
-  gRay = false;
-  float g = 1e9;
-  for (int pass = 0; pass < 2; pass++) {
-    airPiece();
-    airPlane((float(u0 - gPu) - gPfu) * inv, -tn);
-    airPlane((float(gPu - u1) + gPfu) * inv, tn);
-    airPlane((float(y0 * nn - gPYi) - gPYf) / ys, -FSV[k]);
-    airPlane((float(gPYi - y1 * nn) + gPYf) / ys, FSV[k]);
-    depthIn(k, S, D, gPni, gPnf);
-    depthOut(k, S, gPni, gPnf);
-    heights(lv, L, f, base, FQY[k].z, FQY[k].w);
-    if (pass == 0) {
-      g = gD;
-      if (!ray || g + gO > 0.0) break;
-      gRay = true;
-    } else {
-      gRay = false;
-      if (gX > reach) { reach = gX; nrm = gN; }
+  int pieces = lv == 1 && gCarveCross ? 3 : 1;
+  for (int a = 0; a < 3; a++) {
+    if (a >= pieces) break;
+    gAxis = pieces == 1 ? -1 : a;
+    gRay = false;
+    float g = 1e9;
+    for (int pass = 0; pass < 2; pass++) {
+      airPiece();
+      airPlane((float(u0 - gPu) - gPfu) * inv, -tn);
+      airPlane((float(gPu - u1) + gPfu) * inv, tn);
+      airPlane((float(y0 * nn - gPYi) - gPYf) / ys, -FSV[k]);
+      airPlane((float(gPYi - y1 * nn) + gPYf) / ys, FSV[k]);
+      depthIn(k, S, D, gPni, gPnf);
+      depthOut(k, S, gPni, gPnf);
+      heights(lv, L, f, base, FQY[k].z, FQY[k].w);
+      if (pass == 0) {
+        g = gD;
+        if (!ray || g + gO > 0.0) break;
+        gRay = true;
+      } else {
+        gRay = false;
+        if (gX > reach) { reach = gX; nrm = gN; }
+      }
     }
+    d = min(d, g);
   }
-  return min(d, g);
+  return d;
 }
 
 // Face k's pockets where the point is, at level lv (see facePocket in the
@@ -794,7 +842,11 @@ float notch(int lv, int i, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout
       faceAt(s == 0 ? a : b, S, base);
       ni[s] = gPni; nf[s] = gPnf;
     }
-    for (int side = 0; side < 2; side++) {
+    int pieces = lv == 1 && gCarveCross ? 6 : 2;
+    for (int j = 0; j < 6; j++) {
+      if (j >= pieces) break;
+      int side = j & 1;
+      gAxis = pieces == 2 ? -1 : j >> 1;
       gRay = false;
       float g = 1e9;
       for (int pass = 0; pass < 2; pass++) {
@@ -959,6 +1011,8 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout f
   // (Its pockets: see cell.)
   gCarve = 1;
   gCarveFaces = (m.x >> uint(FACE_AT)) & 63u;
+  gCarveOpen = (m.x >> uint(OPEN_AT)) & 63u;
+  gCarveCross = ((m.x >> uint(CROSS_AT)) & 1u) != 0u;
   gCarveBase = gCellB * R;
   gCarveE = e;
   return 1e9;
@@ -1176,6 +1230,20 @@ function plaza(L, f, id) {
 }
 
 let cellB = [0, 0, 0];
+// The sides a skin cell's pockets run on across, whether as three pieces,
+// and which of them is being asked about (see runOn).
+let cellOpen = 0, cellCross = false, axis = -1;
+const runsOn = (a, side) => cellOpen & (side << (2 * a)) && (axis < 0 || axis === a);
+const openLo = (a) => (runsOn(a, 2) ? -R : 0), openHi = (a) => (runsOn(a, 1) ? 2 * R : R);
+// The least of piece(), called once for each of the pieces (one level finer:
+// three where the cell's pockets run on as three).
+function eachPiece(lv, piece) {
+  if (lv !== 1 || !cellCross) return (axis = -1), piece();
+  let d = NONE;
+  for (axis = 0; axis < 3; axis++) d = Math.min(d, piece());
+  axis = -1;
+  return d;
+}
 function relief(id, up) {
   if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0];
   const o = fromMiddle(up), v = [0, 1, 2].map((a) => o[a] + (((id[a] % R) + R) % R) - VOLUME.lo[a]);
@@ -1280,19 +1348,22 @@ function faceAt(F, lv, base) {
 
 // The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
 // D cells deep, to a unit past the face, within true heights lo to hi
-// (level units) and, one level finer, within the cell.
+// (level units) and, one level finer, within the cell or a cell past each
+// side in cellOpen (see runOn).
 function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, ci, fi, lo, hi) {
   const Dn = F.dn[lv][ci * NDQ + fi], Y = p.Yi + p.Yf, ys = F.gs * F.slen;
-  piece();
-  plane((u0 - p.u - p.fu) / F.len);
-  plane((p.u - u1 + p.fu) / F.len);
-  plane((y0 * F.nn - Y) / ys);
-  plane((Y - y1 * F.nn) / ys);
-  plane((F.K * p.S - Dn - p.ni - p.nf) / F.nl);
-  plane((p.ni + p.nf - F.K * p.S - Math.ceil(F.nl)) / F.nl);
-  span(L[1], f[1], lo, hi);
-  if (lv === 1) span(L[0], f[0], 0, R), span(L[2], f[2], 0, R);
-  return gD;
+  return eachPiece(lv, () => {
+    piece();
+    plane((u0 - p.u - p.fu) / F.len);
+    plane((p.u - u1 + p.fu) / F.len);
+    plane((y0 * F.nn - Y) / ys);
+    plane((Y - y1 * F.nn) / ys);
+    plane((F.K * p.S - Dn - p.ni - p.nf) / F.nl);
+    plane((p.ni + p.nf - F.K * p.S - Math.ceil(F.nl)) / F.nl);
+    span(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi);
+    if (lv === 1) span(L[0], f[0], openLo(0), openHi(0)), span(L[2], f[2], openLo(2), openHi(2));
+    return gD;
+  });
 }
 
 // Face k's pockets where the point is, at level lv, united with d; and
@@ -1333,9 +1404,9 @@ function facePocket(lv, k, L, f, base, d) {
       else a0 = Math.max(a0, R * span0[1]);
     }
     const D = Dc + Df / R;
-    // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and within the cell.)
+    // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
     const ok = a0 < a1 && inCut(y0, y1) ? allowed(F, 1, a0, a1, y0, y1, D, F.q2[1]) : null;
-    if (ok) d = Math.min(d, pocketAir(F, 1, p, L, f, ok[0], ok[1], y0, y1, quarters(Dc), twelfths(Df / R), Math.max(lo, 0), Math.min(hi, R)));
+    if (ok) d = Math.min(d, pocketAir(F, 1, p, L, f, ok[0], ok[1], y0, y1, quarters(Dc), twelfths(Df / R), lo, hi));
   }
   return Math.min(d, Math.max(cap, 0));
 }
@@ -1356,21 +1427,21 @@ function notch(lv, i, L, f, base, d) {
   }
   const cap = Math.min(y - r.y0 + fy, r.y1 - y - fy);
   if (dd[0] + dd[1] > 0) {
-    let lo = Math.max(r.y0, (F.lo4 * S) / 4) - base[1], hi = Math.min(r.y1, (F.hi4 * S) / 4) - base[1];
-    if (lv) (lo = Math.max(lo, 0)), (hi = Math.min(hi, R));
+    const lo = Math.max(r.y0, (F.lo4 * S) / 4) - base[1], hi = Math.min(r.y1, (F.hi4 * S) / 4) - base[1];
     const pF = faceAt(F, lv, base), pG = faceAt(G, lv, base);
     const side = (P, p, x) => (P.K * S - P.dn[lv][x[0] * NDQ + x[1]] - p.ni - p.nf) / P.nl;
     const out = (P, p) => (p.ni + p.nf - P.K * S - Math.ceil(P.nl)) / P.nl;
-    for (const [P, p, Q, q] of [[F, pF, G, pG], [G, pG, F, pF]]) {
-      piece();
-      plane(side(P, p, dd));
-      plane(side(Q, q, A));
-      plane(out(P, p));
-      plane(out(Q, q));
-      span(L[1], f[1], lo, hi);
-      if (lv) span(L[0], f[0], 0, R), span(L[2], f[2], 0, R);
-      d = Math.min(d, gD);
-    }
+    for (const [P, p, Q, q] of [[F, pF, G, pG], [G, pG, F, pF]])
+      d = Math.min(d, eachPiece(lv, () => {
+        piece();
+        plane(side(P, p, dd));
+        plane(side(Q, q, A));
+        plane(out(P, p));
+        plane(out(Q, q));
+        span(L[1], f[1], lv ? Math.max(lo, openLo(1)) : lo, lv ? Math.min(hi, openHi(1)) : hi);
+        if (lv) span(L[0], f[0], openLo(0), openHi(0)), span(L[2], f[2], openLo(2), openHi(2));
+        return gD;
+      }));
   }
   return Math.min(d, Math.max(cap, 0));
 }
@@ -1450,6 +1521,8 @@ function reliefCell(L, f, id, seed, [m], d) {
     const j = ((m >>> WIN_AT) & 31) - 1;
     return j < 0 ? Math.max(e, 0) : Math.min(windowAir(j, L, f, NONE), Math.max(e, 0));
   }
+  cellOpen = (m >>> OPEN_AT) & 63;
+  cellCross = !!((m >>> CROSS_AT) & 1);
   return Math.min(pockets(L, f, (m >>> FACE_AT) & 63, NONE), Math.max(e, 0));
 }
 

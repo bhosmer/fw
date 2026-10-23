@@ -1,5 +1,5 @@
 // Pictures of views, for picking and checking them: node bench/shoot.mjs OUTDIR world hash-or-'' [js to run first] ...
-// Each extra argument is JavaScript run in the page before the picture (e.g. a fw.fly(...)); prints fw.where's hash.
+// SCHEME env picks the colour scheme (default alhambra). Each extra argument is JavaScript run in the page before the picture (e.g. a fw.fly(...)); prints fw.where's hash.
 import { launch, serve } from '../tests/browser/chrome.mjs';
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -8,7 +8,7 @@ const ROOT = process.env.FW_ROOT ?? join(dirname(fileURLToPath(import.meta.url))
 const [out, world, hash, ...steps] = process.argv.slice(2);
 const server = await serve(ROOT), chrome = await launch(), page = await chrome.page();
 await page.goto(`${server.url}index.html?1${hash ? '#' + hash : ''}`, `window.requestAnimationFrame = () => 0;
-  localStorage.setItem('fw.scheme', 'alhambra'); localStorage.setItem('fw.world', ${JSON.stringify(world)});`);
+  localStorage.setItem('fw.scheme', ${JSON.stringify(process.env.SCHEME ?? 'alhambra')}); localStorage.setItem('fw.world', ${JSON.stringify(world)});`);
 const err = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
 if (err) { console.log('ERROR', err); process.exit(1); }
 if (page.errors.length) console.log('errors', page.errors);

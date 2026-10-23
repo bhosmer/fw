@@ -141,6 +141,11 @@ test('the buildings\' relief never changes faster than the point moves', () => {
   assert.ok(worst > 0.5, 'the test moves through enough surfaces to mean something');
 });
 
+// (A cell clear of every solid is the city's air, whatever this level says.)
+const clear = (c) => {
+  const { lo, at, within, open, kind } = VOLUME, t = c.map((x, a) => x - lo[a]);
+  return within(t) && open[at(t)] && !kind[at(t)];
+};
 test('where relief crosses from one cell to the next, both cells say so', () => {
   const rnd = rand(12);
   let crossed = 0;
@@ -149,6 +154,7 @@ test('where relief crosses from one cell to the next, both cells say so', () => 
     const a = Math.floor(rnd() * 3), side = rnd() < 0.5 ? 1 : -1;
     const u = v.slice();
     u[a] += side;
+    if (clear(v) || clear(u)) continue;
     // A point on the face between them, as each has it.
     const q = [0, 1, 2].map(() => 0.5 + rnd() * (R - 1));
     q[a] = side > 0 ? R : 0;
@@ -159,6 +165,36 @@ test('where relief crosses from one cell to the next, both cells say so', () => 
     assert.ok(!(here < -0.05 && there > 0.05) && !(there < -0.05 && here > 0.05), `${v} says ${here}, ${u} says ${there}, at ${q}`);
   }
   assert.ok(crossed > 100, `${crossed} points in air on a face`);
+});
+
+// A skin cell's pockets one level finer run on into the cells past the sides
+// the table opens (see runOn in arcology.js): wherever they say air there, the
+// cell the point is in says so too, or is the city's air.
+test('where a skin cell\'s pockets run on, the cells they run into say so', () => {
+  const { lo, at, data, kind } = VOLUME, rnd = rand(13);
+  const skin = reliefCells.filter((c) => kind[at(c.map((x, a) => x - lo[a]))] === 2);
+  let tried = 0;
+  for (let n = 0; n < 40000; n++) {
+    const v = skin[Math.floor(rnd() * skin.length)];
+    const open = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 8) & 63, cross = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 19) & 1;
+    // A point in the run-on box (or, run on as three pieces, in one of them),
+    // outside the cell.
+    const only = cross ? Math.floor(rnd() * 3) : -1;
+    const q = [0, 1, 2].map((a) => {
+      const on = (side) => open & (side << (2 * a)) && (only < 0 || only === a);
+      const lo1 = on(2) ? -R : 0, hi1 = on(1) ? 2 * R : R;
+      return lo1 + 0.5 + rnd() * (hi1 - lo1 - 1);
+    });
+    const o = q.map((x) => Math.floor(x / R));
+    if (o.every((x) => x === 0)) continue;
+    const u = v.map((x, a) => x + o[a]), p = q.map((x, a) => x - o[a] * R);
+    const here = air1(v, q);
+    if (!(here < -0.05) || clear(u)) continue;
+    tried++;
+    const there = air1(u, p);
+    assert.ok(there < 0.05, `${v} says ${here} at ${q}, ${u} says ${there}`);
+  }
+  assert.ok(tried > 100, `${tried} points in air past a skin cell`);
 });
 
 // A sloped face is exact however close we are to it (see Position.levels):
