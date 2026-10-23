@@ -275,19 +275,26 @@ for (const F of FACES) {
   const Q = 0.25;
   for (const [lo, hi] of BARE) {
     const a = [lo[0] - 0.5, Math.max(lo[1] - 0.5, F.solid.ylo), lo[2] - 0.5], b = [hi[0] + 0.5, Math.min(hi[1] + 0.5, F.solid.yhi), hi[2] + 0.5];
-    let u0 = Infinity, u1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    // (Row by row of yp, so that a solid crossing the face at a slant
+    // blanks its own footprint and not the rectangle round it.)
+    const rows = new Map();
     for (let x = a[0]; x <= b[0] + 1e-9; x += Q)
       for (let y = a[1]; y <= b[1] + 1e-9; y += Q)
         for (let z = a[2]; z <= b[2] + 1e-9; z += Q) {
           const X = [x, y, z], depth = (F.K - dot(F.n, X)) / F.nl;
           if (depth < -1 - Q || depth > DMAX + Q) continue;
           const u = dot(F.tv, X), yp = y + (depth * F.nl * F.ny) / F.nn;
-          (u0 = Math.min(u0, u)), (u1 = Math.max(u1, u)), (y0 = Math.min(y0, yp)), (y1 = Math.max(y1, yp));
+          for (let r = Math.floor(yp - Q); r <= Math.floor(yp + Q); r++) {
+            const o = rows.get(r) ?? [Infinity, -Infinity];
+            rows.set(r, [Math.min(o[0], u), Math.max(o[1], u)]);
+          }
         }
-    if (u0 > u1) continue;
-    const yLo = Math.floor(y0 - Q), yHi = Math.ceil(y1 + Q);
-    if (yHi <= F.cutLo || yLo >= F.cutHi) continue;
-    F.bare.push([Math.floor(u0 - Q * F.len), Math.ceil(u1 + Q * F.len), yLo, yHi]);
+    for (const [r, [u0, u1]] of [...rows].sort((p, q) => p[0] - q[0])) {
+      if (r + 1 <= F.cutLo || r >= F.cutHi) continue;
+      const lo = Math.floor(u0 - Q * F.len), hi = Math.ceil(u1 + Q * F.len), last = F.bare.at(-1);
+      if (last && last[3] === r && last[0] === lo && last[1] === hi) last[3] = r + 1;
+      else F.bare.push([lo, hi, r, r + 1]);
+    }
   }
 }
 const rectBare = (F, u0, u1, y0, y1) => F.bare.some(([a, b, c, d]) => u0 < b && u1 > a && y0 < d && y1 > c);
