@@ -1377,10 +1377,11 @@ function facePocket(lv, k, L, f, base, d) {
   const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
   const c = rectangle(0, k, uc, fuc, yc, fyc);
   let Dc = LEVELS[0].depths[c.depth] ?? 0;
-  const inCut = (y0, y1) => y0 >= F.cutLo * S - 1e-9 && y1 <= F.cutHi * S + 1e-9;
+  // (Heights at each level's own scale: the city's rectangle is in cells.)
+  const inCut = (y0, y1, s) => y0 >= F.cutLo * s - 1e-9 && y1 <= F.cutHi * s + 1e-9;
   // (The city's pocket, narrowed or dropped: [a0, a1] in the city's measure.)
   let span0 = null;
-  if (Dc > 0 && inCut(c.y0, c.y1) && !rectBare(F, c.u0, c.u1, c.y0, c.y1)) span0 = allowed(F, 0, c.u0, c.u1, c.y0, c.y1, Dc, F.q2[0]);
+  if (Dc > 0 && inCut(c.y0, c.y1, 1) && !rectBare(F, c.u0, c.u1, c.y0, c.y1)) span0 = allowed(F, 0, c.u0, c.u1, c.y0, c.y1, Dc, F.q2[0]);
   const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1];
   let cap;
   if (!lv) {
@@ -1407,7 +1408,7 @@ function facePocket(lv, k, L, f, base, d) {
     }
     const D = Dc + Df / R;
     // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
-    const ok = a0 < a1 && inCut(y0, y1) ? allowed(F, 1, a0, a1, y0, y1, D, F.q2[1]) : null;
+    const ok = a0 < a1 && inCut(y0, y1, S) ? allowed(F, 1, a0, a1, y0, y1, D, F.q2[1]) : null;
     if (ok) d = Math.min(d, pocketAir(F, 1, p, L, f, ok[0], ok[1], y0, y1, quarters(Dc), twelfths(Df / R), lo, hi));
   }
   return Math.min(d, Math.max(cap, 0));
@@ -1420,12 +1421,13 @@ function notch(lv, i, L, f, base, d) {
   const y = base[1] + L[1], fy = f[1];
   const yc = lv ? fdiv(y + (fy < 0 ? -1 : 0), R) : y, fyc = lv ? (y - R * yc + fy) / R : fy;
   const c = notchRow(0, i, yc, fyc, 0, 0);
-  const inCut = (y0, y1) => y0 >= F.cutLo * S - 1e-9 && y1 <= F.cutHi * S + 1e-9;
-  const cityOk = c.d > 0 && inCut(c.y0, c.y1) && !rowBare(rg, c.y0, c.y1);
+  // (Heights at each level's own scale: the city's rows are in cells.)
+  const inCut = (y0, y1, s) => y0 >= F.cutLo * s - 1e-9 && y1 <= F.cutHi * s + 1e-9;
+  const cityOk = c.d > 0 && inCut(c.y0, c.y1, 1) && !rowBare(rg, c.y0, c.y1);
   let r = c, dd = cityOk ? [quarters(c.d), 0] : [0, 0], A = cityOk ? [quarters(c.A), 0] : [0, 0];
   if (lv) {
     r = notchRow(1, i, y, fy, R * c.y0, hashCell([c.y0, i, 1], TILE_SALT) >>> 0);
-    if (r.d > 0 && inCut(r.y0, r.y1)) (dd[1] = r.d / 2), (A[1] = r.A / 2);
+    if (r.d > 0 && inCut(r.y0, r.y1, S)) (dd[1] = r.d / 2), (A[1] = r.A / 2);
   }
   const cap = Math.min(y - r.y0 + fy, r.y1 - y - fy);
   if (dd[0] + dd[1] > 0) {

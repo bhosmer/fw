@@ -107,6 +107,36 @@ check('the shader and the JavaScript agree about each world', async () => {
   }
 });
 
+// In the arcology's skin, where the buildings' relief is (fw.check flies
+// from the start and seldom gets there): at points in and around the skin
+// cells, the camera put there, every level asked about.
+check('the shader and the JavaScript agree in the arcology\'s skin', async () => {
+  const { VOLUME } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const { lo, size, kind, at: cellAt } = VOLUME;
+  const cells = [];
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
+    if (kind[cellAt([x, y, z])] === 2) cells.push([x + lo[0], y + lo[1], z + lo[2]]);
+  let seed = 7;
+  const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+  // (Lattice units of level CITY + 1 from the middle city cell's corner, as
+  // fractions of the cell of level CITY - 1 the building is in.)
+  const points = Array.from({ length: 1000 }, () => cells[Math.floor(rnd() * cells.length)].map((x) => (12 + (x - 0.5 + 2 * rnd()) / 24) / 24));
+  await load('start', 'alhambra', false, 'arcology');
+  const worst = await page.eval(`(() => {
+    let worst = { diff: 0 };
+    for (const frac of ${JSON.stringify(points)}) {
+      fw.pos.F = -3; fw.pos.frac = frac; fw.pos.digits = new Map();
+      const recs = fw.pos.levels(-3, 0), gpu = fw.renderer.probe(recs);
+      recs.forEach((r, j) => {
+        const cpu = fw.flight.airAt(r), diff = Math.abs(cpu - gpu[j]) / Math.max(1, Math.abs(cpu));
+        if (diff > worst.diff) worst = { diff, level: r.level, frac, cpu, gpu: gpu[j] };
+      });
+    }
+    return worst;
+  })()`);
+  assert(worst.diff < 1e-3, `they differ by ${JSON.stringify(worst)}`);
+});
+
 // From up above each world too, the exact way sees nothing the older one
 // does not. (In the arcology it once saw the city as a plain: the cells
 // over it claimed to be solid further down than the city's air begins.)
