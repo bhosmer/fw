@@ -132,7 +132,7 @@ const NEAR_BLOCKS = [...NEAR.values()].flat();
 // the face), each row shifted along by its own whole number of quanta (so
 // that no line runs on up the face), each split `splits` times at whole
 // quanta (along it, quanta of its own measure). Each rectangle is cut into
-// the face to its own depth (depths, as often as weights), square to it. The
+// the face to its own depth (depths, as often as weights), along its draft. The
 // same rule at two levels: the city's own (lengths in its lattice units,
 // cells), whose boxes make the masses and the ragged silhouettes; and the
 // next (in its units), smaller boxes cut into those. What keeps anything
@@ -181,13 +181,13 @@ const BARE = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, 
 // Relief v2 (.claude/design/relief-v2.md): pockets that follow the face's
 // slope, and nothing ever cut loose. A pocket is a box over a rectangle of
 // its face, along it (u) and up it by the height of the point's projection
-// onto the face (yp), cut to its depth along the face's normal: its walls
-// stand square to the face. The finer level's are cut into the city's (their
+// along its draft onto the face (yp), cut to its depth along the draft (see
+// below): its walls hold the draft. The finer level's are cut into the city's (their
 // depths add), tiled afresh in each city rectangle. Along each ridge, the
 // two faces share notches, in rows by true height. And so that nothing is
 // cut loose: a face's own pockets keep Z clear of its mass's other faces all
-// the way down (Z = DMAX (1 + c), c the mass's largest cosine between two of
-// its faces' normals), and nothing is cut near an apex (HCAP). Then from any
+// the way down (Z = DMAX, as the draft keeps a column as far from them as
+// its mouth), and nothing is cut near an apex (HCAP). Then from any
 // point left, a way runs into the core (DMAX in from every face, never cut)
 // through nothing cut: see the design note.
 const DMAX = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R;
@@ -234,15 +234,18 @@ for (const F of FACES) {
   const nh = F.n.map((x) => x / F.nl), sy = F.sv[1] / F.slen;
   let draft = null;
   for (const sg of [1, -1]) {
-    let k = 0, ok = true;
+    // (G's depth changes along v at a - kappa b: at least 0 for kappa
+    // between the most of a / b over b < 0 and the least over b > 0.)
+    let k = 0, kHi = Infinity, ok = true;
     for (const G of F.near) {
       const a = dot(G.n, nh) / G.nl, b = (sg * dot(G.n, F.sv)) / F.slen / G.nl;
-      if (a >= 0) continue;
-      if (b >= 0) ok = false;
-      else k = Math.max(k, a / b);
+      if (b < 0) k = Math.max(k, a / b);
+      else if (b > 0) kHi = Math.min(kHi, a / b);
+      else if (a < 0) ok = false;
     }
-    if (ok && (!draft || k < draft.k)) draft = { sg, k };
+    if (ok && k + 0.05 < kHi && (!draft || k < draft.k)) draft = { sg, k };
   }
+  if (!draft) throw new Error(`arcology: face ${F.index} has no draft`);
   // (p the least multiple of nn that brings kappa within 0.03 of the least.)
   let P, q, kOf;
   for (let j = 1; ; j++) {
@@ -260,6 +263,9 @@ for (const F of FACES) {
   F.mlen = Math.hypot(...F.mv);
   F.p = P;
   F.yk = -q;
+  // (Its rows in whole numbers: gm (m . X) and yp p, X over the building at
+  // one level finer, well within 32 bits.)
+  if ((F.gm * F.mv.reduce((t, x) => t + Math.abs(x), 0) + F.p) * 64 * R + Math.abs(F.yk * F.K) * R >= 2 ** 30) throw new Error('arcology: drafted rows overflow');
   const v = nh.map((x, a) => -x + (F.kappa * draft.sg * F.sv[a]) / F.slen);
   // The point on the face at (u, yp) (city measure, cells), and DELTA cells in along the draft.
   const M = [F.n, F.tv, [0, 1, 0]];
@@ -267,14 +273,12 @@ for (const F of FACES) {
 }
 for (const F of FACES) {
   const mass = FACES.filter((G) => G.solid === F.solid);
-  // Each other face's depth (cells) at (u, yp, delta), as c0 + cu u + cy yp + cd delta.
+  // Each other face's depth (cells) at (u, yp) on the face, as c0 + cu u + cy yp.
   F.aff = F.near.map((G) => {
-    const d = (u, y, delta) => (G.K - dot(G.n, F.at(u, y, delta))) / G.nl;
-    const c0 = d(0, 0, 0);
-    return { c0, cu: d(1, 0, 0) - c0, cy: d(0, 1, 0) - c0, cd: d(0, 0, 1) - c0 };
+    const d = (u, y) => (G.K - dot(G.n, F.at(u, y, 0))) / G.nl;
+    const c0 = d(0, 0);
+    return { c0, cu: d(1, 0) - c0, cy: d(0, 1) - c0 };
   });
-  let c = 0;
-  for (const A of mass) for (const B of mass) if (A !== B) c = Math.max(c, -dot(A.n, B.n) / A.nl / B.nl);
   // (Along the draft no other face comes nearer, so Z is DMAX: see above.)
   F.Z = DMAX + 1e-3;
   const apex = solve3(mass.map((G) => G.n), mass.map((G) => G.K));
@@ -546,12 +550,12 @@ const float NCUM[2 * ND] = float[2 * ND](${NOTCH.flatMap((N) => [...N.cum, ...Ar
 const uint NLONG[2] = uint[2](${NOTCH.map((N) => `${N.armLong}u`).join(', ')});
 const int NF = ${FACES.length};
 // Each face (relief v2, see FACES and the setup after BARE): n's slant
-// (index, sign), K, alpha; ny; its unit normal; its h and t as slants (index,
-// sign); its quanta along (q2, a level each); lo, hi (4 y); s's slant (index,
-// sign), gs and nn (see faceAt); |n|, gs |s|, and s's unit vector; Z; the
-// heights it may be cut between (cells); its depth along the mass's other
-// faces (c0, cu, cy, cd, see F.aff); and the point on it at (u, yp, delta)
-// (X0, Xu, Xy, Xd).
+// (index, sign), K, alpha; -q (its rows' K term, see F.yk); its unit normal;
+// its h and t as slants (index, sign); its quanta along (q2, a level each);
+// lo, hi (4 y); its rows' m's slant (index,
+// sign), gm and p (its rows, see faceAt), and nn; |n|, gm |m|, and m's unit
+// vector; Z; the heights it may be cut between (cells); and its depth along
+// the mass's other faces (c0, cu, cy, see F.aff).
 const ivec4 FPLANE[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.plane.k}, ${F.plane.sign}, ${F.K}, ${F.alpha})`).join(', ')});
 const int FNY[NF] = int[NF](${FACES.map((F) => F.yk).join(', ')});
 const int FNN[NF] = int[NF](${FACES.map((F) => F.nn).join(', ')});
@@ -565,7 +569,7 @@ const vec2 FNS[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.nl)}, ${glf(F.gm 
 const vec3 FSV[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.mv.map((x) => glf(x / F.mlen)).join(', ')})`).join(', ')});
 const float FZ[NF] = float[NF](${FACES.map((F) => glf(F.Z)).join(', ')});
 const vec2 FCUT[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.cutLo)}, ${glf(F.cutHi)})`).join(', ')});
-const vec4 FAFF[NF * 2] = vec4[NF * 2](${FACES.flatMap((F) => F.aff.map((a) => `vec4(${[a.c0, a.cu, a.cy, a.cd].map(glf).join(', ')})`)).join(', ')});
+const vec3 FAFF[NF * 2] = vec3[NF * 2](${FACES.flatMap((F) => F.aff.map((a) => `vec3(${[a.c0, a.cu, a.cy].map(glf).join(', ')})`)).join(', ')});
 const vec3 FAT[NF * 4] = vec3[NF * 4](${FACES.flatMap((F) => {
   const x0 = F.at(0, 0, 0), xu = F.at(1, 0, 0), xy = F.at(0, 1, 0), xd = F.at(0, 0, 1);
   return [x0, xu.map((x, a) => x - x0[a]), xy.map((x, a) => x - x0[a]), xd.map((x, a) => x - x0[a])].map((v) => `vec3(${v.map(glf).join(', ')})`);
@@ -703,11 +707,11 @@ bool inCut(int k, float S, int y0, int y1) {
 
 // See allowed in the JS: [gA0, gA1], or false.
 int gA0, gA1;
-bool allowed(int k, int lv, int u0, int u1, int y0, int y1, float D, int q) {
+bool allowed(int k, int lv, int u0, int u1, int y0, int y1, int q) {
   float sc = lv == 0 ? 1.0 : float(R), lo = float(u0), hi = float(u1);
   bool none = false;
   for (int j = 0; j < 2; j++) {
-    vec4 a = FAFF[k * 2 + j];
+    vec3 a = FAFF[k * 2 + j];
     for (int c = 0; c < 2; c++) {
       float rest = a.x + a.z * float(c == 0 ? y0 : y1) / sc;
       if (a.y > 1e-9) lo = max(lo, (FZ[k] - rest) * sc / a.y);
@@ -783,7 +787,7 @@ void heights(int lv, ivec3 L, vec3 f, ivec3 base, int lo4, int hi4) {
 float pocketAir(int k, int lv, ivec3 L, vec3 f, ivec3 base, int u0, int u1, int y0, int y1, ivec2 D, float d, bool ray, inout float reach, inout vec3 nrm) {
   int S = lv == 0 ? 1 : R;
   float inv = 1.0 / FLEN[k], ys = FNS[k].y;
-  int nn = FSL[k].w;
+  int nn = FSL[k].w; // (p: see faceAt)
   vec3 tn = vec3(FT[k]) * inv;
   int pieces = lv == 1 && gCarveCross ? 3 : 1;
   for (int a = 0; a < 3; a++) {
@@ -837,7 +841,7 @@ float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, 
   bool has = false, cut = false;
   ivec2 D = ivec2(0);
   float inv = 1.0 / FLEN[k], ys = FNS[k].y;
-  int nn = FSL[k].w;
+  int nn = FSL[k].w; // (p: see faceAt)
   for (int l = 0; l <= lv; l++) {
     rectangle(l, k, ru, rfu, ry, rfy, tile);
     int u0 = gU0 + o0, u1 = gU1 + o0;
@@ -853,8 +857,7 @@ float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, 
         if (float(gPu) + gPfu < float(R * a0)) b1 = min(b1, R * a0); else b0 = max(b0, R * a1);
       }
     }
-    float Dt = (l == 0 ? 0.0 : Dc) + dl / Sl;
-    bool ok = dl > 0.0 && b0 < b1 && inCut(k, Sl, y0, y1) && (l == 1 || !rectBare(k, b0, b1, y0, y1)) && allowed(k, l, b0, b1, y0, y1, Dt, l == 0 ? FQY[k].x : FQY[k].y);
+    bool ok = dl > 0.0 && b0 < b1 && inCut(k, Sl, y0, y1) && (l == 1 || !rectBare(k, b0, b1, y0, y1)) && allowed(k, l, b0, b1, y0, y1, l == 0 ? FQY[k].x : FQY[k].y);
     if (l == 0) {
       has = ok; a0 = gA0; a1 = gA1; Dc = has ? dl : 0.0;
       D = ivec2(int(round(Dc * 4.0)), 0);
@@ -1378,10 +1381,12 @@ function notchRow(lv, r, y, fy, origin, salt) {
 }
 
 // Whether face F's pocket over [u0, u1] x [y0, y1] (level lv's measure and
-// units), D cells deep, keeps Z clear of the mass's other faces all the way
-// down: if not, it is narrowed along u (in whole quanta q from u0) until it
-// does, or dropped (null) if that would leave it under the level's least. Its depth along the face is affine (see F.aff).
-function allowed(F, lv, u0, u1, y0, y1, D, q) {
+// units) keeps Z clear of the mass's other faces all the way down (at its
+// mouth is enough: along the draft they only recede): if not, it is narrowed
+// along u (in whole quanta q from u0) until it does, or dropped (null) if
+// that would leave it under the level's least. Their depths along the face
+// are affine (see F.aff).
+function allowed(F, lv, u0, u1, y0, y1, q) {
   const sc = lv ? R : 1;
   let lo = u0, hi = u1;
   for (const a of F.aff)
@@ -1400,7 +1405,7 @@ function allowed(F, lv, u0, u1, y0, y1, D, q) {
 // Where the point is on face F at level lv (base its cell's corner from the
 // building's origin, in this level's units): along (u, fu), up by its
 // projection's height (y, fy, whole units and the rest, at least 0; and
-// Y, the same times nn, as a whole number and the rest), and how deep (n . X,
+// Y, the same times p, as a whole number and the rest), and how deep (n . X,
 // as a whole number and the rest).
 function faceAt(F, lv, base) {
   const S = lv ? R : 1;
@@ -1446,7 +1451,7 @@ function facePocket(lv, k, L, f, base, d) {
   const inCut = (y0, y1, s) => y0 >= F.cutLo * s - 1e-9 && y1 <= F.cutHi * s + 1e-9;
   // (The city's pocket, narrowed or dropped: [a0, a1] in the city's measure.)
   let span0 = null;
-  if (Dc > 0 && inCut(c.y0, c.y1, 1) && !rectBare(F, c.u0, c.u1, c.y0, c.y1)) span0 = allowed(F, 0, c.u0, c.u1, c.y0, c.y1, Dc, F.q2[0]);
+  if (Dc > 0 && inCut(c.y0, c.y1, 1) && !rectBare(F, c.u0, c.u1, c.y0, c.y1)) span0 = allowed(F, 0, c.u0, c.u1, c.y0, c.y1, F.q2[0]);
   const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1];
   let cap;
   if (!lv) {
@@ -1471,9 +1476,8 @@ function facePocket(lv, k, L, f, base, d) {
       else if (p.u + p.fu < R * span0[0]) a1 = Math.min(a1, R * span0[0]);
       else a0 = Math.max(a0, R * span0[1]);
     }
-    const D = Dc + Df / R;
     // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
-    const ok = a0 < a1 && inCut(y0, y1, S) ? allowed(F, 1, a0, a1, y0, y1, D, F.q2[1]) : null;
+    const ok = a0 < a1 && inCut(y0, y1, S) ? allowed(F, 1, a0, a1, y0, y1, F.q2[1]) : null;
     if (ok) d = Math.min(d, pocketAir(F, 1, p, L, f, ok[0], ok[1], y0, y1, quarters(Dc), twelfths(Df / R), lo, hi));
   }
   return Math.min(d, Math.max(cap, 0));
