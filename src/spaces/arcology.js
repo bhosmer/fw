@@ -477,8 +477,9 @@ const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
 const ivec3 ORIGIN = ivec3(${ORIGIN.join(', ')});
 const int FACE_AT = ${FACE_AT}, OPEN_AT = ${OPEN_AT}, CROSS_AT = ${CROSS_AT};
 const uint POCKET_SALT = ${POCKET_SALT}u, ROW_SALT = ${ROW_SALT}u, DEPTH_SALT = ${DEPTH_SALT}u;
-// The two levels' pockets (see LEVELS): sb, sby, quant, splits; and their
-// depths' shares, ND to a level.
+// The two levels' pockets (see LEVELS): sb, sby, quant, splits, and the
+// least a part may be (LV_MIN, in quanta); and their depths' shares, ND to a
+// level.
 const int ND = ${ND};
 const ivec4 LV[2] = ivec4[2](${LEVELS.map((l) => `ivec4(${l.sb}, ${l.sby}, ${l.quant}, ${l.splits})`).join(', ')});
 const int LV_MIN[2] = int[2](${LEVELS.map((l) => l.min).join(', ')});
@@ -510,7 +511,7 @@ const vec3 FAT[NF * 4] = vec3[NF * 4](${FACES.flatMap((F) => {
 }).join(', ')});
 const int FOUR = ${FOUR.k};
 // Each level's depths (its own units), and its deepest; the ridges' notches
-// (sb, quant, splits) and their arms' quantum; the ridges: their faces, and
+// (sb, quant, splits, least row in quanta) and their arms' quantum; the ridges: their faces, and
 // the point on each at height y (P0 + Py y, cells).
 const float DEPTHS[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]).map(glf).join(', ')});
 const float DTOP[2] = float[2](${LEVELS.map((l) => glf(l.depths.at(-1))).join(', ')});
@@ -654,7 +655,7 @@ bool allowed(int k, int lv, int u0, int u1, int y0, int y1, float D, int q) {
   if (none) return false;
   gA0 = u0 + int(ceil((lo - float(u0)) / float(q) - 1e-6)) * q;
   gA1 = u0 + int(floor((hi - float(u0)) / float(q) + 1e-6)) * q;
-  return gA0 < gA1;
+  return gA1 - gA0 >= LV_MIN[lv] * q;
 }
 
 // Where the point is on face k (see faceAt in the JS).
@@ -1315,7 +1316,7 @@ function notchRow(lv, r, y, fy, origin, salt) {
 // Whether face F's pocket over [u0, u1] x [y0, y1] (level lv's measure and
 // units), D cells deep, keeps Z clear of the mass's other faces all the way
 // down: if not, it is narrowed along u (in whole quanta q from u0) until it
-// does, or dropped (null). Its depth along the face is affine (see F.aff).
+// does, or dropped (null) if that would leave it under the level's least. Its depth along the face is affine (see F.aff).
 function allowed(F, lv, u0, u1, y0, y1, D, q) {
   const sc = lv ? R : 1;
   let lo = u0, hi = u1;
@@ -1328,7 +1329,7 @@ function allowed(F, lv, u0, u1, y0, y1, D, q) {
     }
   lo = u0 + Math.ceil((lo - u0) / q - 1e-6) * q;
   hi = u0 + Math.floor((hi - u0) / q + 1e-6) * q;
-  return lo < hi ? [lo, hi] : null;
+  return hi - lo >= LEVELS[lv].min * q ? [lo, hi] : null;
 }
 
 // Where the point is on face F at level lv (base its cell's corner from the
