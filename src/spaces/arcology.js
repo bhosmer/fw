@@ -446,35 +446,84 @@ function ridgeRow(r, lv, y) {
   }
   return { y0, y1, t, tc, cy0: R * cw.y0, cy1: R * cw.y1 };
 }
-// The shallowest of ridge r's rows at level lv over heights y0 to y1 (level units).
-function ridgeMin(r, lv, y0, y1) {
-  let t = 16;
-  for (let y = y0; y < y1; ) {
-    const w = ridgeRow(r, lv, y);
-    t = Math.min(t, w.t);
-    y = w.y1;
-  }
-  return t;
-}
 // Whether a cut t deep over [u0, u1] x [y0, y1] (level lv's measure and
 // units) comes within W(t) of F's e-th ridge at either height.
 function nearRidge(F, e, lv, u0, u1, y0, y1, t) {
   const E = F.edges[e], S = lv ? R : 1, u = E.sg > 0 ? u0 : u1;
   return [y0, y1].some((y) => zone(E, u, y, S) < E.Wt[lv][t] * Math.abs(E.dl));
 }
-// A face's rectangle at level lv (drawn depth index j, on a floor of fl
-// twelfths, the city's rectangle's one level finer): the deepest of its
-// level's depths, from its own down, no deeper than the slice allows and,
-// at each ridge it comes within W(t) of, than the ridge's rows beside it.
-// (Then it and the ridge's notch are one box from past the ridge: see
-// relief-v5.md.) In twelfths: fl if none.
-function rectDepth(F, lv, u0, u1, y0, y1, j, fl) {
-  const P = LEVELS[lv], i0 = lv ? y0 / 2 : 12 * y0, i1 = lv ? y1 / 2 : 12 * y1;
-  const rm = [-1, -1], least = (e) => (rm[e] < 0 ? (rm[e] = ridgeMin(RIDGES[F.er[e]], lv, y0, y1)) : rm[e]);
+// Depth profiles (relief-v5.md, terraces.md). A cut's depth behind its face
+// varies with height: a terrace's ramps up from nothing at the edge of its
+// band to all of it at its wall's foot, and is nothing elsewhere in its
+// rows; one level finer, a cut adds to the city's terrace under it. Near a
+// ridge a cut must be, at every height, no deeper than the ridge's own cut
+// there (then the two are one cut from past the ridge, inside the ridge's
+// pair: the pair argument holds slice by slice). Heights here are in
+// twelfths of a cell (h12), on which all rows and terraces' heights lie;
+// depths in twelfths; so every test is exact.
+const h12 = (lv, y) => (lv ? y / 2 : 12 * y);
+// (A terrace's height for t twelfths, in twelfths: rounded down, see terrace.)
+function terraceH(F, t) {
+  return Math.floor((t * F.nl) / Math.abs(F.n[1]) + 1e-3);
+}
+// A city terrace of face F, t twelfths deep over rows a to b (h12): its band
+// [lo, hi] and the height its wall stands at (anchor); null if not cut. On a
+// face all terraces' ramps have one slope, so one is no deeper than another
+// over a height range where both are in their bands iff its anchor is
+// nearer the band's end it ramps from (the upper's: its top; the lower's:
+// its bottom).
+function band(F, a, b, t) {
+  if (!(t > 0)) return null;
+  const H = terraceH(F, t), up = F.n[1] > 0;
+  return { up, lo: up ? b - H : a, hi: up ? b : a + H, at: up ? b : a };
+}
+const under = (c, R) => R && R.lo <= c.lo && c.hi <= R.hi && (c.up ? R.at >= c.at : R.at <= c.at);
+// Whether a cut of face F at level lv over heights s to e (h12) is, at its
+// e-th ridge, no deeper than the ridge's: city, its city terrace's band (or
+// null); fine (one level finer), its own part, b twelfths over heights lo to hi.
+function underRidge(F, e, lv, s, e2, city, fine) {
+  const r = RIDGES[F.er[e]];
+  for (let y = s; y < e2; ) {
+    const w = ridgeRow(r, lv, lv ? 2 * y : Math.floor(y / 12)), a = Math.max(s, h12(lv, w.y0)), b = Math.min(e2, h12(lv, w.y1));
+    const RB = band(F, h12(lv, w.cy0), h12(lv, w.cy1), w.tc);
+    if (city) {
+      const c = { ...city, lo: Math.max(a, city.lo), hi: Math.min(b, city.hi) };
+      if (c.lo < c.hi && !under(c, RB)) return false;
+    }
+    if (fine) {
+      const lo = Math.max(a, fine.lo), hi = Math.min(b, fine.hi);
+      if (lo < hi) {
+        // (The ridge's own part one level finer: behind its terrace's wall
+        // in its band, else behind the face; as cutOf.)
+        const ra = h12(lv, w.y0), rb = h12(lv, w.y1), inb = RB && (RB.up ? rb >= RB.lo : ra <= RB.hi);
+        const alo = inb && RB.up ? Math.max(ra, RB.lo) : ra, ahi = inb && !RB.up ? Math.min(rb, RB.hi) : rb;
+        if (!(fine.b <= w.t - w.tc && alo <= lo && hi <= ahi)) return false;
+      }
+    }
+    y = h12(lv, w.y1);
+  }
+  return true;
+}
+// A face's rectangle at level lv (drawn depth index j; one level finer on
+// the city's rectangle, rows cy0 to cy1 in cells, fl twelfths deep): the
+// deepest of its level's depths, from its own down, no deeper than the
+// slice allows and, at each ridge it comes within W(t) of, than the ridge's
+// cut at every height (see underRidge). In twelfths: fl if none.
+function rectDepth(F, lv, u0, u1, y0, y1, j, fl, cy0, cy1) {
+  const P = LEVELS[lv], s = h12(lv, y0), e2 = h12(lv, y1);
+  const cityB = lv ? band(F, 12 * cy0, 12 * cy1, fl) : null;
   for (let jj = j; jj > 0; jj--) {
     const t = fl + (lv ? twelfths(P.depths[jj] / R) : 3 * quarters(P.depths[jj]));
-    if (t > capAt(F, i0, i1)) continue;
-    if ([0, 1].every((e) => !nearRidge(F, e, lv, u0, u1, y0, y1, t) || t <= least(e))) return t;
+    if (t > capAt(F, s, e2)) continue;
+    let city, fine = null;
+    if (!lv) city = band(F, s, e2, t);
+    else {
+      city = cityB;
+      // (Its own part: in the city terrace's band, from its floor or to its ceiling; else all its rows.)
+      const inb = cityB && (cityB.up ? e2 >= cityB.lo : s <= cityB.hi);
+      fine = { b: t - fl, lo: inb && cityB.up ? Math.max(s, cityB.lo) : s, hi: inb && !cityB.up ? Math.min(e2, cityB.hi) : e2 };
+    }
+    if ([0, 1].every((e) => !nearRidge(F, e, lv, u0, u1, y0, y1, t) || underRidge(F, e, lv, s, e2, city, fine))) return t;
   }
   return fl;
 }
@@ -818,7 +867,7 @@ float bareIn(vec3 q) {
   }
   return d;
 }
-// See capAt, pairFits, ridgeRow, ridgeMin, nearRidge and rectDepth in the JS.
+// See capAt, pairFits, ridgeRow and nearRidge in the JS.
 // (Face k's caps at height i, twelfths of a cell: cap, then each level's ncap, 5 bits each.)
 int capsAt(int k, int i) { ivec3 c = FCR[k]; return FCAPS[c.x + clamp(i - c.y, 0, c.z - 1)]; }
 int capAt(int k, int i0, int i1) { return min(capsAt(k, i0) & 31, capsAt(k, i1) & 31); }
@@ -874,38 +923,65 @@ void ridgeRow(int r, int lv, int y) {
   }
   gRY0 = y0; gRY1 = y1; gRT = t; gRTC = tc;
 }
-int ridgeMin(int r, int lv, int y0, int y1) {
-  int t = 16, y = y0;
-  for (int i = 0; i < 4; i++) {
-    if (y >= y1) break;
-    ridgeRow(r, lv, y);
-    t = min(t, gRT);
-    y = gRY1;
-  }
-  return t;
-}
 bool nearRidge(int k, int e, int lv, int u0, int u1, int y0, int y1, int t) {
   ivec4 E = FEDGE[k * 2 + e];
   int S = lv == 0 ? 1 : R, sg = E.w > 0 ? 1 : -1, sd = E.x > 0 ? 1 : -1, u = sg > 0 ? u0 : u1;
   int W = FWT[((k * 2 + e) * 2 + lv) * 17 + t] * abs(E.x);
   return sg * sd * (u * E.x - E.y * y0 - S * E.z) < W || sg * sd * (u * E.x - E.y * y1 - S * E.z) < W;
 }
-int rectDepth(int k, int lv, int u0, int u1, int y0, int y1, int j, int fl) {
-  int i0 = lv == 0 ? 12 * y0 : y0 / 2, i1 = lv == 0 ? 12 * y1 : y1 / 2;
-  // (Each ridge's rows beside it asked after once, if at all.)
-  int rm0 = -1, rm1 = -1;
+// Depth profiles: see h12, terraceH, band, underRidge and rectDepth in the JS.
+int h12(int lv, int y) { return lv == 0 ? 12 * y : y / 2; }
+int terraceH(int k, int t) { return int(floor(float(t) * FNS[k].x / abs(FNH[k].x) + 1e-3)); }
+// (A city terrace's band and anchor: lo, hi, at; false if not cut.)
+bool bandOf(int k, int a, int b, int t, out ivec3 B) {
+  B = ivec3(0);
+  if (t <= 0) return false;
+  int H = terraceH(k, t);
+  B = FNH[k].x > 0.0 ? ivec3(b - H, b, b) : ivec3(a, a + H, a);
+  return true;
+}
+bool underRidge(int k, int e, int lv, int s, int e2, bool hasCity, ivec3 city, bool hasFine, int fb, int flo, int fhi) {
+  int r = FER[k * 2 + e], y = s;
+  bool up = FNH[k].x > 0.0;
+  for (int i = 0; i < 6; i++) {
+    if (y >= e2) break;
+    ridgeRow(r, lv, lv == 0 ? fdiv(y, 12) : 2 * y);
+    int ra = h12(lv, gRY0), rb = h12(lv, gRY1), a = max(s, ra), b = min(e2, rb);
+    ivec3 RB;
+    bool rok = bandOf(k, h12(lv, gRCY0), h12(lv, gRCY1), gRTC, RB);
+    if (hasCity) {
+      int lo = max(a, city.x), hi = min(b, city.y);
+      if (lo < hi && !(rok && RB.x <= lo && hi <= RB.y && (up ? RB.z >= city.z : RB.z <= city.z))) return false;
+    }
+    if (hasFine) {
+      int lo = max(a, flo), hi = min(b, fhi);
+      if (lo < hi) {
+        bool inb = rok && (up ? rb >= RB.x : ra <= RB.y);
+        int alo = inb && up ? max(ra, RB.x) : ra, ahi = inb && !up ? min(rb, RB.y) : rb;
+        if (!(fb <= gRT - gRTC && alo <= lo && hi <= ahi)) return false;
+      }
+    }
+    y = rb;
+  }
+  return true;
+}
+int rectDepth(int k, int lv, int u0, int u1, int y0, int y1, int j, int fl, int cy0, int cy1) {
+  int s = h12(lv, y0), e2 = h12(lv, y1);
+  ivec3 cityB;
+  bool hasCB = lv == 1 && bandOf(k, 12 * cy0, 12 * cy1, fl, cityB);
+  bool up = FNH[k].x > 0.0;
   for (int jj = ND - 1; jj > 0; jj--) {
     if (jj > j) continue;
     int t = fl + depthOf(lv, jj);
-    if (t > capAt(k, i0, i1)) continue;
+    if (t > capAt(k, s, e2)) continue;
+    ivec3 city = cityB;
+    bool hasCity = hasCB, hasFine = lv == 1;
+    if (lv == 0) hasCity = bandOf(k, s, e2, t, city);
+    bool inb = hasCB && (up ? e2 >= cityB.x : s <= cityB.y);
+    int flo = inb && up ? max(s, cityB.x) : s, fhi = inb && !up ? min(e2, cityB.y) : e2;
     bool ok = true;
-    for (int e = 0; e < 2; e++) {
-      if (!nearRidge(k, e, lv, u0, u1, y0, y1, t)) continue;
-      int m = e == 0 ? rm0 : rm1;
-      if (m < 0) m = ridgeMin(FER[k * 2 + e], lv, y0, y1);
-      if (e == 0) rm0 = m; else rm1 = m;
-      if (t > m) ok = false;
-    }
+    for (int e = 0; e < 2; e++)
+      if (ok && nearRidge(k, e, lv, u0, u1, y0, y1, t) && !underRidge(k, e, lv, s, e2, hasCity, city, hasFine, t - fl, flo, fhi)) ok = false;
     if (ok) return t;
   }
   return fl;
@@ -985,7 +1061,7 @@ bool gCter;
 int gCyin, gCdn;
 float gCyb, gCback, gCfz;
 void terraceOf(int k, int S, int y0, int y1, int t) {
-  float H = floor(float(t) / 12.0 * FNS[k].x * 12.0 / abs(FNH[k].x) + 1e-3) * float(S) / 12.0;
+  float H = float(terraceH(k, t)) * float(S) / 12.0;
   bool up = FNH[k].x > 0.0;
   gCter = true; gCyin = up ? y1 : y0; gCyb = up ? float(y1) - H : float(y0) + H; gCback = 0.0; gCfz = 0.0;
 }
@@ -993,7 +1069,7 @@ void cutOf(int k, int lv, int S, int y0, int y1, int t, int fl, int cy0, int cy1
   if (lv == 0) { terraceOf(k, S, y0, y1, t); return; }
   if (fl > 0) {
     terraceOf(k, S, cy0, cy1, fl);
-    if (FNH[k].x > 0.0 ? float(y1) >= gCyb : float(y0) <= gCyb) { gCback = float(t - fl) / 12.0 * float(S); gCfz = gCback; return; }
+    if (FNH[k].x > 0.0 ? float(y1) >= gCyb : float(y0) <= gCyb) { gCback = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y; gCfz = gCback; return; }
   }
   int x = t - fl;
   gCter = false;
@@ -1052,7 +1128,7 @@ float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, 
     rectangle(l, k, ru, rfu, ry, rfy, tile);
     u0 = gU0 + o0; u1 = gU1 + o0; y0 = gY0 + o1; y1 = gY1 + o1;
     fl = t;
-    t = rectDepth(k, l, u0, u1, y0, y1, gDepth, fl);
+    t = rectDepth(k, l, u0, u1, y0, y1, gDepth, fl, cy0, cy1);
     if (l == 0) {
       tc = t; cy0 = y0; cy1 = y1;
       o0 = R * u0; o1 = R * y0;
@@ -1604,7 +1680,7 @@ function faceAt(F, lv, base) {
 // (H on the grid of the finer rows, rounded down: so that no finer
 // pocket's row ends just short of, or on, its floor; see inBand.)
 function terrace(F, S, y0, y1, t) {
-  const H = (Math.floor(((t / 12) * F.nl * 12) / Math.abs(F.n[1]) + 1e-3) * S) / 12, up = F.n[1] > 0;
+  const H = (terraceH(F, t) * S) / 12, up = F.n[1] > 0;
   return { up, yin: up ? y1 : y0, yb: up ? y1 - H : y0 + H, back: 0 };
 }
 // (Whether rows y0 to y1 reach into terrace w's band, or to its floor:
@@ -1650,7 +1726,8 @@ function cutOf(F, lv, S, y0, y1, t, fl, cy0, cy1) {
   if (lv === 0) return terrace(F, S, y0, y1, t);
   if (fl > 0) {
     const w = terrace(F, S, cy0, cy1, fl);
-    if (inBand(w, y0, y1)) return { ...w, back: ((t - fl) / 12) * S };
+    // (Behind the wall by as much as makes it t - fl twelfths deeper, along the face's normal.)
+    if (inBand(w, y0, y1)) return { ...w, back: (((t - fl) / 12) * S * F.nl) / Math.hypot(F.n[0], F.n[2]) };
   }
   return { dn: dnOf(t - fl) };
 }
@@ -1702,14 +1779,14 @@ function facePocket(lv, k, L, f, base, d) {
   // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
   const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
   const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
-  const c = rectangle(0, k, uc, fuc, yc, fyc), tc = rectDepth(F, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0);
+  const c = rectangle(0, k, uc, fuc, yc, fyc), tc = rectDepth(F, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0, 0, 0);
   let r = c, t = tc, fl = 0;
   if (lv) {
     // One level finer: tiled afresh from the city rectangle's corner, on its floor.
     const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
     const q = rectangle(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
     r = { u0: q.u0 + ou, u1: q.u1 + ou, y0: q.y0 + oy, y1: q.y1 + oy };
-    t = rectDepth(F, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc);
+    t = rectDepth(F, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
     fl = tc;
   }
   const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1], Y = p.Yi + p.Yf;
