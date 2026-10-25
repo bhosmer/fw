@@ -97,6 +97,7 @@ float gX;         // how far the ray can go
 vec3 gN;          // the surface it meets there, facing the air
 bool gSkin;       // that air is only the coarser level's surface, cut back
                   // (its relief): coloured as that level's, not this one's
+bool gHitSkin;    // and the surface a ray met (or map found) is such relief
 float gIn, gOut;
 vec3 gInN;
 
@@ -212,10 +213,14 @@ ${space.slants?.length ? '  gSi = i;\n  gSv = v;\n  gSc = c;' : ''}
   return cell(I - c * R, f, wrapId(uId[i] + c), uSeed[i], uLevel[i], reach, nrm);
 }
 
-float levelAir(int i, vec3 v) {
+// (o: how far the level's air is shrunk there, for the spaces that fade
+// their own way and take it out again: see gO.)
+float levelAir(int i, vec3 v, float o) {
   float reach;
   vec3 nrm;
   gRay = false;
+  gO = o;
+  gA = 0.0;
   return levelRay(i, v, reach, nrm);
 }
 `;
@@ -228,7 +233,7 @@ export function probeFrag(nlev, space) {
     /* glsl */ `
 out vec4 outColor;
 void main() {
-  outColor = vec4(levelAir(int(gl_FragCoord.x), vec3(0.0)), 0.0, 0.0, 1.0);
+  outColor = vec4(levelAir(int(gl_FragCoord.x), vec3(0.0), 0.0), 0.0, 0.0, 1.0);
 }`
   );
 }
@@ -246,6 +251,7 @@ uniform float uNear[NLEV]; // how far from the camera each level's nearest air i
 uniform vec3 uWall[NLEV];
 uniform vec3 uFloor[NLEV];
 uniform vec2 uRes;
+uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAA_FRAG)
 uniform mat3 uCam;
 uniform float uTan;        // tan(fov / 2)
 uniform float uScale;      // our clearance, smoothed
@@ -310,6 +316,11 @@ const float LOD_LO = 8.0;
 const float LOD_HI = 24.0;
 const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
 float lean(vec3 n, vec3 dir) { return sqrt(max(abs(dot(n, dir)), 1e-6)); }
+// (But no more than this, for whether a level is carved: where a ray grazes
+// a surface it is mostly at a silhouette or an arris, where what is cut into
+// the surface shows in profile, not foreshortened: looking up a ridge, its
+// relief would otherwise be left out until one was nearly upon it.)
+const float LEAN_MIN = 0.6;
 // A sun ray is tried only from at most this many fog lengths under the
 // ground, and gets at most this many steps to come out.
 const float SUN_DEPTH = 1.0;
@@ -338,13 +349,16 @@ const float SLACK = ${glf(SLACK)};
 float map(vec3 v, float foot, float along, bool advance, out int slot) {
   float d = -1e20;
   slot = 0;
+  gHitSkin = false;
   if (uOuter.w >= 0.0) {
     d = dot(uOuter.xyz, v) + uOuter.w;
     slot = -1;
+    gHitSkin = false;
   }
   if (v.y + uSkyH > d) {
     d = v.y + uSkyH;
     slot = -2;
+    gHitSkin = false;
   }
   for (int i = 0; i < NLEV; i++) {
     if (i >= uN) break;
@@ -353,7 +367,7 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     if (d > MAX_IN * cell) break;      // already in bigger air than this level has
     float px = cell / foot;
     if (px < LOD_LO) break;            // too small to see: leave it solid
-    float a = levelAir(i, v);
+    float a = levelAir(i, v, CLOSE * float(R) * clamp((foot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0));
     if (advance && a > SLACK) gSolid[i] = along + (a - SLACK) / uSig[i];
     float w = -a / uSig[i];
     w -= clamp((foot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0) * CLOSE * cell;
@@ -362,7 +376,7 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     // shrunk back flush with the wall it opens through), that is a coin toss
     // per pixel, so a finer level has to win clearly.
     if (w > d) {
-      if (w > d + foot) slot = gSkin ? i - 1 : i;
+      if (w > d + foot) { slot = gSkin ? i - 1 : i; gHitSkin = gSkin; }
       d = w;
     }
   }
@@ -372,7 +386,9 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
 // Levels too small to carve still show: their openings are drawn onto the
 // surface as texture, which the real geometry later grows into. Smaller
 // still, the texture dissolves into the average tone it would have had.
-vec3 detail(vec3 base, vec3 v, float foot, int slot) {
+// (On a building's relief (skin), what opens in it is drawn in the relief's
+// own colour, in its shadow: not in the colour of the level it opens into.)
+vec3 detail(vec3 base, vec3 v, float foot, int slot, bool skin) {
   for (int i = max(slot + 1, 0); i < NLEV; i++) {
     if (i >= uN) break;
     float px = float(R) / uSig[i] / foot;
@@ -381,9 +397,9 @@ vec3 detail(vec3 base, vec3 v, float foot, int slot) {
     if (wgt <= 0.0) continue;
     float sharp = smoothstep(2.0, 8.0, px);
     float hole = OPEN_AREA;
-    vec3 ink = mix(uWall[i] * 0.5, uWall[i], uInlay);
+    vec3 ink = skin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
     if (sharp > 0.0) {
-      float a = levelAir(i, v) / uSig[i];
+      float a = levelAir(i, v, 0.0) / uSig[i];
       hole = mix(hole, 1.0 - smoothstep(-foot, 0.5 * foot, a), sharp);
       // (Relief is the surface's own, in its shadow.)
       if (gSkin) ink = mix(ink, base * 0.55, sharp);
@@ -417,6 +433,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
     vec3 v = o + dir * t;
     float best = -1.0;
     int from = slot;
+    bool fromSkin = gHitSkin;
     vec3 bn = n;
     if (uOuter.w >= 0.0) {
       float above = dot(uOuter.xyz, v) + uOuter.w;
@@ -424,6 +441,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
         float fall = -dot(uOuter.xyz, dir);
         best = fall > 0.0 ? above / fall : 2.0 * maxT;
         from = -1;
+        fromSkin = false;
         bn = uOuter.xyz;
       }
     }
@@ -436,6 +454,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       if (e > best) {
         best = e;
         from = -2;
+        fromSkin = false;
         bn = vec3(0.0, 1.0, 0.0);
       }
     }
@@ -445,7 +464,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       float cell = float(R) / uSig[i];
       if (best > LONGEST * cell) break;   // already going further than this level could take us
       if ((foot / cell - 1.0 / LOD_HI) * LOD_K >= 1.0) break; // too small to see even face on: leave it solid
-      float slant = seen ? lean(bn, dir) : 1.0;
+      float slant = seen ? max(lean(bn, dir), LEAN_MIN) : 1.0;
       float rel = (foot / (slant * cell) - 1.0 / LOD_HI) * LOD_K;
       if (rel >= 1.0) continue;           // too foreshortened to see
       gO = CLOSE * float(R) * max(rel, 0.0);
@@ -468,7 +487,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
         if (e > best) {
           // The surface takes its colour from the level whose air we are
           // leaving; a finer level has to be clearly the one.
-          if (e > best + foot) from = gSkin ? i - 1 : i;
+          if (e > best + foot) { from = gSkin ? i - 1 : i; fromSkin = gSkin; }
           best = e;
           bn = nn;
         }
@@ -476,6 +495,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
     }
     if (best < 0.0) { hit = true; break; }
     slot = from;
+    gHitSkin = fromSkin;
     n = bn;
     // Step just past the way out, so as to be inside whatever comes next.
     // (Some way, even setting out from the camera: a camera exactly on the
@@ -557,7 +577,7 @@ vec3 beyond(vec3 rd, bool open) {
 // The colour of a surface of level slot at p (camera-relative), facing n,
 // seen along rd from t away, before any haze. shadows: cast a ray toward the
 // sun to see whether it is in sunlight (else it is taken to be in shade).
-vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) {
+vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix, bool shadows) {
   float foot = max(t * pix, 1e-5 * uScale);
   float seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
   int s2;
@@ -578,7 +598,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, float pix, bool shadows) 
   vec3 base = slot == -2 ? uGround
             : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
                        : mix(uWall[slot], uFloor[slot], flatness);
-  base = detail(base, p, seenFoot, slot);
+  base = detail(base, p, seenFoot, slot, skin);
 
   float hemi = 0.5 + 0.5 * n.y;
   float key = max(dot(n, uSun), 0.0);
@@ -655,7 +675,7 @@ float shaftsHere(float end) {
 }
 
 void main() {
-  vec2 uv = (gl_FragCoord.xy * uStride * 2.0 - uRes) / uRes.y;
+  vec2 uv = ((gl_FragCoord.xy + uJitter) * uStride * 2.0 - uRes) / uRes.y;
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
   float pix = 2.0 * uTan / uRes.y;
 
@@ -675,7 +695,7 @@ void main() {
       // (Not as far as levels too small to see from here, as with drawing.)
       for (int i = 0; i < NLEV; i++) {
         if (i >= uN || float(R) / uSig[i] < LOD_LO * down * pix) break;
-        if (levelAir(i, c) < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
+        if (levelAir(i, c, 0.0) < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
       }
       maxT = max(maxT, down + (4.0 - down / uFogLen) * fogIn);
     }
@@ -684,6 +704,7 @@ void main() {
   gWideFog = fogIn;
 
   for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
+  gHitSkin = false;
 #if EXACT
   t = march(vec3(0.0), rd, 0.0, pix, maxT, STEPS, true, hit, open, slot, n, steps);
 #else
@@ -697,6 +718,7 @@ void main() {
   }
   if (t <= maxT) hit = true;
 #endif
+  bool skin = gHitSkin; // (before the normal's map calls below)
   if (uDebug == 5) {
     outColor = vec4(hit ? t : -1.0, 0.0, 0.0, 1.0);
     return;
@@ -741,7 +763,7 @@ void main() {
     }
 #endif
 
-    vec3 lit = shade(p, n, rd, t, slot, pix, true);
+    vec3 lit = shade(p, n, rd, t, slot, skin, pix, true);
 
     // Mirror floors: what they reflect, more of it the more glancing the
     // look (and none of the sun's shadows, which would cost another ray).
@@ -750,11 +772,12 @@ void main() {
       for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
       bool rh, ro;
       int rs = slot, rst = 0;
+      gHitSkin = skin;
       vec3 rn = n;
       vec3 o = p + n * max(t * pix, 1e-5 * uScale);
       float rt = march(o, rr, t, pix, uMaxT, MIRROR_STEPS, false, rh, ro, rs, rn, rst);
       vec3 rc = beyond(rr, ro);
-      if (rh) rc = mix(rc, shade(o + rr * rt, rn, rr, t + rt, rs, pix, false), exp(-rt / uFogLen));
+      if (rh) rc = mix(rc, shade(o + rr * rt, rn, rr, t + rt, rs, gHitSkin, pix, false), exp(-rt / uFogLen));
       float glance = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
       lit = mix(lit, rc, uMirror * mix(0.35, 1.0, glance));
     }
@@ -795,7 +818,9 @@ void main() {
 
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
   col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
-  outColor = vec4(col, 1.0);
+  // (And how far off what it saw is, for the next frame to find it again:
+  // see TAA_FRAG.)
+  outColor = vec4(col, hit ? log2(max(t, 1e-30)) : 1e4);
 }`
   );
 }
@@ -878,4 +903,72 @@ void main() {
 
   if (horz) uv.y += shift * across; else uv.x += shift * across;
   outColor = vec4(texture(uTex, uv).rgb, 1.0);
+}`;
+
+
+// Temporal antialiasing (.claude/design/taa.md): each frame's rays go
+// through a different point of their pixels; this blends the frame (uCur:
+// colour, and log2 of the distance to what each pixel saw, 1e4 for nothing)
+// with what the frames before saw of the same points (uHist, the same,
+// in the previous frame's pixels), found by where the camera was then: the
+// point the ray met, D further along (the camera's move since, in view
+// units), seen through the previous camera (uPrev). What the history says
+// is kept within the range of the frame's own neighbourhood, and dropped
+// where it saw something else (disocclusion) or was off screen.
+export const TAA_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+uniform sampler2D uCur, uHist;
+uniform vec2 uRes;
+uniform mat3 uCam, uPrev;
+uniform vec3 uD;
+uniform float uTan, uKeep, uLog;
+uniform bool uStill;
+out vec4 outColor;
+
+vec3 ycocg(vec3 c) { return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
+vec3 rgb(vec3 y) { return vec3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z); }
+
+void main() {
+  ivec2 at = ivec2(gl_FragCoord.xy);
+  vec4 here = texelFetch(uCur, at, 0);
+  // The frame's neighbourhood, for the range history may take.
+  vec3 lo = vec3(1e9), hi = vec3(-1e9);
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      vec3 c = ycocg(texelFetch(uCur, clamp(at + ivec2(i, j), ivec2(0), ivec2(uRes) - 1), 0).rgb);
+      lo = min(lo, c); hi = max(hi, c);
+    }
+  outColor = here;
+  if (uKeep <= 0.0) return;
+  // Still: the frames are samples of one picture, averaged as they come.
+  if (uStill) {
+    outColor = vec4(mix(here.rgb, texelFetch(uHist, at, 0).rgb, uKeep), here.a);
+    return;
+  }
+  // Where this pixel's middle was seen the frame before (at the distance its
+  // ray saw: history is kept for pixels' middles).
+  vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
+  vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
+  bool far = here.a > 1e3;
+  vec3 q = far ? rd : rd * exp2(here.a) + uD;
+  vec3 v = transpose(uPrev) * q;
+  if (v.z >= 0.0) return;
+  vec2 pv = v.xy / (-v.z * uTan);
+  vec2 pp = (pv * uRes.y + uRes) * 0.5;
+  if (any(lessThan(pp, vec2(0.5))) || any(greaterThan(pp, uRes - 0.5))) return;
+  vec4 h = texture(uHist, pp / uRes);
+  // (Something else was there then: a nearer or farther surface. The
+  // distances are not blended, as colours may be: one of the four nearest
+  // pixels must have seen this point.)
+  // (In the frame before's units: they change with the level we are at.)
+  float was = far ? 1e4 : log2(length(q)) + uLog;
+  ivec2 c = ivec2(floor(pp - 0.5));
+  bool same = false;
+  for (int k = 0; k < 4; k++) {
+    float a = texelFetch(uHist, clamp(c + ivec2(k & 1, k >> 1), ivec2(0), ivec2(uRes) - 1), 0).a;
+    same = same || (far ? a > 1e3 : a < 1e3 && abs(a - was) < 0.07);
+  }
+  if (!same) return;
+  vec3 kept = rgb(clamp(ycocg(h.rgb), lo, hi));
+  outColor = vec4(mix(here.rgb, kept, uKeep), here.a);
 }`;

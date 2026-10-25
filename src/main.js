@@ -1,4 +1,4 @@
-import { Renderer } from './renderer.js';
+import { Renderer, TAA_N } from './renderer.js';
 import { Controls } from './controls.js';
 import halls from './spaces/halls.js';
 import arcology from './spaces/arcology.js';
@@ -84,6 +84,7 @@ function viewNow() {
     fogK: space.fogK * R * SCHEMES[scheme].fog,
     debug,
     reference,
+    taa: !snapping,
     scheme: SCHEMES[scheme],
     outer: flight.outerAir(all),
     sky: flight.skyHeight(),
@@ -182,6 +183,7 @@ function nextWorld() {
 // Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
 function respawn() {
   flight.elsewhere(Math.random);
+  renderer.reset();
   if (pilot.on) pilot.start(pos.F);
   controls.drop();
   saveLocation();
@@ -193,6 +195,7 @@ function toggleTour() {
 }
 function nextScheme(by) {
   scheme = (scheme + by + SCHEMES.length) % SCHEMES.length;
+  renderer.reset();
   saveScheme(scheme);
   schemeShown = performance.now();
   showScheme();
@@ -226,21 +229,28 @@ for (const [name, act] of Object.entries(BUTTONS)) {
 }
 
 addEventListener('hashchange', () => {
-  if (loadLocation()) flight.begin();
+  if (loadLocation()) flight.begin(), renderer.reset();
 });
 if (location.hash.length > 1 && loadLocation()) flight.begin();
 else flight.elsewhere(Math.random);
 
-// Draw only when the picture would differ from the one already showing.
-let shown = '';
+// Draw only when the picture would differ from the one already showing;
+// and, once it has stopped changing, as many times more as temporal
+// antialiasing takes to gather all its samples of it (see TAA_N).
+let shown = '', settled = 0;
 function present() {
   resize();
   const key = [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference, scheme].join();
-  if (key === shown) return false;
+  if (key === shown) {
+    if (settled >= TAA_N) return false;
+    settled++;
+  } else settled = 0;
   shown = key;
   levelsDrawn = draw();
   return true;
 }
+// (Snapshots draw one frame as it is, without antialiasing over time.)
+let snapping = false;
 
 let last = performance.now();
 let slow = 0, quick = 0, fps = 0, levelsDrawn = 0, unsaved = 0;
@@ -389,11 +399,14 @@ window.fw = {
     return location.href;
   },
   // Draw the current view at a small size and return its pixels.
-  snap(w = 480, h = 360) {
+  // (live: as the app shows it, antialiased over the frames drawn before.)
+  snap(w = 480, h = 360, live = false) {
     canvas.width = w;
     canvas.height = h;
     flight.sense();
+    snapping = !live;
     draw();
+    snapping = false;
     const px = new Uint8Array(w * h * 4);
     renderer.gl.readPixels(0, 0, w, h, renderer.gl.RGBA, renderer.gl.UNSIGNED_BYTE, px);
     shown = '';

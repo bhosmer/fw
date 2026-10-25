@@ -7,11 +7,13 @@ import { fileURLToPath } from 'node:url';
 const ROOT = process.env.FW_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), '..');
 const [out, world, hash, ...steps] = process.argv.slice(2);
 const server = await serve(ROOT), chrome = await launch(), page = await chrome.page();
-await page.goto(`${server.url}index.html?1${hash ? '#' + hash : ''}`, `window.requestAnimationFrame = () => 0;
+// (LIVE=1 leaves the app's frame loop running, and lets it run a second and a half first.)
+await page.goto(`${server.url}index.html?1${hash ? '#' + hash : ''}`, `${process.env.LIVE ? '' : 'window.requestAnimationFrame = () => 0;'}
   localStorage.setItem('fw.scheme', ${JSON.stringify(process.env.SCHEME ?? 'alhambra')}); localStorage.setItem('fw.world', ${JSON.stringify(world)});`);
 const err = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
 if (err) { console.log('ERROR', err); process.exit(1); }
 if (page.errors.length) console.log('errors', page.errors);
+if (process.env.LIVE) await new Promise((r) => setTimeout(r, 1500));
 let k = 0;
 for (const s of ['', ...steps]) {
   if (s) console.log('>', JSON.stringify(await page.eval(s)));
