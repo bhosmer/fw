@@ -167,16 +167,18 @@ test('where relief crosses from one cell to the next, both cells say so', () => 
   assert.ok(crossed > 100, `${crossed} points in air on a face`);
 });
 
-// A skin cell's pockets one level finer run on into the cells past the sides
-// the table opens (see runOn in arcology.js): wherever they say air there, the
-// cell the point is in says so too, or is the city's air.
-test('where a skin cell\'s pockets run on, the cells they run into say so', () => {
-  const { lo, at, data, kind } = VOLUME, rnd = rand(13);
-  const skin = reliefCells.filter((c) => kind[at(c.map((x, a) => x - lo[a]))] === 2);
+// A skin cell's pockets one level finer, and a plain cell's openings, run on
+// into the cells past the sides the table opens (see runOn in arcology.js):
+// wherever they say air there, the cell the point is in says so too, or is
+// the city's air.
+for (const [what, which] of [['a skin cell\'s pockets', (w) => (w & 3) === 2], ['a plain cell\'s openings', (w) => (w & 3) === 3 && (w >>> 19) & 15]])
+test(`where ${what} run on, the cells they run into say so`, () => {
+  const { lo, at, data } = VOLUME, rnd = rand(13);
+  const skin = reliefCells.filter((c) => which(data[2 * at(c.map((x, a) => x - lo[a]))]));
   let tried = 0;
   for (let n = 0; n < 40000; n++) {
     const v = skin[Math.floor(rnd() * skin.length)];
-    const open = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 8) & 63, cross = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 19) & 1;
+    const open = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 8) & 63, cross = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 23) & 1;
     // A point in the run-on box (or, run on as three pieces, in one of them),
     // outside the cell.
     const only = cross ? Math.floor(rnd() * 3) : -1;
@@ -194,7 +196,7 @@ test('where a skin cell\'s pockets run on, the cells they run into say so', () =
     const there = air1(u, p);
     assert.ok(there < 0.05, `${v} says ${here} at ${q}, ${u} says ${there}`);
   }
-  assert.ok(tried > 100, `${tried} points in air past a skin cell`);
+  assert.ok(tried > 100, `${tried} points in air past ${what}`);
 });
 
 // A sloped face is exact however close we are to it (see Position.levels):

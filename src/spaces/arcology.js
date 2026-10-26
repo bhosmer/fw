@@ -174,13 +174,16 @@ function dot2(v) {
 if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
 // How far behind a face anything is cut (cells): DMAX, along its normal (see below).
 const REACH = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R + 0.05;
+// Each solid's planes, n . X < K (unit n, X in cells from the building's
+// origin).
+const SOLID_PL = SOLIDS.map((s) => s.planes.map(({ n, K }) => [...n.map((x) => x / Math.hypot(...n)), K / Math.hypot(...n)]));
 // The solids that are neither masses nor their rims (pillars, towers): the
 // city's cuts stop at them (see bareIn), and the notches one level finer
-// keep clear of the cells they touch (see F.bare). Their planes, n . X < K (unit n, X in
-// cells from the building's origin).
-const BARE_PL = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => s.planes.map(({ n, K }) => [...n.map((x) => x / Math.hypot(...n)), K / Math.hypot(...n)]));
+// keep clear of the cells they touch (see F.bare).
+const BARE = SOLIDS.filter((s) => !s.relief && !s.rim);
+const BARE_PL = BARE.map((s) => SOLID_PL[SOLIDS.indexOf(s)]);
 // (And their bounds, cells from the building's origin: a first, cheap test.)
-const BARE_BOX = SOLIDS.filter((s) => !s.relief && !s.rim).map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
+const BARE_BOX = BARE.map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
 if (BARE_PL.some((p) => p.length !== 6)) throw new Error('arcology: a solid without relief not of six planes');
 // (Beyond this from all of them (cells: more than the diagonal of a city
 // pocket's box, 5.7), a ray through the city's pockets cannot strike one:
@@ -315,7 +318,7 @@ for (const F of FACES) {
   // to DMAX in, at the heights cuts are made; sampled every quarter cell,
   // and rounded out by more than that.)
   const Q = 0.25;
-  for (const sol of SOLIDS.filter((x) => !x.relief && !x.rim)) {
+  for (const sol of BARE) {
     // (Row by row of height, so that a solid crossing the face at a slant
     // blanks its own footprint and not the rectangle round it.)
     const rows = new Map();
@@ -347,6 +350,7 @@ for (const F of FACES) {
 const zone = (E, u, y, S) => E.sg * Math.sign(E.dl) * (u * E.dl - E.al * y - S * E.be); // (distance past the ridge, times |dl|)
 const rectBare = (F, u0, u1, y0, y1) => F.bare.some(([a, b, c, d]) => u0 < b && u1 > a && y0 < d && y1 > c);
 const fdiv = (a, b) => Math.floor(a / b);
+const cdiv = (a, b) => Math.ceil(a / b);
 const h01 = (h) => (h >>> 8) / 16777216;
 // The ridges are tiled too, by height only (relief-v5.md, v6): rows of the
 // city's (its rows of two cells, some halved) and, one level finer, rows
@@ -540,21 +544,49 @@ for (const F of FACES)
     const g = [0, 1, 2].map((a) => (at(X.map((x, b) => x + (a === b ? h : 0))) - at(X)) / h);
     if (g.some((x, a) => Math.abs(x - E.gn[a]) > 1e-6)) throw new Error('arcology: a notch edge normal is not its gradient');
   }
-// Windows (S6): the upright faces of the solids that have them (pillars,
-// towers) carry a grid of small windows one level finer, in the face's own frame:
-// WIN wide and high (in the finer units), PITCH apart along and up, DEEP_WIN
-// into the face.
-const WIN = [6, 10], PITCH = [12, 16], DEEP_WIN = 3;
+// Openings (S6): the upright faces of the solids that have them carry a
+// grid of openings one level finer, in the face's own frame: each `along`
+// wide in a pitch `pitch` (the finer units), `up` high in a pitch `upPitch`,
+// `deep` into the face; and over each opening's width, all the way up, a
+// channel `channel` deep (0: none); by kind, from the face's width (finer
+// units). The tower: a grid of small windows (a placeholder).
+// The pillars (pillars.md, after the drawing): smooth shafts at their
+// corners, and on each face between them a channel (the middle half of the
+// face) of shelves, their fronts at its floor, a third of a cell apart: one
+// opening per face along, each the gap between two shelves, deeper.
+const OPENINGS = {
+  windows: () => ({ pitch: 12, along: 6, upPitch: 16, up: 10, deep: 3, channel: 0 }),
+  bays: (side) => ({ pitch: side, along: side / 2, upPitch: 8, up: 6, deep: 9, channel: 3, centred: true }),
+};
 const WINDOWS = [];
 SOLIDS.forEach((s) => {
   if (!s.windows) return;
+  // (A solid's upright faces in opposite pairs: its width across each, and its middle.)
+  const up = s.planes.filter(({ n }) => n[1] === 0);
+  const opp = (P) => up.find((Q) => Q.n.every((x, a) => x === -P.n[a]));
+  const width = (P) => (P.K + opp(P).K) / Math.hypot(...P.n);
+  const [P1, P2] = [up[0], up.find((Q) => Q.n[0] * up[0].n[0] + Q.n[2] * up[0].n[2] === 0)];
+  const c1 = (P1.K - opp(P1).K) / 2, c2 = (P2.K - opp(P2).K) / 2, det = P1.n[0] * P2.n[2] - P1.n[2] * P2.n[0];
+  const mid = [(c1 * P2.n[2] - c2 * P1.n[2]) / det, 0, (P1.n[0] * c2 - P2.n[0] * c1) / det];
   s.planes.forEach(({ n, K }) => {
     if (n[1] !== 0) return;
-    const alpha = gcd(n[0], n[2]), h = [n[0] / alpha, 0, n[2] / alpha], t = [-h[2], 0, h[0]];
-    WINDOWS.push({ n, K, alpha, h: slantOf(h), t: slantOf(t), hv: h, tv: t, len: Math.hypot(...h), solid: s });
+    const alpha = gcd(n[0], n[2]), h = [n[0] / alpha, 0, n[2] / alpha], t = [-h[2], 0, h[0]], len = Math.hypot(...h);
+    const o = OPENINGS[s.windows](R * width(up.find((Q) => Q.n[0] * n[0] + Q.n[2] * n[2] === 0)));
+    // (A bay centred on the face: the grid's phase along it, from the solid's middle.)
+    const pu = Math.round(o.pitch * len), wu = Math.round(o.along * len);
+    const ph = o.centred ? Math.round(R * (t[0] * mid[0] + t[2] * mid[2]) - pu / 2) : 0;
+    WINDOWS.push({ n, K, alpha, h: slantOf(h), t: slantOf(t), hv: h, tv: t, len, solid: s, pu, wu, ph, dw: Math.round(o.deep * len), ch: Math.round(o.channel * len), py: o.upPitch, hy: o.up });
   });
 });
 if (WINDOWS.length > 31) throw new Error(`arcology: ${WINDOWS.length} faces with windows, at most 31`);
+if (SOLIDS.some((s) => WINDOWS.filter((W) => W.solid === s).length > 4)) throw new Error('arcology: a solid with more than four faces with windows');
+// Whether the slab of face W's openings, from their back (the deeper of
+// gap and channel) to their outer plane as windowAir has them, meets the
+// cell whose corner is c.
+const slabMeets = (W, c) => {
+  const K = W.K * R, ws = corners(c).map((q) => (R * W.n.reduce((a, x, i) => a + x * (q[i] - ORIGIN[i]), 0)) / W.alpha);
+  return Math.min(...ws) < cdiv(K, W.alpha) + Math.ceil(W.len) && Math.max(...ws) > fdiv(K, W.alpha) - Math.max(W.dw, W.ch);
+};
 
 // The table, one cell of level CITY + 1 to an entry (see volume in
 // halls.js): in its first number, the cell's kind (KIND bits: 1 deep, its
@@ -564,11 +596,17 @@ if (WINDOWS.length > 31) throw new Error(`arcology: ${WINDOWS.length} faces with
 // openings may run on across it (OPEN_AT: the next cell is deep too, or
 // clear of every solid); for a skin cell, whether its pockets one level
 // finer may, and whether they run on as one box or three (CROSS_AT: see
-// runOn below).
-const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, WIN_AT = 14, CROSS_AT = 19;
+// runOn below); for a plain cell, the faces whose openings it cuts (WIN_AT,
+// one more than the index in WINDOWS of its solid's first, 0 for none; and
+// WMASK_AT, a bit for each of the solid's faces from that one), and whether
+// they may run on across each side (OPEN_AT); and in its second number, the
+// other solids they stop at (CLIP: one more than each's index in SOLIDS, in
+// CLIP_BITS each).
+const DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, WIN_AT = 14, WMASK_AT = 19, CROSS_AT = 23, CLIP_BITS = 5;
+if (SOLIDS.length >= 1 << CLIP_BITS) throw new Error(`arcology: ${SOLIDS.length} solids, at most ${(1 << CLIP_BITS) - 1}`);
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // (For the checks in .claude/verify.)
-export const _V2 = { FACES, RIDGES, DMAX };
+export const _V2 = { FACES, RIDGES, DMAX, WINDOWS };
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
   const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -577,7 +615,7 @@ export const VOLUME = (() => {
   const n = size[0] * size[1] * size[2];
   const at = ([x, y, z]) => x + size[0] * (y + size[1] * z);
   const within = ([x, y, z]) => x >= 0 && y >= 0 && z >= 0 && x < size[0] && y < size[1] && z < size[2];
-  const kind = new Uint8Array(n), open = new Uint8Array(n), faces = new Uint8Array(n), win = new Uint8Array(n);
+  const kind = new Uint8Array(n), open = new Uint8Array(n), faces = new Uint8Array(n), win = new Uint8Array(n), wfirst = new Uint8Array(n);
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const c = [x + lo[0], y + lo[1], z + lo[2]], v = at([x, y, z]);
     const touched = SOLIDS.filter((s) => !cellOut(s, c));
@@ -598,14 +636,16 @@ export const VOLUME = (() => {
     // pocket reaches; plain otherwise.
     if (f && touched.every((s) => s.relief || s.rim)) (kind[v] = SKIN), (faces[v] = f);
     else kind[v] = !f && touched.some((s) => cellIn(s, c)) ? DEEP : PLAIN;
-    // A plain cell that only one solid touches, crossed by its upright faces,
-    // has the windows of the one passing nearest its middle.
-    if (kind[v] === PLAIN && touched.length === 1) {
-      const cs = corners(c), mid = [c[0] + 0.5, c[1] + 0.5, c[2] + 0.5];
-      const crossed = planesOf(touched[0]).filter((p) => p.n[1] === 0 && cs.some((q) => side(p, q) < 0) && cs.some((q) => side(p, q) >= 0));
-      crossed.sort((p, q) => Math.abs(side(p, mid)) / p.len - Math.abs(side(q, mid)) / q.len);
-      const w = crossed.length ? WINDOWS.findIndex((W) => W.solid === touched[0] && W.n.every((x, a) => x === crossed[0].n[a])) : -1;
-      if (w >= 0) win[v] = w + 1;
+    // A plain cell has the openings of each face of a solid with them that
+    // touches it whose slab (from behind the face as deep as they go to past
+    // it as far as they reach: see windowAir) meets the cell, stopped at the
+    // other solids (see CLIP below).
+    if (kind[v] === PLAIN) {
+      const ws = touched.filter((s) => s.windows);
+      if (ws.length > 1) throw new Error(`arcology: two solids with openings touch the cell ${c}`);
+      const first = ws.length ? WINDOWS.findIndex((W) => W.solid === ws[0]) : -1;
+      if (first >= 0) WINDOWS.forEach((W, j) => W.solid === ws[0] && slabMeets(W, c) && (win[v] |= 1 << (j - first)));
+      if (win[v]) wfirst[v] = first + 1;
     }
   }
   // A skin cell's pockets one level finer run on a cell past each side in
@@ -628,28 +668,60 @@ export const VOLUME = (() => {
       if (Math.min(...ds) < REACH && Math.max(...ds) > -lip) deaf[v] |= 1 << i;
     });
   }
-  const runOn = (x, y, z, f) => {
-    const ok = (dx, dy, dz) => {
-      const u = [x + dx, y + dy, z + dz];
-      return !within(u) || !(deaf[at(u)] & f);
-    };
+  // (The steps along each axis to the cells in the box of the open sides.)
+  const boxOf = (open) => [0, 1, 2].map((a) => [0, ...(open & (1 << (2 * a)) ? [1] : []), ...(open & (2 << (2 * a)) ? [-1] : [])]);
+  // (The sides open where the cell u next to [x, y, z] across them is
+  // ok(u), and whether as one box or three.)
+  const runOn = (x, y, z, ok) => {
+    const okAt = (dx, dy, dz) => ok([x + dx, y + dy, z + dz]);
     let open = 0;
-    SIDES.forEach((e, k) => ok(...e) && (open |= 1 << k));
-    const ax = [0, 1, 2].map((a) => [0, ...(open & (1 << (2 * a)) ? [1] : []), ...(open & (2 << (2 * a)) ? [-1] : [])]);
-    const box = ax[0].every((dx) => ax[1].every((dy) => ax[2].every((dz) => ok(dx, dy, dz))));
+    SIDES.forEach((e, k) => okAt(...e) && (open |= 1 << k));
+    const ax = boxOf(open);
+    const box = ax[0].every((dx) => ax[1].every((dy) => ax[2].every((dz) => okAt(dx, dy, dz))));
     return (open << OPEN_AT) | (box ? 0 : 1 << CROSS_AT);
+  };
+  const skinOk = (f) => (u) => !within(u) || !(deaf[at(u)] & f);
+  // A plain cell's openings run on likewise, unless the next cell is one
+  // their slab meets and that does not cut them (off the solid's other
+  // faces, say, or under the table's floor, the plaza's ground: there the
+  // openings stop at the cell's side).
+  const winsOf = (v) => [0, 1, 2, 3].filter((k) => win[v] & (1 << k)).map((k) => wfirst[v] - 1 + k);
+  const plainOk = (ws) => (u) => {
+    if (within(u) && open[at(u)]) return true;
+    const cuts = within(u) ? winsOf(at(u)) : [], c = u.map((q, a) => q + lo[a]);
+    return ws.every((j) => cuts.includes(j) || !slabMeets(WINDOWS[j], c));
+  };
+  // CLIP: the solids other than their own that touch the cell or any cell
+  // its openings run on into (the box of its open sides). The openings stop
+  // at them outside their own solid (inside it, they cut through: a pillar's
+  // channels run on where the lower's slope passes through it). Within any
+  // cell their stopping is the same whichever cell asks (a solid that does
+  // not touch a cell has nothing in it).
+  const clipOf = (x, y, z, word) => {
+    const own = WINDOWS[wfirst[at([x, y, z])] - 1].solid, open = (word >>> OPEN_AT) & 63, out = [];
+    const ax = boxOf(open);
+    for (const dx of ax[0]) for (const dy of ax[1]) for (const dz of ax[2]) {
+      const c = [x + dx + lo[0], y + dy + lo[1], z + dz + lo[2]];
+      SOLIDS.forEach((s, i) => s !== own && !out.includes(i + 1) && !cellOut(s, c) && out.push(i + 1));
+    }
+    if (out.length * CLIP_BITS > 32) throw new Error(`arcology: ${out.length} solids to stop openings at, at ${[x, y, z]}`);
+    return out.reduce((w, i, k) => w | (i << (CLIP_BITS * k)), 0) >>> 0;
   };
   const data = new Uint32Array(2 * n);
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = at([x, y, z]);
     if (!kind[v]) continue;
-    let word = kind[v] | (faces[v] << FACE_AT) | (win[v] << WIN_AT);
+    let word = kind[v] | (faces[v] << FACE_AT) | (wfirst[v] << WIN_AT) | (win[v] << WMASK_AT);
     if (kind[v] === DEEP)
       SIDES.forEach((e, k) => {
         const u = [x + e[0], y + e[1], z + e[2]];
         if (!within(u) || open[at(u)] || kind[at(u)] === DEEP) word |= 1 << (OPEN_AT + k);
       });
-    if (kind[v] === SKIN) word |= runOn(x, y, z, faces[v]);
+    if (kind[v] === SKIN) word |= runOn(x, y, z, skinOk(faces[v]));
+    if (kind[v] === PLAIN && win[v]) {
+      word |= runOn(x, y, z, plainOk(winsOf(v)));
+      data[2 * v + 1] = clipOf(x, y, z, word);
+    }
     data[2 * v] = word >>> 0;
   }
   return { lo, size, data, kind, open, at, within };
@@ -777,15 +849,18 @@ const uint TILE_SALT = ${TILE_SALT}u;
 const float DMAX = ${glf(DMAX)}, BAND_IN = ${glf(BAND_IN)}, BAND_OUT = ${glf(BAND_OUT)};
 // The windows' faces (see WINDOWS): h and t as slants (index, sign); K, alpha
 // (w = h . Y < K R / alpha inside); len; and the grid: pitch and width along
-// (in u), the depth (in w).
+// (in u), the openings' depth and the channel's (in w); up: the phase along,
+// pitch and height (WUP).
 const int NW = ${Math.max(WINDOWS.length, 1)};
 const ivec4 WHT[NW] = ivec4[NW](${(WINDOWS.length ? WINDOWS : [{ h: { k: 0, sign: 1 }, t: { k: 0, sign: 1 } }]).map((W) => `ivec4(${W.h.k}, ${W.h.sign}, ${W.t.k}, ${W.t.sign})`).join(', ')});
 const ivec2 WKA[NW] = ivec2[NW](${(WINDOWS.length ? WINDOWS : [{ K: 0, alpha: 1 }]).map((W) => `ivec2(${W.K}, ${W.alpha})`).join(', ')});
 const ivec3 WH[NW] = ivec3[NW](${ivecs((WINDOWS.length ? WINDOWS : [{ hv: [1, 0, 0] }]).map((W) => W.hv))});
 const ivec3 WT[NW] = ivec3[NW](${ivecs((WINDOWS.length ? WINDOWS : [{ tv: [0, 0, 1] }]).map((W) => W.tv))});
 const float WLEN[NW] = float[NW](${(WINDOWS.length ? WINDOWS : [{ len: 1 }]).map((W) => glf(W.len)).join(', ')});
-const ivec3 WGRID[NW] = ivec3[NW](${(WINDOWS.length ? WINDOWS : [{ len: 1 }]).map((W) => `ivec3(${Math.round(PITCH[0] * W.len)}, ${Math.round(WIN[0] * W.len)}, ${Math.round(DEEP_WIN * W.len)})`).join(', ')});
-const int WIN_AT = ${WIN_AT}, WIN_H = ${WIN[1]}, PITCH_Y = ${PITCH[1]};
+const ivec4 WGRID[NW] = ivec4[NW](${(WINDOWS.length ? WINDOWS : [{ pu: 1, wu: 1, dw: 1, ch: 0 }]).map((W) => `ivec4(${W.pu}, ${W.wu}, ${W.dw}, ${W.ch})`).join(', ')});
+// (And the phase along, the pitch up and the height of each opening.)
+const ivec3 WUP[NW] = ivec3[NW](${(WINDOWS.length ? WINDOWS : [{ ph: 0, py: 1, hy: 1 }]).map((W) => `ivec3(${W.ph}, ${W.py}, ${W.hy})`).join(', ')});
+const int WIN_AT = ${WIN_AT}, WMASK_AT = ${WMASK_AT};
 // Each face's mass's bounds, from the building's origin, in cells.
 const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
 const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
@@ -793,6 +868,19 @@ const int NBARE = ${BARE_PL.length};
 const ivec3 BARE_LO[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[0]))});
 const ivec3 BARE_HI[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[1]))});
 const vec4 BARE_PL[NBARE * 6] = vec4[NBARE * 6](${BARE_PL.flat().map((p) => `vec4(${p.map(glf).join(', ')})`).join(', ')});
+// Every solid's planes (SOLID_PL in the JS), and where each one's are (first, how many).
+const vec4 SOLID_PL[${SOLID_PL.flat().length}] = vec4[${SOLID_PL.flat().length}](${SOLID_PL.flat().map((p) => `vec4(${p.map(glf).join(', ')})`).join(', ')});
+const ivec2 SOLID_AT[${SOLIDS.length}] = ivec2[${SOLIDS.length}](${SOLID_PL.map((pl, i) => `ivec2(${SOLID_PL.slice(0, i).flat().length}, ${pl.length})`).join(', ')});
+const int CLIP_BITS = ${CLIP_BITS};
+// Each face's solid (its index in SOLIDS).
+const int WSOLID[NW] = int[NW](${(WINDOWS.length ? WINDOWS.map((W) => SOLIDS.indexOf(W.solid)) : [0]).join(', ')});
+// How far outside solid i the point q is (cells from the building's origin;
+// inside, less than 0): the most of its planes'.
+float solidOut(int i, vec3 q) {
+  float s = -1e9;
+  for (int k = SOLID_AT[i].x; k < SOLID_AT[i].x + SOLID_AT[i].y; k++) s = max(s, dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w);
+  return s;
+}
 
 // Where the middle city cell is from this one, in lattice units.
 ivec3 fromMiddle(ivec3 id) {
@@ -1024,7 +1112,8 @@ void depthOut(int k, int S, int ni, float nf) {
 // The true heights lo..hi (in 4 y at the city's level; in units one level
 // finer, and within the cell, or a cell past each side in gCarveOpen; as
 // three pieces (gCarveCross), the piece gAxis runs on along that axis only:
-// see runOn in the JS. (Set with gCarve, below.)
+// see runOn in the JS. (Set with gCarve, below, and for a plain cell's
+// openings: see windowAir.)
 uint gCarveOpen;
 bool gCarveCross;
 int gAxis;
@@ -1256,52 +1345,67 @@ uint cityFaces(ivec3 L, vec3 f, ivec3 o) {
   return near;
 }
 
-// Window j's grid where the point is, in a plain cell: the window of its
-// square of the grid (PITCH along and up), from DEEP_WIN behind the face to a
-// unit past it, within the cell; and where the point is in none, how far off
-// its square's edges are (the other windows are beyond them).
+// Face j's openings where the point is, in a plain cell: the opening of its
+// square of the grid (WGRID along, WUP up), from WGRID's deep behind the face
+// to a unit past it, and its channel (WGRID's channel deep, all the way up),
+// within the cell or a cell past each side in gCarveOpen (as one piece or
+// three: see runsOn); and where the point is in none, how far off its
+// square's edges are (the other openings are beyond them; its channel is
+// one piece up the cell).
 float windowAir(int j, ivec3 L, vec3 f, float d, bool ray, inout float reach, inout vec3 nrm) {
   ivec3 base = gCellB * R;
   ivec4 ht = WHT[j];
-  ivec3 g = WGRID[j];
+  ivec4 g = WGRID[j];
   int u, w;
   float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);
   u = ht.w * u + WT[j].x * base.x + WT[j].z * base.z;
   w = ht.y * w + WH[j].x * base.x + WH[j].z * base.z;
   int y = base.y + L.y - ${GROUND * R};
-  int cu = fdiv(u - (fu < 0.0 ? 1 : 0), g.x), cy = fdiv(y - (f.y < 0.0 ? 1 : 0), PITCH_Y);
+  ivec3 gu = WUP[j];
+  int cu = fdiv(u - gu.x - (fu < 0.0 ? 1 : 0), g.x), cy = fdiv(y - (f.y < 0.0 ? 1 : 0), gu.y);
   float len = WLEN[j], inv = 1.0 / len;
-  int u0 = cu * g.x + (g.x - g.y) / 2, u1 = u0 + g.y, y0 = cy * PITCH_Y + (PITCH_Y - WIN_H) / 2, y1 = y0 + WIN_H;
-  float cap = min(min(float(u - cu * g.x) + fu, float((cu + 1) * g.x - u) - fu) * inv,
-                  min(float(y - cy * PITCH_Y) + f.y, float((cy + 1) * PITCH_Y - y) - f.y));
+  int u0 = gu.x + cu * g.x + (g.x - g.y) / 2, u1 = u0 + g.y, y0 = cy * gu.y + (gu.y - gu.z) / 2, y1 = y0 + gu.z;
+  float cap = min(min(float(u - gu.x - cu * g.x) + fu, float(gu.x + (cu + 1) * g.x - u) - fu) * inv,
+                  min(float(y - cy * gu.y) + f.y, float((cy + 1) * gu.y - y) - f.y));
   int K = WKA[j].x * R, a = WKA[j].y;
-  int back = fdiv(K, a) - g.z, outer = -fdiv(-K, a) + int(ceil(len));
+  int outer = -fdiv(-K, a) + int(ceil(len));
   gRay = false;
   float gw = 1e9;
   // (With distance a window fades by getting shallower, as the relief does:
   // see facePocket.)
-  float fo = gO, fa = gA, fr = gO / (CLOSE * float(R)), fg = gA / (CLOSE * float(R)), fz = (float(K) / float(a) - float(back)) * inv;
+  float fo = gO, fa = gA, fr = gO / (CLOSE * float(R)), fg = gA / (CLOSE * float(R));
   gO = 0.0; gA = 0.0;
-  for (int pass = 0; pass < 2; pass++) {
-    airPiece();
-    airPlane((float(u0 - u) - fu) * inv, -vec3(WT[j]) * inv);
-    airPlane((float(u - u1) + fu) * inv, vec3(WT[j]) * inv);
-    gA = fg * fz;
-    airPlane((float(back - w) - fw) * inv + fr * fz, -vec3(WH[j]) * inv);
-    gA = 0.0;
-    airPlane((float(w - outer) + fw) * inv, vec3(WH[j]) * inv);
-    airSpan(L.y, f.y, max(y0 + ${GROUND * R} - base.y, 0), min(y1 + ${GROUND * R} - base.y, R), EY);
-    airSpan(L.x, f.x, 0, R, EX);
-    airSpan(L.z, f.z, 0, R, EZ);
-    if (pass == 0) {
-      gw = gD;
-      if (!ray || gw + gO > 0.0) break;
-      gRay = true;
-    } else {
-      gRay = false;
-      if (gX > reach) { reach = gX; nrm = gN; }
+  int pieces = gCarveCross ? 3 : 1;
+  // (The opening, then its channel, if any.)
+  for (int c = 0; c < (g.w > 0 ? 2 : 1); c++) {
+    int back = fdiv(K, a) - (c == 0 ? g.z : g.w);
+    float fz = (float(K) / float(a) - float(back)) * inv;
+    for (int p = 0; p < pieces; p++) {
+      gAxis = pieces == 1 ? -1 : p;
+      for (int pass = 0; pass < 2; pass++) {
+        airPiece();
+        airPlane((float(u0 - u) - fu) * inv, -vec3(WT[j]) * inv);
+        airPlane((float(u - u1) + fu) * inv, vec3(WT[j]) * inv);
+        gA = fg * fz;
+        airPlane((float(back - w) - fw) * inv + fr * fz, -vec3(WH[j]) * inv);
+        gA = 0.0;
+        airPlane((float(w - outer) + fw) * inv, vec3(WH[j]) * inv);
+        airSpan(L.y, f.y, c == 0 ? max(y0 + ${GROUND * R} - base.y, openLo(1)) : openLo(1), c == 0 ? min(y1 + ${GROUND * R} - base.y, openHi(1)) : openHi(1), EY);
+        airSpan(L.x, f.x, openLo(0), openHi(0), EX);
+        airSpan(L.z, f.z, openLo(2), openHi(2), EZ);
+        if (pass == 0) {
+          float gd = gD;
+          gw = min(gw, gd);
+          if (!ray || gd + gO > 0.0) break;
+          gRay = true;
+        } else {
+          gRay = false;
+          if (gX > reach) { reach = gX; nrm = gN; }
+        }
+      }
     }
   }
+  gAxis = -1;
   gO = fo; gA = fa;
   return min(min(d, gw), max(cap, 0.0));
 }
@@ -1309,9 +1413,10 @@ float windowAir(int j, ivec3 L, vec3 f, float d, bool ray, inout float reach, in
 // A level-(CITY + 1) cell the table says something of: deep in the
 // building, the halls (d, reach and nrm being what they say of it), cut off
 // at its sides across which they may not run on; in its skin, pockets and no
-// rooms (they are the city's surface, coloured as the city: gSkin); solid
-// otherwise. Its air is never further off than its sides (the next cell's
-// may be just across them).
+// rooms (they are the city's surface, coloured as the city: gSkin); plain,
+// solid but for the openings of the faces it has (see windowAir). Its air is
+// never further off than its sides (the next cell's may be just across
+// them).
 float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout float reach, inout vec3 nrm) {
   uint kind = m.x & 3u;
   bool ray = gRay;
@@ -1344,12 +1449,52 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec2 m, float d, inout f
   reach = -1.0;
   nrm = vec3(0.0);
   if (kind == ${PLAIN}u) {
-    int j = int((m.x >> uint(WIN_AT)) & 31u) - 1;
-    if (j < 0) {
+    int j0 = int((m.x >> uint(WIN_AT)) & 31u) - 1;
+    if (j0 < 0) {
       gSkin = false;
       return max(e, 0.0);
     }
-    float a = windowAir(j, L, f, 1e9, ray, reach, nrm);
+    // (The openings of each of its faces in WMASK_AT, run on as runOn says.)
+    gCarveOpen = (m.x >> uint(OPEN_AT)) & 63u;
+    gCarveCross = ((m.x >> uint(CROSS_AT)) & 1u) != 0u;
+    float a = 1e9;
+    for (uint w = (m.x >> uint(WMASK_AT)) & 15u; w != 0u; w &= w - 1u) a = windowAir(j0 + lowBit(w), L, f, a, ray, reach, nrm);
+    // (No air inside the other solids in m.y outside its own (see CLIP in
+    // the JS); a ray in the openings stops at the first of one's way that is
+    // outside its own: where it goes in, or else where it leaves its own.)
+    if (m.y != 0u) {
+      vec3 q = vec3(gCellB) + (vec3(L) + f) / float(R);
+      float fo = gO, fa = gA;
+      int me = WSOLID[j0];
+      float own = solidOut(me, q);
+      bool rays = ray && reach >= 0.0;
+      // (Where the ray leaves its own solid, and that plane's normal.)
+      float oIn = -1e30, oOut = 1e30;
+      vec3 oN = vec3(0.0);
+      if (rays) {
+        gO = 0.0; gA = 0.0;
+        for (int k = SOLID_AT[me].x; k < SOLID_AT[me].x + SOLID_AT[me].y; k++) {
+          float r = dot(SOLID_PL[k].xyz, gDir), g = (dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w) * float(R);
+          if (r > 0.0 && -g / r < oOut) { oOut = -g / r; oN = SOLID_PL[k].xyz; }
+          else if (r < 0.0) oIn = max(oIn, g / -r);
+          else if (r == 0.0 && g > 0.0) oOut = -1e30;
+        }
+      }
+      for (uint c = m.y; c != 0u; c >>= uint(CLIP_BITS)) {
+        int i = int(c & ${(1 << CLIP_BITS) - 1}u) - 1;
+        a = max(a, min(-solidOut(i, q), own) * float(R));
+        if (rays) {
+          solidBegin();
+          for (int k = SOLID_AT[i].x; k < SOLID_AT[i].x + SOLID_AT[i].y; k++) solidFace((dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w) * float(R), SOLID_PL[k].xyz);
+          float x = max(gIn, 0.0);
+          vec3 n = gInN;
+          if (x >= oIn && x < oOut) { x = oOut; n = -oN; }
+          // (Inside it here, outside its own: no air, as the distance says.)
+          if (x < gOut && x < reach) { reach = x > 0.0 ? x : -1.0; nrm = n; }
+        }
+      }
+      gO = fo; gA = fa;
+    }
     gRay = ray;
     gSkin = ray ? reach >= 0.0 : a < 0.0;
     // (Less gO, which map takes off the whole level again: see cell.)
@@ -1530,7 +1675,6 @@ const piece = () => (gD = -Infinity);
 const plane = (s) => (gD = Math.max(gD, s));
 const span = (x, f, x0, x1) => (plane(x0 - x - f), plane(x - x1 + f));
 const NONE = 1e9;
-const cdiv = (a, b) => Math.ceil(a / b);
 const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 
 const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
@@ -1598,8 +1742,9 @@ function plaza(L, f, id) {
 }
 
 let cellB = [0, 0, 0];
-// The sides a skin cell's pockets run on across, whether as three pieces,
-// and which of them is being asked about (see runOn).
+// The sides a skin cell's pockets (or a plain cell's openings) run on
+// across, whether as three pieces, and which of them is being asked about
+// (see runOn).
 let cellOpen = 0, cellCross = false, axis = -1;
 const runsOn = (a, side) => cellOpen & (side << (2 * a)) && (axis < 0 || axis === a);
 const openLo = (a) => (runsOn(a, 2) ? -R : 0), openHi = (a) => (runsOn(a, 1) ? 2 * R : R);
@@ -1838,23 +1983,32 @@ function windowAir(j, L, f, d) {
   const u = W.t.sign * dLs[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * dFs[W.t.k];
   const w = W.h.sign * dLs[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * dFs[W.h.k];
   const y = base[1] + L[1] - GROUND * R;
-  const pu = Math.round(PITCH[0] * W.len), wu = Math.round(WIN[0] * W.len), dw = Math.round(DEEP_WIN * W.len);
-  const cu = fdiv(u - (fu < 0 ? 1 : 0), pu), cy = fdiv(y - (f[1] < 0 ? 1 : 0), PITCH[1]);
-  const u0 = cu * pu + Math.trunc((pu - wu) / 2), u1 = u0 + wu, y0 = cy * PITCH[1] + Math.trunc((PITCH[1] - WIN[1]) / 2), y1 = y0 + WIN[1];
-  const cap = Math.min(Math.min(u - cu * pu + fu, (cu + 1) * pu - u - fu) / W.len, y - cy * PITCH[1] + f[1], (cy + 1) * PITCH[1] - y - f[1]);
-  const K = W.K * R, back = fdiv(K, W.alpha) - dw, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
-  piece();
-  plane((u0 - u - fu) / W.len);
-  plane((u - u1 + fu) / W.len);
-  plane((back - w - fw) / W.len);
-  plane((w - outer + fw) / W.len);
-  span(L[1], f[1], Math.max(y0 + GROUND * R - base[1], 0), Math.min(y1 + GROUND * R - base[1], R));
-  span(L[0], f[0], 0, R);
-  span(L[2], f[2], 0, R);
-  return Math.min(d, gD, Math.max(cap, 0));
+  const { pu, wu, dw, ch, ph, py, hy } = W;
+  const cu = fdiv(u - ph - (fu < 0 ? 1 : 0), pu), cy = fdiv(y - (f[1] < 0 ? 1 : 0), py);
+  const u0 = ph + cu * pu + Math.trunc((pu - wu) / 2), u1 = u0 + wu, y0 = cy * py + Math.trunc((py - hy) / 2), y1 = y0 + hy;
+  const cap = Math.min(Math.min(u - ph - cu * pu + fu, ph + (cu + 1) * pu - u - fu) / W.len, y - cy * py + f[1], (cy + 1) * py - y - f[1]);
+  const K = W.K * R, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
+  // (The opening, then its channel, if any.)
+  let a = NONE;
+  for (const c of ch > 0 ? [0, 1] : [0]) {
+    const back = fdiv(K, W.alpha) - (c === 0 ? dw : ch);
+    a = Math.min(a, eachPiece(1, () => {
+      piece();
+      plane((u0 - u - fu) / W.len);
+      plane((u - u1 + fu) / W.len);
+      plane((back - w - fw) / W.len);
+      plane((w - outer + fw) / W.len);
+      if (c === 0) span(L[1], f[1], Math.max(y0 + GROUND * R - base[1], openLo(1)), Math.min(y1 + GROUND * R - base[1], openHi(1)));
+      else span(L[1], f[1], openLo(1), openHi(1));
+      span(L[0], f[0], openLo(0), openHi(0));
+      span(L[2], f[2], openLo(2), openHi(2));
+      return gD;
+    }));
+  }
+  return Math.min(d, a, Math.max(cap, 0));
 }
 
-function reliefCell(L, f, id, seed, [m], d) {
+function reliefCell(L, f, id, seed, [m, clip], d) {
   const kind = m & 3;
   if (kind === DEEP) {
     const open = (m >>> OPEN_AT) & 63;
@@ -1870,12 +2024,20 @@ function reliefCell(L, f, id, seed, [m], d) {
     return d > 0 ? Math.min(d, Math.max(-gD, 0)) : d;
   }
   const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
-  if (kind === PLAIN) {
-    const j = ((m >>> WIN_AT) & 31) - 1;
-    return j < 0 ? Math.max(e, 0) : Math.min(windowAir(j, L, f, NONE), Math.max(e, 0));
-  }
   cellOpen = (m >>> OPEN_AT) & 63;
   cellCross = !!((m >>> CROSS_AT) & 1);
+  if (kind === PLAIN) {
+    const j0 = ((m >>> WIN_AT) & 31) - 1;
+    let a = NONE;
+    for (let k = 0; k < 4; k++) if ((m >>> WMASK_AT) & (1 << k)) a = windowAir(j0 + k, L, f, a);
+    // (No air inside the other solids, outside their own: see CLIP.)
+    if (clip) {
+      const q = cellB.map((x, i) => x + (L[i] + f[i]) / R), out = (i) => Math.max(...SOLID_PL[i].map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3]));
+      const own = out(SOLIDS.indexOf(WINDOWS[j0].solid));
+      for (let c = clip; c; c >>>= CLIP_BITS) a = Math.max(a, R * Math.min(-out((c & ((1 << CLIP_BITS) - 1)) - 1), own));
+    }
+    return Math.min(a, Math.max(e, 0));
+  }
   return Math.min(pockets(L, f, (m >>> FACE_AT) & 63, NONE), Math.max(e, 0));
 }
 
