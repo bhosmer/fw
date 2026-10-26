@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import arcology, { CITY, ROW_ID, ROWS, VOLUME } from '../../src/spaces/arcology.js';
+import arcology, { CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight } from '../../src/flight.js';
@@ -112,7 +112,7 @@ const C = R / 2, seed1 = levelSeed(CITY + 1);
 const reliefCells = (() => {
   const { lo, size, data } = VOLUME, out = [];
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
-    if (data[2 * (x + size[0] * (y + size[1] * z))]) out.push([x + lo[0], y + lo[1], z + lo[2]]);
+    if (data[_V2.BITS.WORDS * (x + size[0] * (y + size[1] * z))]) out.push([x + lo[0], y + lo[1], z + lo[2]]);
   return out;
 })();
 function air1(v, q) {
@@ -141,10 +141,15 @@ test('the buildings\' relief never changes faster than the point moves', () => {
   assert.ok(worst > 0.5, 'the test moves through enough surfaces to mean something');
 });
 
-// (A cell clear of every solid is the city's air, whatever this level says.)
+// (A cell clear of every solid is the city's air, whatever this level says;
+// and so is a point p of cell c outside every solid: the levels' air adds up.)
 const clear = (c) => {
   const { lo, at, within, open, kind } = VOLUME, t = c.map((x, a) => x - lo[a]);
   return within(t) && open[at(t)] && !kind[at(t)];
+};
+const outside = (c, p) => {
+  const X = c.map((x, a) => x + p[a] / R - _V2.ORIGIN[a]);
+  return _V2.SOLID_PL.every((pl) => pl.some(([nx, ny, nz, K]) => nx * X[0] + ny * X[1] + nz * X[2] > K));
 };
 test('where relief crosses from one cell to the next, both cells say so', () => {
   const rnd = rand(12);
@@ -167,18 +172,21 @@ test('where relief crosses from one cell to the next, both cells say so', () => 
   assert.ok(crossed > 100, `${crossed} points in air on a face`);
 });
 
-// A skin cell's pockets one level finer, and a plain cell's openings, run on
-// into the cells past the sides the table opens (see runOn in arcology.js):
-// wherever they say air there, the cell the point is in says so too, or is
-// the city's air.
-for (const [what, which] of [['a skin cell\'s pockets', (w) => (w & 3) === 2], ['a plain cell\'s openings', (w) => (w & 3) === 3 && (w >>> 19) & 15]])
+// A skin cell's pockets one level finer, and a cell's openings, run on into
+// the cells past the sides the table opens (see runOn in arcology.js):
+// wherever they say air there, the cell the point is in says so too, or the
+// point is the city's air.
+const { WORDS, OPEN_AT, CROSS_AT } = _V2.BITS;
+// (Which cells, and where their run-on is: the pockets' in the first and
+// second words, the openings' in the fourth.)
+for (const [what, which, ow, cw] of [['a skin cell\'s pockets', (w) => (w[0] & 3) === 2, 0, 1], ['a cell\'s openings', (w) => w[2], 3, 3]])
 test(`where ${what} run on, the cells they run into say so`, () => {
   const { lo, at, data } = VOLUME, rnd = rand(13);
-  const skin = reliefCells.filter((c) => which(data[2 * at(c.map((x, a) => x - lo[a]))]));
+  const skin = reliefCells.filter((c) => { const i = WORDS * at(c.map((x, a) => x - lo[a])); return which(data.subarray(i, i + WORDS)); });
   let tried = 0;
   for (let n = 0; n < 40000; n++) {
     const v = skin[Math.floor(rnd() * skin.length)];
-    const open = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 8) & 63, cross = (data[2 * at(v.map((x, a) => x - lo[a]))] >>> 23) & 1;
+    const i = WORDS * at(v.map((x, a) => x - lo[a])), open = (data[i + ow] >>> OPEN_AT) & 63, cross = (data[i + cw] >>> CROSS_AT) & 1;
     // A point in the run-on box (or, run on as three pieces, in one of them),
     // outside the cell.
     const only = cross ? Math.floor(rnd() * 3) : -1;
@@ -191,7 +199,7 @@ test(`where ${what} run on, the cells they run into say so`, () => {
     if (o.every((x) => x === 0)) continue;
     const u = v.map((x, a) => x + o[a]), p = q.map((x, a) => x - o[a] * R);
     const here = air1(v, q);
-    if (!(here < -0.05) || clear(u)) continue;
+    if (!(here < -0.05) || clear(u) || outside(u, p)) continue;
     tried++;
     const there = air1(u, p);
     assert.ok(there < 0.05, `${v} says ${here} at ${q}, ${u} says ${there}`);

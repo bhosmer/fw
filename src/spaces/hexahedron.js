@@ -63,6 +63,43 @@ const DOWN = UP.map(([x, z]) => [x, -z]);
 // The star's inner hexagon, where the two triangles' edges cross: the pillars.
 const HEX = [[10, 0], [5, 26 / 3], [-5, 26 / 3], [-10, 0], [-5, -26 / 3], [5, -26 / 3]];
 const PILLAR = 1.75 / 2; // half the pillar's side
+// How the pillars meet the plate and the roof band (fringe.md, to try):
+// 'under', up to the plate's underside; 'posts', up to the plate's top;
+// 'banded', posts that wear each band's fringe at its heights.
+const JOIN = 'under';
+// What the plate's and the roof band's edges carry (fringe.md): rows of
+// segments (see OPENINGS' segments in arcology.js), units over the band's
+// bottom (18 high); rows from its bottom start 2 under it (to open through
+// it). Basil chose the cornice (2026-10-26): heavy, uninhabited structure;
+// its variations elaborate it structurally, with vertical joints a cell or
+// more apart (fine upright cuts shimmer); of them, the steps. The rest are
+// the night's other candidates.
+const EDGE = 'steps';
+const S = (rows, block, cut, inset, deep, none = 0) => ({ kind: 'segments', rows, block, cut, inset, deep, none });
+const EDGES = {
+  // The cornice: the band's lower part set back in long runs, in two steps.
+  cornice: [S([-2, 36, 10], 240, 24, 1, [3, 4]), S([-2, 36, 6], 240, 24, 1, [7, 8])],
+  // Its steps three, each in runs of its own depth, now and then missing.
+  steps: [S([-2, 36, 14], 240, 24, 1, [2, 3], 15), S([-2, 36, 10], 192, 24, 1, [4, 6], 15), S([-2, 36, 6], 144, 24, 1, [7, 10], 20)],
+  // Courses: a deep setback below, thin reveals above it, as stacked slabs.
+  strata: [S([-2, 36, 7], 240, 24, 1, [6, 9]), S([9, 36, 2], 240, 48, 1, [2, 3]), S([13, 36, 2], 192, 48, 1, [1, 2], 30)],
+  // A plate girder: flanges proud, the web between them set back, crossed by
+  // stiffeners one to three cells apart.
+  girder: [S([4, 36, 10], 72, 24, 3, [3, 5])],
+  // A shallow ledge carried on corbels, a cell or more apart, a deep setback
+  // between them.
+  corbels: [S([-2, 36, 12], 240, 24, 1, [2, 3]), S([-2, 36, 8], 120, 24, 3, [6, 8])],
+  // The night's others: decks (the Tyrell building's bands), a loggia
+  // (Soleri's promenades), hull panels, a trench; and mixed (a loggia on the
+  // plate, decks on the roof band).
+  decks: [S([2, 9, 5], 48, 4, 2, [3, 6], 10)],
+  loggia: [S([4, 18, 10], 36, 6, 2, [8, 10])],
+  panels: [S([1, 9, 7], 60, 4, 1, [1, 3], 25)],
+  trench: [S([6, 18, 6], 36, 3, 1, [2, 6])],
+  mixed: { plate: [S([4, 18, 10], 36, 6, 2, [8, 10])], roof: [S([2, 9, 5], 48, 4, 2, [3, 6], 10)] },
+};
+// (y: the heights a pillar wears a band's at; a band's own are its own.)
+const edge = (which, y) => (EDGES[EDGE][which] ?? EDGES[EDGE]).map((o) => ({ ...o, y }));
 const TOWER = 3, LEG = 1, LEG_AT = 2, TOWER_LO = GROUND + 2.5; // the towers (placeholder)
 
 function prism(corners, y0, y1) {
@@ -85,9 +122,10 @@ function pyramid(corners, yb, apex) {
 
 // The solids: each a list of planes, inside where n . X < K for all of them
 // (X in cells from the axis at the lower's apex). A rim (the plate, the roof
-// band) may meet a mass's relief; nothing else may. Pillars and towers have
-// openings on their upright faces (windows: a kind in OPENINGS in
-// arcology.js, S6). A mass's sloped faces carry
+// band) may meet a mass's relief; nothing else may, but at heights the
+// relief is not cut at. Pillars, towers and the rims have openings on their
+// upright faces (windows: a kind in OPENINGS in arcology.js, or a list of
+// kinds by height; S6). A mass's sloped faces carry
 // relief (see arcology.js), kept clear of its base: ylo, yhi bound the
 // relief's height.
 export function hexahedron() {
@@ -95,8 +133,8 @@ export function hexahedron() {
   const upper = pyramid(UP, PLATE_HI, APEX_HI), lower = pyramid(DOWN, ROOF_LO, APEX_LO);
   solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: APEX_HI });
   solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO });
-  solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true });
-  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true });
+  solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true, windows: edge('plate') });
+  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true, windows: edge('roof') });
   // Pillars: squares facing the centre, from the ground (and a cell under
   // it) to the plate. Their radial direction, as whole numbers.
   for (const [x, z] of HEX) {
@@ -105,7 +143,9 @@ export function hexahedron() {
     const t = [-u[2], 0, u[0]];
     const c = [x, 0, z];
     const sides = [u, u.map((v) => -v), t, t.map((v) => -v)].map((n) => offset(n, c, PILLAR));
-    solids.push({ name: 'pillar', planes: [...sides, offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, PLATE_LO, 0], 0)], windows: 'bays' });
+    const top = JOIN === 'under' ? PLATE_LO : PLATE_HI;
+    const banded = [{ kind: 'bays', y: [GROUND - 1, ROOF_LO] }, ...edge('roof', [ROOF_LO, ROOF_HI]), { kind: 'bays', y: [ROOF_HI, PLATE_LO] }, ...edge('plate', [PLATE_LO, PLATE_HI])];
+    solids.push({ name: 'pillar', planes: [...sides, offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, top, 0], 0)], windows: JOIN === 'banded' ? banded : 'bays' });
   }
   solids.push({ name: 'tower', planes: box([-TOWER, TOWER_LO, -TOWER], [TOWER, ROOF_LO, TOWER]), windows: 'windows' });
   for (const sx of [-1, 1]) for (const sz of [-1, 1])

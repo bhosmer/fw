@@ -93,6 +93,15 @@ ivec3 wrapId(ivec3 a) { return a - P * ivec3(floor((vec3(a) + 0.5) * (1.0 / floa
 bool gRay;        // is a ray being asked about?
 vec3 gDir;        // its direction
 float gO, gA;
+// (And the point's footprint, a pixel, as a fraction of the level's cell
+// (seen from the side it is, for a ray), and how fast it grows with each
+// unit the ray travels: for what fades at its own, finer scale.)
+float gScale = 0.0, gScaleRate = 0.0;
+// (The sizes, in pixels, at which a level is carved fully and not at all:
+// see lean below.)
+const float LOD_LO = 8.0;
+const float LOD_HI = 24.0;
+const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
 float gX;         // how far the ray can go
 vec3 gN;          // the surface it meets there, facing the air
 bool gSkin;       // that air is only the coarser level's surface, cut back
@@ -214,13 +223,15 @@ ${space.slants?.length ? '  gSi = i;\n  gSv = v;\n  gSc = c;' : ''}
 }
 
 // (o: how far the level's air is shrunk there, for the spaces that fade
-// their own way and take it out again: see gO.)
-float levelAir(int i, vec3 v, float o) {
+// their own way and take it out again: see gO; s: the footprint, gScale.)
+float levelAir(int i, vec3 v, float o, float s) {
   float reach;
   vec3 nrm;
   gRay = false;
   gO = o;
   gA = 0.0;
+  gScale = s;
+  gScaleRate = 0.0;
   return levelRay(i, v, reach, nrm);
 }
 `;
@@ -233,7 +244,7 @@ export function probeFrag(nlev, space) {
     /* glsl */ `
 out vec4 outColor;
 void main() {
-  outColor = vec4(levelAir(int(gl_FragCoord.x), vec3(0.0), 0.0), 0.0, 0.0, 1.0);
+  outColor = vec4(levelAir(int(gl_FragCoord.x), vec3(0.0), 0.0, 0.0), 0.0, 0.0, 1.0);
 }`
   );
 }
@@ -312,9 +323,7 @@ const int STEPS = EXACT == 1 ? 96 : 160;
 // marching, the one the ray is about to cross (its way out of the coarser
 // air it is in) or, where no coarser level has air, the one it has just
 // crossed: either way, the surface that finer levels cut their openings into.
-const float LOD_LO = 8.0;
-const float LOD_HI = 24.0;
-const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
+// (LOD_LO, LOD_HI and LOD_K are above, with gScale, for the spaces too.)
 float lean(vec3 n, vec3 dir) { return sqrt(max(abs(dot(n, dir)), 1e-6)); }
 // (But no more than this, for whether a level is carved: where a ray grazes
 // a surface it is mostly at a silhouette or an arris, where what is cut into
@@ -367,7 +376,7 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     if (d > MAX_IN * cell) break;      // already in bigger air than this level has
     float px = cell / foot;
     if (px < LOD_LO) break;            // too small to see: leave it solid
-    float a = levelAir(i, v, CLOSE * float(R) * clamp((foot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0));
+    float a = levelAir(i, v, CLOSE * float(R) * clamp((foot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0), foot / cell);
     if (advance && a > SLACK) gSolid[i] = along + (a - SLACK) / uSig[i];
     float w = -a / uSig[i];
     w -= clamp((foot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0) * CLOSE * cell;
@@ -399,7 +408,7 @@ vec3 detail(vec3 base, vec3 v, float foot, int slot, bool skin) {
     float hole = OPEN_AREA;
     vec3 ink = skin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
     if (sharp > 0.0) {
-      float a = levelAir(i, v, 0.0) / uSig[i];
+      float a = levelAir(i, v, 0.0, 0.0) / uSig[i];
       hole = mix(hole, 1.0 - smoothstep(-foot, 0.5 * foot, a), sharp);
       // (Relief is the surface's own, in its shadow.)
       if (gSkin) ink = mix(ink, base * 0.55, sharp);
@@ -469,6 +478,8 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       if (rel >= 1.0) continue;           // too foreshortened to see
       gO = CLOSE * float(R) * max(rel, 0.0);
       gA = rel > 0.0 ? CLOSE * LOD_K * pix / slant : 0.0;
+      gScale = foot / (slant * cell);
+      gScaleRate = pix / (slant * float(R));
       gRay = true;
       float reach;
       vec3 nn;
@@ -695,7 +706,7 @@ void main() {
       // (Not as far as levels too small to see from here, as with drawing.)
       for (int i = 0; i < NLEV; i++) {
         if (i >= uN || float(R) / uSig[i] < LOD_LO * down * pix) break;
-        if (levelAir(i, c, 0.0) < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
+        if (levelAir(i, c, 0.0, 0.0) < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
       }
       maxT = max(maxT, down + (4.0 - down / uFogLen) * fogIn);
     }

@@ -102,18 +102,19 @@ export class Renderer {
     this.probeBuf = new Float32Array(nProbe * 4);
 
     // What a space keeps as a table rather than works out (see volume in
-    // spaces/halls.js): a 3D texture of pairs of unsigned integers, on a unit of its
-    // own.
+    // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned integers, on a
+    // unit of its own.
     this.volume = null;
     if (space.volume) {
-      const { size, data } = space.volume;
+      const { size, data, words } = space.volume;
       this.volume = gl.createTexture();
       gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
       gl.bindTexture(gl.TEXTURE_3D, this.volume);
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG32UI, size[0], size[1], size[2], 0, gl.RG_INTEGER, gl.UNSIGNED_INT, data);
+      const [inner, form] = words === 4 ? [gl.RGBA32UI, gl.RGBA_INTEGER] : [gl.RG32UI, gl.RG_INTEGER];
+      gl.texImage3D(gl.TEXTURE_3D, 0, inner, size[0], size[1], size[2], 0, form, gl.UNSIGNED_INT, data);
       gl.activeTexture(gl.TEXTURE0);
     }
   }

@@ -64,6 +64,7 @@ scheme        <span class="scheme"></span> (next)
       <button id="help-button">?</button>
     </div>
     <pre id="hud"></pre>
-    <script type="module" src="src/main.js"></script>
+    <!-- (If any of the app's files fails to arrive, it never starts: say so, rather than loading for ever.) -->
+    <script type="module" src="src/main.js" onerror="document.getElementById('loading').textContent = 'a file failed to load: reload the page'"></script>
   </body>
 </html>
