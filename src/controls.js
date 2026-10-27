@@ -4,6 +4,7 @@
 // collision; the only thing scale does is set how fast we travel (see main.js).
 
 const PITCH_MAX = 1.55;
+const SHIFT = (25 * Math.PI) / 180; // the most of the pitch that slides the picture rather than tilts it (see camera)
 const WHEEL = 0.004; // clearances travelled per unit of wheel
 const WHEEL_EASE = 0.08; // seconds over which a turn of the wheel is spent
 const GRIP = 3; // how far off, in clearances, a dragged scene is taken to be
@@ -119,13 +120,24 @@ export class Controls {
     this.turn(this.axis('ArrowRight', 'ArrowLeft') * 1.6 * dt, this.axis('ArrowUp', 'ArrowDown') * 1.6 * dt);
   }
 
-  basis() {
+  basis(pitch = this.pitch) {
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
-    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
     const fwd = [sy * cp, sp, -cy * cp];
     const right = [cy, 0, sy];
     const up = [-sy * sp, cp, cy * sp];
     return { fwd, right, up };
+  }
+
+  // How the screen maps to rays: the ray through (x, y) (tan of the half
+  // field of view at the screen's edge) goes along fwd + x right + y up. As
+  // a shift lens: near level the picture plane stays upright and slides
+  // (fwd is not then square to it), so that what is upright stays so;
+  // looking further up or down, more and more of the pitch tilts it instead,
+  // smoothly (the slide never more than SHIFT).
+  camera() {
+    const shift = SHIFT * Math.tanh(this.pitch / SHIFT), { fwd, right, up } = this.basis(this.pitch - shift);
+    return { fwd: fwd.map((x, a) => x + Math.tan(shift) * up[a]), right, up };
   }
 
   // Direction we want to travel (not normalised to zero when idle), and boost.

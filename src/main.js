@@ -74,7 +74,7 @@ function viewNow() {
   const fogLen = flight.fog * SCHEMES[scheme].fog;
   const maxT = 4 * Math.max(flight.fog, fogLen);
   const { recs, all } = flight.visible(maxT, N_VIEW);
-  const { fwd, right, up } = controls.basis();
+  const { fwd, right, up } = controls.camera();
   const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
     tan: FOV_TAN,
@@ -120,7 +120,7 @@ function look(now) {
   const stride = Math.max(4, Math.round(canvas.width / 100));
   const { recs, view } = viewNow();
   if (renderer.look(recs, view, stride)) {
-    lookAt = { basis: controls.basis(), F: pos.F, res: [canvas.width, canvas.height], stride };
+    lookAt = { basis: controls.camera(), F: pos.F, res: [canvas.width, canvas.height], stride };
     lookedAt = now;
   }
 }
@@ -236,11 +236,19 @@ else flight.elsewhere(Math.random);
 
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
-// antialiasing takes to gather all its samples of it (see TAA_N).
+// antialiasing takes to gather all its samples of it (see TAA_N). Once still,
+// at full resolution again, whatever motion took it down to: at less, finer
+// relief is too small to carve and shows only as texture.
 let shown = '', settled = 0;
 function present() {
   resize();
-  const key = [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference, scheme].join();
+  const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference, scheme].join();
+  let key = keyNow();
+  if (key === shown && pixelRatio < MAX_PIXEL_RATIO) {
+    pixelRatio = MAX_PIXEL_RATIO;
+    resize();
+    key = keyNow();
+  }
   if (key === shown) {
     if (settled >= TAA_N) return false;
     settled++;
@@ -284,7 +292,7 @@ function frame(now) {
   if (pilot.on) look(now);
   if (drew && moved && raw < 0.25) {
     // Resolution gives way quickly when frames run long and returns slowly
-    // (and only while we move: at rest, the picture should stay as it is).
+    // while we move (at rest it is full: see present).
     fps += (1 / raw - fps) * 0.1;
     if (raw > 1 / 45) slow++;
     else slow = 0;
@@ -383,7 +391,7 @@ window.fw = {
           });
           got = renderer.seen();
         }
-        if (got) pilot.see(got, controls.basis(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
+        if (got) pilot.see(got, controls.camera(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
         log.push({ t: i / 60, F: pos.F, phase: pilot.phase, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }
