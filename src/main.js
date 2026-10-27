@@ -32,8 +32,7 @@ const N_VIEW = 12;
 
 const FOV_TAN = Math.tan((70 * Math.PI) / 360);
 const N_THREAD = 64; // points in the drawn thread
-const MAX_PIXEL_RATIO = 1; // canvas pixels per CSS pixel
-const MIN_PIXEL_RATIO = 0.35;
+const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
 
 const canvas = document.getElementById('view');
 const hud = document.getElementById('hud');
@@ -86,12 +85,8 @@ function viewNow() {
     debug,
     reference,
     taa: !snapping,
-    // (Upscaling: what fraction of the pixels the view is drawn at; and, for
-    // testing it at full size, whether to gather even then.)
-    upscale: TAAU && !snapping ? upscale : 0,
-    upscaleAlways: TAAU && !snapping,
-    // (How much of the picture before full resolution came back still shows.)
-    fade: snapping ? 0 : fadeNow(),
+    // (What fraction of the pixels each way the view is drawn at: see upscale.)
+    upscale: snapping ? 1 : upscale,
     scheme: SCHEMES[scheme],
     outer: flight.outerAir(all),
     sky: flight.skyHeight(),
@@ -132,22 +127,19 @@ function look(now) {
   }
 }
 
-// Temporal upscaling (?taau=1, to try: see TAAU_FRAG): the canvas stays at
-// full resolution and only the view is drawn at fewer pixels, `upscale` of
-// them each way, following frame time as pixelRatio does otherwise; the
-// history, at full resolution, gathers them.
-const TAAU = new URLSearchParams(location.search).get('taau') === '1';
-const MIN_UPSCALE = 0.35;
-let upscale = 1;
-// Resolution follows frame time. What is carved does not (review21): detail
-// is sized by the picture's pixels at full resolution (lodH, their number
-// down it), so that a lower resolution only samples the same geometry less
+// Resolution follows frame time, by temporal upscaling (see TAAU_FRAG): the
+// canvas stays at full resolution and only the view is drawn at fewer
+// pixels, `upscale` of them each way, while we move (at rest, all of them);
+// the history, at full resolution, gathers them. What is carved does not
+// follow it (review21): detail is sized by the picture's pixels (lodH, their
+// number down it), so that fewer pixels only sample the same geometry less
 // densely, and coming to rest changes no geometry.
-let pixelRatio = MAX_PIXEL_RATIO, lodH = 1;
+const MIN_UPSCALE = 0.35;
+let upscale = 1, lodH = 1;
 function resize() {
-  lodH = Math.max(1, Math.round(canvas.clientHeight * MAX_PIXEL_RATIO));
-  const w = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
-  const h = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+  lodH = Math.max(1, Math.round(canvas.clientHeight * PIXEL_RATIO));
+  const w = Math.max(1, Math.round(canvas.clientWidth * PIXEL_RATIO));
+  const h = lodH;
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
@@ -255,26 +247,13 @@ else flight.elsewhere(Math.random);
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
 // antialiasing takes to gather all its samples of it (see TAA_N). Once still,
-// at full resolution again, whatever motion took it down to (at less, finer
-// relief is too small to carve and shows only as texture), faded in over the
-// picture at rest over FADE_MS from the first frame drawn at it (restored:
-// when, -1 before that frame; frames go on being drawn until it is done:
-// they can come faster than the screen shows them).
-const FADE_MS = 800;
-let shown = '', settled = 0, restored = 0;
+// drawn at full resolution again, whatever motion took it down to: the
+// history carries on, so the picture sharpens over those frames.
+let shown = '', settled = 0;
 function present() {
   resize();
   const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), controls.thread, canvas.width, canvas.height, upscale, debug, reference, scheme].join();
   let key = keyNow();
-  if (key === shown && pixelRatio < MAX_PIXEL_RATIO) {
-    pixelRatio = MAX_PIXEL_RATIO;
-    resize();
-    key = keyNow();
-    shown = key;
-    settled = 0;
-    restored = -1;
-  }
-  // (Upscaling: back to full at rest too, but the history carries on: no fade.)
   if (key === shown && upscale < 1) {
     upscale = 1;
     key = keyNow();
@@ -282,17 +261,13 @@ function present() {
     settled = 0;
   }
   if (key === shown) {
-    if (settled >= TAA_N && !fadeNow()) return false;
+    if (settled >= TAA_N) return false;
     settled++;
-  } else (settled = 0), (restored = 0);
+  } else settled = 0;
   shown = key;
   levelsDrawn = draw();
   return true;
 }
-const fadeNow = () => {
-  if (restored === -1) restored = performance.now();
-  return restored ? Math.pow(Math.max(0, 1 - (performance.now() - restored) / FADE_MS), 2) : 0;
-};
 // (Snapshots draw one frame as it is, without antialiasing over time.)
 let snapping = false;
 
@@ -334,16 +309,14 @@ function frame(now) {
     else slow = 0;
     if (raw < 1 / 55) quick++;
     else quick = 0;
-    // (Upscaling only where the view is upscaled: not for debug views or
-    // references, whose resolution follows as without it.)
-    const scaling = TAAU && !debug && !reference;
+    // (Not for debug views or references, which are drawn at full
+    // resolution, to be exact: see Renderer.drawFrame.)
+    if (debug || reference) slow = quick = 0;
     if (slow >= 3) {
-      if (scaling) upscale = Math.max(MIN_UPSCALE, upscale * 0.8);
-      else pixelRatio = Math.max(MIN_PIXEL_RATIO, pixelRatio * 0.8);
+      upscale = Math.max(MIN_UPSCALE, upscale * 0.8);
       slow = quick = 0;
     } else if (quick >= 90) {
-      if (scaling) upscale = Math.min(1, upscale * 1.1);
-      else pixelRatio = Math.min(MAX_PIXEL_RATIO, pixelRatio * 1.1);
+      upscale = Math.min(1, upscale * 1.1);
       quick = 0;
     }
   }
@@ -403,7 +376,7 @@ window.fw = {
   },
   get state() {
     const { sky, clearance, scale, pace, opened, fog, sensed } = flight;
-    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, pixelRatio, upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = controls.basis();
@@ -505,14 +478,13 @@ window.fw = {
   // (Testing upscaling: the fraction of pixels drawn, as the frame time would set it.)
   set upscale(v) { upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
   get upscale() { return upscale; },
-  get taau() { return TAAU; },
   rewind(seconds) {
     for (let i = 0; i < Math.abs(seconds) * 60; i++) flight.retrace(1 / 60, seconds > 0 ? -1 : 1);
     return this.state;
   },
   // GPU milliseconds per frame for the current view, at one pixel per CSS pixel.
   async bench(n = 4) {
-    pixelRatio = 1;
+    upscale = 1;
     resize();
     flight.sense();
     const ms = await renderer.time(() => {

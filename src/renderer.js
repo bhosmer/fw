@@ -1,4 +1,4 @@
-import { VERT, SMOOTH_FRAG, TAA_FRAG, TAAU_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
+import { VERT, SMOOTH_FRAG, TAAU_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
 import { levelSeed } from './util.js';
 
 function compile(gl, type, src) {
@@ -31,7 +31,7 @@ const VOLUME_UNIT = 2;
 // (And the space's other tables', from this one on.)
 const TABLES_UNIT = 3;
 // (And, past the tables, the upscaling history's weights while it is
-// resolved: see resolveUp.)
+// resolved: see resolve.)
 const WEIGHT_UNIT = 7;
 
 // Shafts of light are drawn for one pixel in this many each way (see draw).
@@ -69,12 +69,11 @@ export class Renderer {
     // against: made the first time it is asked for (see refProg).
     this.makeRef = () => link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
-    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes', 'uFade', 'uFadeW']);
-    this.taaProg = link(gl, TAA_FRAG, ['uCur', 'uHist', 'uRes', 'uCam', 'uPrev', 'uD', 'uTan', 'uKeep', 'uLog', 'uStill']);
-    // Temporal antialiasing (see TAA_FRAG): two history pictures, drawn
-    // into in turn; and what the frame before was drawn from.
+    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
+    // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
+    // pictures, drawn into in turn, each with its weights; and what the frame
+    // before was drawn from.
     this.hist = [null, null];
-    // (Temporal upscaling's: each history picture's weights, and the program.)
     this.histW = [null, null];
     this.taauProg = link(gl, TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']);
     this.histFbo = [gl.createFramebuffer(), gl.createFramebuffer()];
@@ -92,10 +91,6 @@ export class Renderer {
     this.viewTex = null;
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];
-    // The picture last shown, and the one before a change of size, which
-    // the next fades in over (see drawFrame).
-    this.lastShown = null;
-    this.fadeTex = null;
 
     // How long the GPU takes over each frame, where that can be timed: a
     // frame the GPU takes longer over than the display allows is shown late,
@@ -228,16 +223,14 @@ export class Renderer {
     return t;
   }
 
-  // The picture is drawn into a texture the size of the canvas, then
-  // (see drawFrame) blended with the frames before and anti-aliased onto the canvas.
+  // The picture is drawn into a texture the size of the canvas (into its
+  // corner, at fewer pixels, while upscaling), then (see drawFrame) gathered
+  // into the history and anti-aliased onto the canvas.
   viewTarget() {
     const gl = this.gl;
     const w = this.canvas.width, h = this.canvas.height;
     if (this.viewSize[0] !== w || this.viewSize[1] !== h) {
-      // (The picture last shown is kept to fade from; the rest go.)
-      if (this.fadeTex) gl.deleteTexture(this.fadeTex);
-      this.fadeTex = this.lastShown;
-      const drop = (t) => t && t !== this.fadeTex && gl.deleteTexture(t);
+      const drop = (t) => t && gl.deleteTexture(t);
       drop(this.viewTex);
       this.viewTex = this.picture(w, h);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
@@ -247,7 +240,7 @@ export class Renderer {
         this.hist[i] = this.picture(w, h);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[i]);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.hist[i], 0);
-        if (this.histW[i]) gl.deleteTexture(this.histW[i]);
+        drop(this.histW[i]);
         this.histW[i] = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, this.histW[i]);
         gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16F, w, h);
@@ -317,8 +310,11 @@ export class Renderer {
     // (Temporal upscaling: the view, and its shafts, drawn at fewer pixels,
     // `render` of them, into the picture-sized textures' corner.)
     const W = this.canvas.width, H = this.canvas.height;
-    const up = !!view.upscale && !!view.taa && !view.debug && !view.reference;
-    const render = up ? [Math.max(1, Math.round(W * view.upscale)), Math.max(1, Math.round(H * view.upscale))] : [W, H];
+    // (Not debug views or references, which are drawn at full resolution, to
+    // be exact.)
+    const up = !!view.taa && !view.debug && !view.reference;
+    const s = up ? view.upscale : 1;
+    const render = [Math.max(1, Math.round(W * s)), Math.max(1, Math.round(H * s))];
     const toOut = [W / render[0], H / render[1]];
     const shaftN = [Math.ceil(render[0] / SHAFT_STRIDE), Math.ceil(render[1] / SHAFT_STRIDE)];
     if (view.scheme.shafts > 0 && !view.debug) {
@@ -354,7 +350,7 @@ export class Renderer {
     if (raw) return;
 
     let shown = this.viewTex;
-    if (taa) shown = up || view.upscaleAlways ? this.resolveUp(recs, view, jit, render) : this.resolve(recs, view, jit);
+    if (taa) shown = this.resolve(recs, view, jit, render);
     else this.prev = null;
     const q = this.smoothProg;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -363,15 +359,7 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, shown);
     gl.uniform1i(q.u.uTex, 0);
     gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
-    // (Faded in over the picture before a change of size, by view.fade.)
-    const fade = this.fadeTex && view.fade > 0 ? view.fade : 0;
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, fade ? this.fadeTex : shown);
-    gl.uniform1i(q.u.uFade, 1);
-    gl.uniform1f(q.u.uFadeW, fade);
-    gl.activeTexture(gl.TEXTURE0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    this.lastShown = shown;
   }
 
   // Forgets the history (after a jump to somewhere else).
@@ -379,10 +367,11 @@ export class Renderer {
     this.prev = null;
   }
 
-  // Blends the frame just drawn with the history (see TAA_FRAG), into the
-  // next history picture, which it returns.
-  resolve(recs, view, jit) {
-    const gl = this.gl, q = this.taaProg;
+  // Gathers the frame just drawn (at render pixels) into the history, with
+  // its weights (see TAAU_FRAG): into the next history picture, which it
+  // returns.
+  resolve(recs, view, jit, render) {
+    const gl = this.gl, q = this.taauProg;
     const now = { cam: view.cam, levels: new Map(recs.map((r) => [r.level, { id: [...r.id, ...r.pid].join(), at: r.L.map((x, a) => x + r.f[a]), sig: r.sig }])) };
     // How far the camera has moved since, in view units: by the finest level
     // drawn both times whose cell (and its parent's, so as not to be fooled
@@ -397,45 +386,6 @@ export class Renderer {
       }
     // (Still: nothing about the view has changed, so the frames are samples
     // of one picture, to be averaged; else history is checked and clamped.)
-    const still = D && D.d.every((x) => x === 0) && D.log === 0 && view.cam.every((x, i) => x === this.prev.cam[i]);
-    this.still = still ? Math.min(this.still + 1, TAA_N - 1) : 0;
-    const out = 1 - this.histAt;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[out]);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.useProgram(q.prog);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
-    gl.uniform1i(q.u.uCur, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.hist[this.histAt]);
-    gl.uniform1i(q.u.uHist, 1);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
-    gl.uniformMatrix3fv(q.u.uCam, false, view.cam);
-    gl.uniformMatrix3fv(q.u.uPrev, false, this.prev ? this.prev.cam : view.cam);
-    gl.uniform3f(q.u.uD, ...(D ? D.d : [0, 0, 0]));
-    gl.uniform1f(q.u.uTan, view.tan);
-    gl.uniform1f(q.u.uKeep, !D ? 0 : still ? this.still / (this.still + 1) : TAA_KEEP);
-    gl.uniform1f(q.u.uLog, D ? D.log : 0);
-    gl.uniform1i(q.u.uStill, still ? 1 : 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    this.histAt = out;
-    this.prev = now;
-    this.lastD = D;
-    return this.hist[out];
-  }
-
-  // The same, upscaling (see TAAU_FRAG): the frame drawn at render pixels
-  // gathered into the picture-sized history, with its weights.
-  resolveUp(recs, view, jit, render) {
-    const gl = this.gl, q = this.taauProg;
-    const now = { cam: view.cam, levels: new Map(recs.map((r) => [r.level, { id: [...r.id, ...r.pid].join(), at: r.L.map((x, a) => x + r.f[a]), sig: r.sig }])) };
-    let D = null;
-    if (this.prev)
-      for (const [lv, n] of now.levels) {
-        const o = this.prev.levels.get(lv);
-        if (o && o.id === n.id && n.sig > TAA_SIG_MIN && (D === null || n.sig > D.sig)) D = { sig: n.sig, d: n.at.map((x, a) => (x - o.at[a]) / n.sig), log: Math.log2(n.sig / o.sig) };
-      }
     const still = D && D.d.every((x) => x === 0) && D.log === 0 && view.cam.every((x, i) => x === this.prev.cam[i]);
     // (Still, but drawn at another size than the frame before: the still
     // average starts over, counting what was before as one frame.)
@@ -466,8 +416,9 @@ export class Renderer {
     gl.uniform3f(q.u.uD, ...(D ? D.d : [0, 0, 0]));
     gl.uniform1f(q.u.uTan, view.tan);
     gl.uniform1f(q.u.uLog, D ? D.log : 0);
-    // (At most KEEP's worth of frames' weight moving (as TAA_FRAG's blend),
-    // TAA_N - 1 still; the first still frame counts what was before as one.)
+    // (At most KEEP's worth of frames' weight moving (a blend of 1 - KEEP of
+    // each frame), TAA_N - 1 still; the first still frame counts what was
+    // before as one.)
     gl.uniform1f(q.u.uCap, still ? TAA_N - 1 : TAA_KEEP / (1 - TAA_KEEP));
     gl.uniform1i(q.u.uHave, D ? 1 : 0);
     gl.uniform1i(q.u.uStill, still ? 1 : 0);

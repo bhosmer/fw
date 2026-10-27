@@ -281,7 +281,7 @@ uniform vec3 uWall[NLEV];
 uniform vec3 uFloor[NLEV];
 uniform vec2 uRes;
 uniform float uLodH;       // pixels down the picture that detail is sized for (see lodH in main.js)
-uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAA_FRAG)
+uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAAU_FRAG)
 uniform mat3 uCam;
 uniform float uTan;        // tan(fov / 2)
 uniform float uScale;      // our clearance, smoothed
@@ -859,7 +859,7 @@ void main() {
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
   col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
   // (And how far off what it saw is, for the next frame to find it again:
-  // see TAA_FRAG.)
+  // see TAAU_FRAG.)
   outColor = vec4(col, hit ? log2(max(t, 1e-30)) : 1e4);
 }`
   );
@@ -872,10 +872,6 @@ export const SMOOTH_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uRes;
-// (And the picture shown before, which this one fades in over, by uFadeW:
-// see Renderer.drawFrame.)
-uniform sampler2D uFade;
-uniform float uFadeW;
 out vec4 outColor;
 
 const int SEARCH = 16;
@@ -951,17 +947,22 @@ void smoothed() {
 
 void main() {
   smoothed();
-  if (uFadeW > 0.0) outColor.rgb = mix(outColor.rgb, texture(uFade, gl_FragCoord.xy / uRes).rgb, uFadeW);
 }`;
 
 
-// Temporal upscaling (.claude/design/taau.md, review23, review24): the view
-// drawn at fewer pixels (uRender of them, each its pixel's middle moved by
-// uJit), gathered into a history the picture's size (uRes). Each pixel of it
-// takes the frames' samples that fall inside it, weighed into what it has
-// (its weight in a second target, at most uCap: KEEP's worth moving, TAA_N -
-// 1 still, as TAA_FRAG's blends once its weight has built up); with no
-// history (somewhere new to it), a wider gather of the samples around it.
+// Temporal antialiasing and upscaling (.claude/design/taa.md, taau.md):
+// each frame's rays go through a different point of their pixels (uJit),
+// and the view may be drawn at fewer pixels (uRender of them: colour, and
+// log2 of the distance to what each saw, 1e4 for nothing), gathered into a
+// history the picture's size (uRes). Each pixel of it takes the frame's
+// samples that fall inside it, weighed into what it has (its weight in a
+// second target, at most uCap: a constant blend moving, a running average
+// still); with no history (somewhere new to it), a wider gather of the
+// samples around it. Its history is found by where the camera was then:
+// the point its ray met, D further along (the camera's move since, in view
+// units), seen through the previous camera (uPrev); kept within the range of
+// the frame's samples around it, and dropped where it saw something else
+// (disocclusion) or was off screen.
 export const TAAU_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 uniform sampler2D uCur, uHist, uHistW;
@@ -1012,18 +1013,23 @@ void main() {
     outW = vec4(min(W + wb, uCap), 0.0, 0.0, 1.0);
     return;
   }
-  // Where this pixel's middle was seen the frame before (see TAA_FRAG).
+  // Where this pixel's middle was seen the frame before (at the distance its
+  // nearest sample saw: history is kept for pixels' middles).
   vec2 uv = (x * 2.0 - uRes) / uRes.y;
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
   bool far = dep > 1e3;
   vec3 q = far ? rd : rd * exp2(dep) + uD;
-  vec3 v = inverse(uPrev) * q;
+  vec3 v = inverse(uPrev) * q; // (not square, as a shift lens: see Controls.camera)
   if (v.z >= 0.0) return;
   vec2 pv = v.xy / (-v.z * uTan);
   vec2 pp = (pv * uRes.y + uRes) * 0.5;
   if (any(lessThan(pp, vec2(0.5))) || any(greaterThan(pp, uRes - 0.5))) return;
   vec4 h = texture(uHist, pp / uRes);
   float W = texture(uHistW, pp / uRes).r;
+  // (Something else was there then: a nearer or farther surface. The
+  // distances are not blended, as colours may be: one of the four nearest
+  // pixels must have seen this point. In the frame before's units: they
+  // change with the level we are at.)
   float was = far ? 1e4 : log2(length(q)) + uLog;
   ivec2 c = ivec2(floor(pp - 0.5));
   bool same = false;
@@ -1036,71 +1042,4 @@ void main() {
   W = min(W, uCap);
   outColor = vec4(wb > 0.0 ? (kept * W + cb) / (W + wb) : kept, dep);
   outW = vec4(min(W + wb, uCap), 0.0, 0.0, 1.0);
-}`;
-
-// Temporal antialiasing (.claude/design/taa.md): each frame's rays go
-// through a different point of their pixels; this blends the frame (uCur:
-// colour, and log2 of the distance to what each pixel saw, 1e4 for nothing)
-// with what the frames before saw of the same points (uHist, the same,
-// in the previous frame's pixels), found by where the camera was then: the
-// point the ray met, D further along (the camera's move since, in view
-// units), seen through the previous camera (uPrev). What the history says
-// is kept within the range of the frame's own neighbourhood, and dropped
-// where it saw something else (disocclusion) or was off screen.
-export const TAA_FRAG = /* glsl */ `#version 300 es
-precision highp float;
-uniform sampler2D uCur, uHist;
-uniform vec2 uRes;
-uniform mat3 uCam, uPrev;
-uniform vec3 uD;
-uniform float uTan, uKeep, uLog;
-uniform bool uStill;
-out vec4 outColor;
-
-vec3 ycocg(vec3 c) { return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
-vec3 rgb(vec3 y) { return vec3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z); }
-
-void main() {
-  ivec2 at = ivec2(gl_FragCoord.xy);
-  vec4 here = texelFetch(uCur, at, 0);
-  // The frame's neighbourhood, for the range history may take.
-  vec3 lo = vec3(1e9), hi = vec3(-1e9);
-  for (int j = -1; j <= 1; j++)
-    for (int i = -1; i <= 1; i++) {
-      vec3 c = ycocg(texelFetch(uCur, clamp(at + ivec2(i, j), ivec2(0), ivec2(uRes) - 1), 0).rgb);
-      lo = min(lo, c); hi = max(hi, c);
-    }
-  outColor = here;
-  if (uKeep <= 0.0) return;
-  // Still: the frames are samples of one picture, averaged as they come.
-  if (uStill) {
-    outColor = vec4(mix(here.rgb, texelFetch(uHist, at, 0).rgb, uKeep), here.a);
-    return;
-  }
-  // Where this pixel's middle was seen the frame before (at the distance its
-  // ray saw: history is kept for pixels' middles).
-  vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
-  vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
-  bool far = here.a > 1e3;
-  vec3 q = far ? rd : rd * exp2(here.a) + uD;
-  vec3 v = inverse(uPrev) * q; // (not square, as a shift lens: see Controls.camera)
-  if (v.z >= 0.0) return;
-  vec2 pv = v.xy / (-v.z * uTan);
-  vec2 pp = (pv * uRes.y + uRes) * 0.5;
-  if (any(lessThan(pp, vec2(0.5))) || any(greaterThan(pp, uRes - 0.5))) return;
-  vec4 h = texture(uHist, pp / uRes);
-  // (Something else was there then: a nearer or farther surface. The
-  // distances are not blended, as colours may be: one of the four nearest
-  // pixels must have seen this point.)
-  // (In the frame before's units: they change with the level we are at.)
-  float was = far ? 1e4 : log2(length(q)) + uLog;
-  ivec2 c = ivec2(floor(pp - 0.5));
-  bool same = false;
-  for (int k = 0; k < 4; k++) {
-    float a = texelFetch(uHist, clamp(c + ivec2(k & 1, k >> 1), ivec2(0), ivec2(uRes) - 1), 0).a;
-    same = same || (far ? a > 1e3 : a < 1e3 && abs(a - was) < 0.07);
-  }
-  if (!same) return;
-  vec3 kept = rgb(clamp(ycocg(h.rgb), lo, hi));
-  outColor = vec4(mix(here.rgb, kept, uKeep), here.a);
 }`;
