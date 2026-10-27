@@ -63,10 +63,12 @@ const DOWN = UP.map(([x, z]) => [x, -z]);
 // The star's inner hexagon, where the two triangles' edges cross: the pillars.
 const HEX = [[10, 0], [5, 26 / 3], [-5, 26 / 3], [-10, 0], [-5, -26 / 3], [5, -26 / 3]];
 const PILLAR = 1.75 / 2; // half the pillar's side
-// How the pillars meet the plate and the roof band (fringe.md, to try):
-// 'under', up to the plate's underside; 'posts', up to the plate's top;
-// 'banded', posts that wear each band's fringe at its heights.
-const JOIN = 'under';
+// How the pillars meet the plate and the roof band (fringe.md; Basil chose
+// it from several, 2026-10-26): each pillar rises to the plate's top, its
+// plate-high part tapering upward by TAPER on each side, a buttress the plate
+// is joined to; the bands' undercuts stop BEARING short of it, so that they
+// bear on it, and its channels run on through the roof band.
+const BEARING = 6 / 24, TAPER = 6 / 24;
 // What the plate's and the roof band's edges carry (fringe.md): rows of
 // segments (see OPENINGS' segments in arcology.js), units over the band's
 // bottom (18 high); rows from its bottom start 2 under it (to open through
@@ -99,7 +101,7 @@ const EDGES = {
   mixed: { plate: [S([4, 18, 10], 36, 6, 2, [8, 10])], roof: [S([2, 9, 5], 48, 4, 2, [3, 6], 10)] },
 };
 // (y: the heights a pillar wears a band's at; a band's own are its own.)
-const edge = (which, y) => (EDGES[EDGE][which] ?? EDGES[EDGE]).map((o) => ({ ...o, y }));
+const edge = (which) => EDGES[EDGE][which] ?? EDGES[EDGE];
 const TOWER = 3, LEG = 1, LEG_AT = 2, TOWER_LO = GROUND + 2.5; // the towers (placeholder)
 
 function prism(corners, y0, y1) {
@@ -134,18 +136,24 @@ export function hexahedron() {
   solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: APEX_HI });
   solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO });
   solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true, windows: edge('plate') });
-  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true, windows: edge('roof') });
+  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true, yields: true, windows: edge('roof') });
   // Pillars: squares facing the centre, from the ground (and a cell under
-  // it) to the plate. Their radial direction, as whole numbers.
+  // it) to the plate's top, a buttress at the plate (see BEARING). Their
+  // radial direction, as whole numbers.
   for (const [x, z] of HEX) {
     // ((5, 26/3) runs along (15, 26).)
     const u = z === 0 ? [Math.sign(x), 0, 0] : [15 * Math.sign(x), 0, 26 * Math.sign(z)];
     const t = [-u[2], 0, u[0]];
     const c = [x, 0, z];
-    const sides = [u, u.map((v) => -v), t, t.map((v) => -v)].map((n) => offset(n, c, PILLAR));
-    const top = JOIN === 'under' ? PLATE_LO : PLATE_HI;
-    const banded = [{ kind: 'bays', y: [GROUND - 1, ROOF_LO] }, ...edge('roof', [ROOF_LO, ROOF_HI]), { kind: 'bays', y: [ROOF_HI, PLATE_LO] }, ...edge('plate', [PLATE_LO, PLATE_HI])];
-    solids.push({ name: 'pillar', planes: [...sides, offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, top, 0], 0)], windows: JOIN === 'banded' ? banded : 'bays' });
+    const sides = [u, u.map((v) => -v), t, t.map((v) => -v)];
+    // (Its buttress's sides: each through its foot's edge at the plate's
+    // underside and the line TAPER in from it at the plate's top.)
+    const slope = (n) => {
+      const h = n.map((v) => v / Math.hypot(...n)), m = [-h[2], 0, h[0]], at = (w, y, k) => tw([x + h[0] * w + m[0] * k, y, z + h[2] * w + m[2] * k]);
+      return through(at(PILLAR, PLATE_LO, PILLAR), at(PILLAR, PLATE_LO, -PILLAR), at(PILLAR - TAPER, PLATE_HI, 0), tw([x, (PLATE_LO + PLATE_HI) / 2, z]));
+    };
+    // (keep: others' openings stop that far clear of it: see arcology.js.)
+    solids.push({ name: 'pillar', planes: [...sides.map((n) => offset(n, c, PILLAR)), ...sides.map(slope), offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, PLATE_HI, 0], 0)], windows: 'bays', keep: BEARING });
   }
   solids.push({ name: 'tower', planes: box([-TOWER, TOWER_LO, -TOWER], [TOWER, ROOF_LO, TOWER]), windows: 'windows' });
   for (const sx of [-1, 1]) for (const sz of [-1, 1])
