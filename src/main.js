@@ -78,6 +78,7 @@ function viewNow() {
   const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
     tan: FOV_TAN,
+    lodH,
     scale: flight.scale,
     fogLen,
     maxT,
@@ -85,6 +86,8 @@ function viewNow() {
     debug,
     reference,
     taa: !snapping,
+    // (How much of the picture before full resolution came back still shows.)
+    fade: snapping ? 0 : fadeNow(),
     scheme: SCHEMES[scheme],
     outer: flight.outerAir(all),
     sky: flight.skyHeight(),
@@ -125,9 +128,13 @@ function look(now) {
   }
 }
 
-// Resolution follows frame time.
-let pixelRatio = MAX_PIXEL_RATIO;
+// Resolution follows frame time. What is carved does not (review21): detail
+// is sized by the picture's pixels at full resolution (lodH, their number
+// down it), so that a lower resolution only samples the same geometry less
+// densely, and coming to rest changes no geometry.
+let pixelRatio = MAX_PIXEL_RATIO, lodH = 1;
 function resize() {
+  lodH = Math.max(1, Math.round(canvas.clientHeight * MAX_PIXEL_RATIO));
   const w = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
   const h = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
   if (canvas.width !== w || canvas.height !== h) {
@@ -237,9 +244,13 @@ else flight.elsewhere(Math.random);
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
 // antialiasing takes to gather all its samples of it (see TAA_N). Once still,
-// at full resolution again, whatever motion took it down to: at less, finer
-// relief is too small to carve and shows only as texture.
-let shown = '', settled = 0;
+// at full resolution again, whatever motion took it down to (at less, finer
+// relief is too small to carve and shows only as texture), faded in over the
+// picture at rest over FADE_MS from the first frame drawn at it (restored:
+// when, -1 before that frame; frames go on being drawn until it is done:
+// they can come faster than the screen shows them).
+const FADE_MS = 800;
+let shown = '', settled = 0, restored = 0;
 function present() {
   resize();
   const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), controls.thread, canvas.width, canvas.height, debug, reference, scheme].join();
@@ -248,15 +259,22 @@ function present() {
     pixelRatio = MAX_PIXEL_RATIO;
     resize();
     key = keyNow();
+    shown = key;
+    settled = 0;
+    restored = -1;
   }
   if (key === shown) {
-    if (settled >= TAA_N) return false;
+    if (settled >= TAA_N && !fadeNow()) return false;
     settled++;
-  } else settled = 0;
+  } else (settled = 0), (restored = 0);
   shown = key;
   levelsDrawn = draw();
   return true;
 }
+const fadeNow = () => {
+  if (restored === -1) restored = performance.now();
+  return restored ? Math.pow(Math.max(0, 1 - (performance.now() - restored) / FADE_MS), 2) : 0;
+};
 // (Snapshots draw one frame as it is, without antialiasing over time.)
 let snapping = false;
 
@@ -411,6 +429,7 @@ window.fw = {
   snap(w = 480, h = 360, live = false) {
     canvas.width = w;
     canvas.height = h;
+    lodH = h;
     flight.sense();
     snapping = !live;
     draw();

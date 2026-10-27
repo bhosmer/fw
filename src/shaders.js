@@ -193,18 +193,37 @@ float diag(int p, int sa, int sb, int ca, int cb, int k) {
 
 ${slantGlsl(space)}
 ${space.glsl}
+// (What fraction of a surface (its normal n) opens at a level, there: see
+// detail. gOwnInk:
+// what opens is the surface's own relief, seen in its shadow, not the level's
+// walls.)
+bool gOwnInk;
+${space.openAreaGlsl ?? 'float openAreaAt(int level, ivec3 id, ivec3 up, bool skin, vec3 n) { gOwnInk = false; return OPEN_AREA; }'}
 
 // One level at the camera-relative point v: its air distance and, for the ray
 // gDir when gRay is set, how far that goes before leaving the air it is in.
-float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
-  // Re-split into lattice point + small offset. Integers stay integers so the
-  // compiler cannot fold the offset into a large number and lose it.
+// The cell of level i that v is in: the point in it (I - c R, f), and c,
+// where it is from the level's own cell. (Re-split into lattice point + small
+// offset: integers stay integers, so the compiler cannot fold the offset into
+// a large number and lose it.)
+ivec3 levelCell(int i, vec3 v, out ivec3 I, out vec3 f) {
   vec3 s = uFr[i] + v * uSig[i];
   vec3 r = floor(s + 0.5);
-  vec3 f = s - r;
-  ivec3 I = uL[i] + ivec3(r);
+  f = s - r;
+  I = uL[i] + ivec3(r);
   ivec3 J = I - ivec3(lessThan(f, vec3(0.0)));
-  ivec3 c = ivec3(floor((vec3(J) + 0.5) / float(R)));
+  return ivec3(floor((vec3(J) + 0.5) / float(R)));
+}
+// (Its id, and its parent's, gUp.)
+ivec3 levelId(int i, ivec3 c) {
+  vec3 own = vec3(uId[i] - R * ivec3(floor((vec3(uId[i]) + 0.5) / float(R))));
+  gUp = wrapId(uPid[i] + ivec3(floor((own + vec3(c) + 0.5) / float(R))));
+  return wrapId(uId[i] + c);
+}
+float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
+  ivec3 I;
+  vec3 f;
+  ivec3 c = levelCell(i, v, I, f);
   float sg = uSig[i];
   vec3 sp = uFp[i] + vec3(v.x + v.y, v.z + v.y, v.x + v.z) * sg;
   vec3 sm = uFm[i] + vec3(v.x - v.y, v.z - v.y, v.x - v.z) * sg;
@@ -216,10 +235,9 @@ float levelRay(int i, vec3 v, out float reach, out vec3 nrm) {
 ${space.slants?.length ? '  gSi = i;\n  gSv = v;\n  gSc = c;' : ''}
   // (The cell's index in its parent is its id's last digit; carried over
   // into the parent's neighbours as c goes past them.)
-  vec3 own = vec3(uId[i] - R * ivec3(floor((vec3(uId[i]) + 0.5) / float(R))));
-  gUp = wrapId(uPid[i] + ivec3(floor((own + vec3(c) + 0.5) / float(R))));
+  ivec3 id = levelId(i, c);
   gSkin = false;
-  return cell(I - c * R, f, wrapId(uId[i] + c), uSeed[i], uLevel[i], reach, nrm);
+  return cell(I - c * R, f, id, uSeed[i], uLevel[i], reach, nrm);
 }
 
 // (o: how far the level's air is shrunk there, for the spaces that fade
@@ -262,6 +280,7 @@ uniform float uNear[NLEV]; // how far from the camera each level's nearest air i
 uniform vec3 uWall[NLEV];
 uniform vec3 uFloor[NLEV];
 uniform vec2 uRes;
+uniform float uLodH;       // pixels down the picture that detail is sized for (see lodH in main.js)
 uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAA_FRAG)
 uniform mat3 uCam;
 uniform float uTan;        // tan(fov / 2)
@@ -397,15 +416,22 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
 // still, the texture dissolves into the average tone it would have had.
 // (On a building's relief (skin), what opens in it is drawn in the relief's
 // own colour, in its shadow: not in the colour of the level it opens into.)
-vec3 detail(vec3 base, vec3 v, float foot, int slot, bool skin) {
+// (The average is what the space says opens there, at that level: see
+// openAreaAt; none, and nothing finer opens there either.)
+vec3 detail(vec3 base, vec3 v, vec3 n, float foot, int slot, bool skin) {
   for (int i = max(slot + 1, 0); i < NLEV; i++) {
     if (i >= uN) break;
     float px = float(R) / uSig[i] / foot;
     if (px < 0.5) break;
     float wgt = (1.0 - smoothstep(0.75, 1.0, smoothstep(LOD_LO, LOD_HI, px))) * smoothstep(0.5, 4.0, px);
     if (wgt <= 0.0) continue;
+    ivec3 I;
+    vec3 f;
+    ivec3 id = levelId(i, levelCell(i, v, I, f));
+    float hole = openAreaAt(uLevel[i], id, gUp, skin, n);
+    if (hole <= 0.0) break;
     float sharp = smoothstep(2.0, 8.0, px);
-    float hole = OPEN_AREA;
+    if (gOwnInk) skin = true;
     vec3 ink = skin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
     if (sharp > 0.0) {
       float a = levelAir(i, v, 0.0, 0.0) / uSig[i];
@@ -609,7 +635,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix, boo
   vec3 base = slot == -2 ? uGround
             : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
                        : mix(uWall[slot], uFloor[slot], flatness);
-  base = detail(base, p, seenFoot, slot, skin);
+  base = detail(base, p, n, seenFoot, slot, skin);
 
   float hemi = 0.5 + 0.5 * n.y;
   float key = max(dot(n, uSun), 0.0);
@@ -688,7 +714,7 @@ float shaftsHere(float end) {
 void main() {
   vec2 uv = ((gl_FragCoord.xy + uJitter) * uStride * 2.0 - uRes) / uRes.y;
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
-  float pix = 2.0 * uTan / uRes.y;
+  float pix = 2.0 * uTan / uLodH;
 
   float t = 0.0, d = 0.0;
   int slot = 0, steps = 0;
@@ -843,6 +869,10 @@ export const SMOOTH_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
 uniform vec2 uRes;
+// (And the picture shown before, which this one fades in over, by uFadeW:
+// see Renderer.drawFrame.)
+uniform sampler2D uFade;
+uniform float uFadeW;
 out vec4 outColor;
 
 const int SEARCH = 16;
@@ -852,7 +882,7 @@ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 float lumaAt(vec2 uv) { return luma(texture(uTex, uv).rgb); }
 float stride(int i) { return i < 5 ? 1.0 : i < 6 ? 1.5 : i < 10 ? 2.0 : i < 11 ? 4.0 : 8.0; }
 
-void main() {
+void smoothed() {
   vec2 px = 1.0 / uRes;
   vec2 uv = gl_FragCoord.xy * px;
   vec3 colour = texture(uTex, uv).rgb;
@@ -914,6 +944,11 @@ void main() {
 
   if (horz) uv.y += shift * across; else uv.x += shift * across;
   outColor = vec4(texture(uTex, uv).rgb, 1.0);
+}
+
+void main() {
+  smoothed();
+  if (uFadeW > 0.0) outColor.rgb = mix(outColor.rgb, texture(uFade, gl_FragCoord.xy / uRes).rgb, uFadeW);
 }`;
 
 

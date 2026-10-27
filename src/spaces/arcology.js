@@ -453,6 +453,22 @@ function ridgeRow(r, lv, y) {
   }
   return { y0, y1, t, tc, cy0: R * cw.y0, cy1: R * cw.y1 };
 }
+// The ridges' rows as a table, for the shader to look up rather than work
+// out (each takes several hashes and caps; review21): for each ridge and
+// level, from RR_FROM[lv] (level units) for RR_N[lv] heights, ridgeRow's
+// y0, y1, t and tc, as a texture's rows (2 r + lv). Wide enough for every
+// height the cell table can ask after (it spans cells 1 to 37 here; checked).
+const RR_FROM = [-4, -4 * R], RR_N = [48, 48 * R];
+const RIDGE_ROWS = (() => {
+  const w = Math.max(...RR_N), data = new Int32Array(4 * w * 2 * RIDGES.length);
+  for (const r of RIDGES)
+    for (let lv = 0; lv < 2; lv++)
+      for (let i = 0; i < RR_N[lv]; i++) {
+        const { y0, y1, t, tc } = ridgeRow(r, lv, RR_FROM[lv] + i);
+        data.set([y0, y1, t, tc], 4 * ((2 * r.index + lv) * w + i));
+      }
+  return { size: [w, 2 * RIDGES.length], data };
+})();
 // Whether a cut t deep over [u0, u1] x [y0, y1] (level lv's measure and
 // units) comes within W(t) of F's e-th ridge at either height.
 function nearRidge(F, e, lv, u0, u1, y0, y1, t) {
@@ -902,24 +918,18 @@ const vec3 EGN[NF * 2] = vec3[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => 
 // Each ridge's two faces. Each face's caps (see F.cap, F.ncap: cap, and
 // each level's ncap, five bits each), from F.c0, and where they are (offset,
 // c0, how many); and each ridge's bare rows (see r.barep), likewise.
-const ivec2 RFACE[NRID] = ivec2[NRID](${RIDGES.map((r) => `ivec2(${r.F.index}, ${r.G.index})`).join(', ')});
 ${(() => {
-  const caps = [], fr = [], bare = [], br = [];
+  const caps = [], fr = [];
   for (const F of FACES) {
     fr.push(`ivec3(${caps.length}, ${F.c0}, ${F.cap.length})`);
-    F.cap.forEach((c, i) => caps.push(c | (F.ncap[0][i] << 5) | (F.ncap[1][i] << 10)));
-  }
-  for (const r of RIDGES) {
-    br.push(`ivec3(${bare.length}, ${r.F.c0}, ${r.barep.length})`);
-    bare.push(...r.barep);
+    F.cap.forEach((c) => caps.push(c));
   }
   return `const int FCAPS[${caps.length}] = int[${caps.length}](${caps.join(', ')});
-const ivec3 FCR[NF] = ivec3[NF](${fr.join(', ')});
-const int BAREP[${bare.length}] = int[${bare.length}](${bare.join(', ')});
-const ivec3 RBR[NRID] = ivec3[NRID](${br.join(', ')});`;
+const ivec3 FCR[NF] = ivec3[NF](${fr.join(', ')});`;
 })()}
-const uint RIDGE_SALT = ${RIDGE_SALT}u;
-const int RIDGE_JMAX[2] = int[2](${RIDGE_JMAX.join(', ')}), RIDGE_HALVES = ${RIDGE_HALVES};
+// The ridges' rows (RIDGE_ROWS in the JS): from RR_FROM, RR_N of them.
+uniform highp isampler2D uRidgeRows;
+const int RR_FROM[2] = int[2](${RR_FROM.join(', ')}), RR_N[2] = int[2](${RR_N.join(', ')});
 const int FOUR = ${FOUR.k};
 // Each level's depths (its own units).
 const float DEPTHS[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]).map(glf).join(', ')});
@@ -1045,60 +1055,23 @@ float bareIn(vec3 q) {
   return d;
 }
 // See capAt, pairFits, ridgeRow and nearRidge in the JS.
-// (Face k's caps at height i, twelfths of a cell: cap, then each level's ncap, 5 bits each.)
+// (Face k's caps at height i, twelfths of a cell.)
 int capsAt(int k, int i) { ivec3 c = FCR[k]; return FCAPS[c.x + clamp(i - c.y, 0, c.z - 1)]; }
-int capAt(int k, int i0, int i1) { return min(capsAt(k, i0) & 31, capsAt(k, i1) & 31); }
-int ncapAt(int k, int lv, int i) { return (capsAt(k, i) >> (5 + 5 * lv)) & 31; }
-int barePrefix(int r, int i) { ivec3 c = RBR[r]; return BAREP[c.x + clamp(i - c.y, 0, c.z - 1)]; }
-bool pairFits(int r, int lv, int i0, int i1, int t) {
-  ivec2 fc = RFACE[r];
-  return t <= min(min(ncapAt(fc.x, lv, i0), ncapAt(fc.x, lv, i1)), min(ncapAt(fc.y, lv, i0), ncapAt(fc.y, lv, i1)))
-      && (lv == 0 || barePrefix(r, i1) - barePrefix(r, i0) == 0);
-}
-int drawJ(int lv, uint h) {
-  float t = h01(h);
-  int j = 0;
-  for (int i = 0; i < ND - 1; i++) if (t >= CUM[lv * ND + i]) j = i + 1;
-  return j;
-}
+int capAt(int k, int i0, int i1) { return min(capsAt(k, i0), capsAt(k, i1)); }
 int depthOf(int lv, int j) { return lv == 0 ? 3 * int(round(DEPTHS[j] * 4.0)) : int(round(DEPTHS[ND + j] / 2.0)); }
-// The city's row of ridge r at height y (cells): gRY0, gRY1, gRT (= gRTC, its city part).
+// The row of ridge r at level lv that height y (level units) is in (see
+// ridgeRow in the JS, and RIDGE_ROWS): gRY0, gRY1, its depth gRT and the
+// city's row's gRTC, and the city's row's heights gRCY0, gRCY1 (level units).
 int gRY0, gRY1, gRT, gRTC, gRCY0, gRCY1;
-void ridgeCity(int r, int y) {
-  int sby = LV[0].y, sr = fdiv(y, sby);
-  bool halves = int(hashCell(ivec3(sr, r, 0), RIDGE_SALT) % 4u) < RIDGE_HALVES;
-  int a = halves && y >= sr * sby + sby / 2 ? sr * sby + sby / 2 : sr * sby, b = halves ? a + sby / 2 : a + sby;
-  int t = 0, j = min(RIDGE_JMAX[0], drawJ(0, hashCell(ivec3(a, r, 1), RIDGE_SALT)));
-  for (int jj = ND - 1; jj > 0; jj--) {
-    if (jj > j) continue;
-    int tt = depthOf(0, jj);
-    if (pairFits(r, 0, 12 * a, 12 * b, tt)) { t = tt; break; }
-  }
-  gRY0 = a; gRY1 = b; gRT = t; gRTC = t;
-}
+ivec4 ridgeAt(int r, int lv, int y) { return texelFetch(uRidgeRows, ivec2(clamp(y - RR_FROM[lv], 0, RR_N[lv] - 1), 2 * r + lv), 0); }
 void ridgeRow(int r, int lv, int y) {
-  int cy = lv == 0 ? y : fdiv(y, R);
-  ridgeCity(r, cy);
-  gRCY0 = gRY0; gRCY1 = gRY1;
-  if (lv == 0) return;
-  gRCY0 = R * gRY0; gRCY1 = R * gRY1;
-  int tc = gRT, y0 = cy * R, y1 = y0 + R, m = LV_MIN[1], qy = LV[1].z;
-  uint h = hashCell(ivec3(cy, r, 2), RIDGE_SALT);
-  for (int i = 0; i < LV[1].w; i++) {
-    int ny = (y1 - y0) / qy;
-    if (ny >= 2 * m) {
-      int c = y0 + qy * (m + int((h >> 8) % uint(ny - 2 * m + 1)));
-      if (y >= c) y0 = c; else y1 = c;
-    }
-    h = hashCell(ivec3(y0, y1, r), RIDGE_SALT ^ 1u);
+  ivec4 w = ridgeAt(r, lv, y);
+  gRY0 = w.x; gRY1 = w.y; gRT = w.z; gRTC = w.w;
+  gRCY0 = w.x; gRCY1 = w.y;
+  if (lv == 1) {
+    ivec4 c = ridgeAt(r, 0, fdiv(y, R));
+    gRCY0 = R * c.x; gRCY1 = R * c.y;
   }
-  int t = tc, j = min(RIDGE_JMAX[1], drawJ(1, hashCell(ivec3(y0, r, 3), RIDGE_SALT)));
-  for (int jj = ND - 1; jj > 0; jj--) {
-    if (jj > j) continue;
-    int tt = tc + depthOf(1, jj);
-    if (pairFits(r, 1, y0 / 2, y1 / 2, tt)) { t = tt; break; }
-  }
-  gRY0 = y0; gRY1 = y1; gRT = t; gRTC = tc;
 }
 bool nearRidge(int k, int e, int lv, int u0, int u1, int y0, int y1, int t) {
   ivec4 E = FEDGE[k * 2 + e];
@@ -2273,6 +2246,21 @@ const arcology = {
   glsl: hallsGlsl + glsl,
   cellAir,
   volume: VOLUME,
+  // What fraction of a surface opens at a level (see detail in shaders.js):
+  // the halls' where they are; in the building's own cells, its relief (only
+  // where the surface is relief) and its openings (only where it is upright,
+  // as the faces with them are), in the surface's own shade; elsewhere there,
+  // none (and so nothing finer).
+  openAreaGlsl: `float openAreaAt(int level, ivec3 id, ivec3 up, bool skin, vec3 n) {
+  gOwnInk = false;
+  if (level != ${CITY + 1}) return OPEN_AREA;
+  uvec4 m = relief(id, up);
+  uint kind = m.x & 3u;
+  if (m.x == 0u || kind == ${DEEP}u) return OPEN_AREA;
+  gOwnInk = true;
+  return (kind == ${SKIN}u && skin) || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;
+}`,
+  tables: [{ name: 'uRidgeRows', ...RIDGE_ROWS }],
   // The building's planes' normals, carried exactly across levels (see
   // Position.levels): the city's level asks after them for its solids, the
   // next for its pockets.

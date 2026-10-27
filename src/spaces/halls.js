@@ -23,6 +23,10 @@
 //                  Uint32Array of `words` numbers (2 or 4) for each of
 //                  size[0] * size[1] * size[2] cells, x fastest; in the
 //                  shader, the usampler3D uVolume
+//   tables         optionally, more tables, 2D: [{ name, size, data }], data
+//                  an Int32Array of four numbers for each of size[0] *
+//                  size[1], x fastest; in the shader, the isampler2D of that
+//                  name (the space declares it)
 //   maxInterior    largest clearance any point in a cell's air can have, as a
 //                  fraction of the cell
 //   longestWay     the longest way through any one convex piece of a cell's

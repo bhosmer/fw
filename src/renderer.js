@@ -28,6 +28,8 @@ const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel'
 
 // The texture unit a space's volume is kept on (0 and 1 are the picture's).
 const VOLUME_UNIT = 2;
+// (And the space's other tables', from this one on.)
+const TABLES_UNIT = 3;
 
 // Shafts of light are drawn for one pixel in this many each way (see draw).
 const SHAFT_STRIDE = 6;
@@ -57,14 +59,14 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
     // The older way of finding what each pixel sees, to check the above
     // against: made the first time it is asked for (see refProg).
     this.makeRef = () => link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
-    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
+    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes', 'uFade', 'uFadeW']);
     this.taaProg = link(gl, TAA_FRAG, ['uCur', 'uHist', 'uRes', 'uCam', 'uPrev', 'uD', 'uTan', 'uKeep', 'uLog', 'uStill']);
     // Temporal antialiasing (see TAA_FRAG): two history pictures, drawn
     // into in turn; and what the frame before was drawn from.
@@ -84,6 +86,10 @@ export class Renderer {
     this.viewTex = null;
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];
+    // The picture last shown, and the one before a change of size, which
+    // the next fades in over (see drawFrame).
+    this.lastShown = null;
+    this.fadeTex = null;
 
     // How long the GPU takes over each frame, where that can be timed: a
     // frame the GPU takes longer over than the display allows is shown late,
@@ -117,6 +123,17 @@ export class Renderer {
       gl.texImage3D(gl.TEXTURE_3D, 0, inner, size[0], size[1], size[2], 0, form, gl.UNSIGNED_INT, data);
       gl.activeTexture(gl.TEXTURE0);
     }
+    this.tables = (space.tables ?? []).map(({ name, size, data }, i) => {
+      const tex = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0 + TABLES_UNIT + i);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32I, size[0], size[1], 0, gl.RGBA_INTEGER, gl.INT, data);
+      gl.activeTexture(gl.TEXTURE0);
+      return { name, tex, unit: TABLES_UNIT + i };
+    });
   }
 
   setLevels(p, recs, n) {
@@ -153,6 +170,13 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE0);
       gl.uniform1i(p.u.uVolume, VOLUME_UNIT);
     }
+    p.tables ??= this.tables.map((t) => gl.getUniformLocation(p.prog, t.name));
+    this.tables.forEach((t, i) => {
+      gl.activeTexture(gl.TEXTURE0 + t.unit);
+      gl.bindTexture(gl.TEXTURE_2D, t.tex);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(p.tables[i], t.unit);
+    });
     gl.uniform1uiv(p.u.uSeed, seed);
     gl.uniform1iv(p.u.uLevel, level);
     gl.uniform1fv(p.u.uSig, sig);
@@ -204,12 +228,16 @@ export class Renderer {
     const gl = this.gl;
     const w = this.canvas.width, h = this.canvas.height;
     if (this.viewSize[0] !== w || this.viewSize[1] !== h) {
-      if (this.viewTex) gl.deleteTexture(this.viewTex);
+      // (The picture last shown is kept to fade from; the rest go.)
+      if (this.fadeTex) gl.deleteTexture(this.fadeTex);
+      this.fadeTex = this.lastShown;
+      const drop = (t) => t && t !== this.fadeTex && gl.deleteTexture(t);
+      drop(this.viewTex);
       this.viewTex = this.picture(w, h);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.viewTex, 0);
       for (let i = 0; i < 2; i++) {
-        if (this.hist[i]) gl.deleteTexture(this.hist[i]);
+        drop(this.hist[i]);
         this.hist[i] = this.picture(w, h);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[i]);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.hist[i], 0);
@@ -305,7 +333,15 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, shown);
     gl.uniform1i(q.u.uTex, 0);
     gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
+    // (Faded in over the picture before a change of size, by view.fade.)
+    const fade = this.fadeTex && view.fade > 0 ? view.fade : 0;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, fade ? this.fadeTex : shown);
+    gl.uniform1i(q.u.uFade, 1);
+    gl.uniform1f(q.u.uFadeW, fade);
+    gl.activeTexture(gl.TEXTURE0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.lastShown = shown;
   }
 
   // Forgets the history (after a jump to somewhere else).
@@ -365,6 +401,8 @@ export class Renderer {
   look(recs, view, stride) {
     const gl = this.gl;
     if (this.lookSync) return false;
+    // (What the tour sees is sized by the canvas as it is, not as shown.)
+    view = { ...view, lodH: this.canvas.height };
     const w = Math.ceil(this.canvas.width / stride), h = Math.ceil(this.canvas.height / stride);
     if (!this.lookTex || this.lookSize[0] !== w || this.lookSize[1] !== h) {
       if (this.lookTex) gl.deleteTexture(this.lookTex);
@@ -436,6 +474,7 @@ export class Renderer {
     gl.uniform3fv(p.u.uWall, wall);
     gl.uniform3fv(p.u.uFloor, floor);
     gl.uniform2f(p.u.uRes, this.canvas.width, this.canvas.height);
+    gl.uniform1f(p.u.uLodH, view.lodH ?? this.canvas.height);
     gl.uniformMatrix3fv(p.u.uCam, false, view.cam);
     gl.uniform1f(p.u.uTan, view.tan);
     gl.uniform1f(p.u.uScale, view.scale);
