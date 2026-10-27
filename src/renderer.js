@@ -1,4 +1,4 @@
-import { VERT, SMOOTH_FRAG, TAA_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
+import { VERT, SMOOTH_FRAG, TAA_FRAG, TAAU_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
 import { levelSeed } from './util.js';
 
 function compile(gl, type, src) {
@@ -30,6 +30,9 @@ const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel'
 const VOLUME_UNIT = 2;
 // (And the space's other tables', from this one on.)
 const TABLES_UNIT = 3;
+// (And, past the tables, the upscaling history's weights while it is
+// resolved: see resolveUp.)
+const WEIGHT_UNIT = 7;
 
 // Shafts of light are drawn for one pixel in this many each way (see draw).
 const SHAFT_STRIDE = 6;
@@ -59,7 +62,7 @@ export class Renderer {
 
     this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH', 'uToOut', 'uShaftAt', 'uShaftN',
     ];
     this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
     // The older way of finding what each pixel sees, to check the above
@@ -71,6 +74,9 @@ export class Renderer {
     // Temporal antialiasing (see TAA_FRAG): two history pictures, drawn
     // into in turn; and what the frame before was drawn from.
     this.hist = [null, null];
+    // (Temporal upscaling's: each history picture's weights, and the program.)
+    this.histW = [null, null];
+    this.taauProg = link(gl, TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']);
     this.histFbo = [gl.createFramebuffer(), gl.createFramebuffer()];
     this.histAt = 0;
     this.prev = null;
@@ -241,6 +247,16 @@ export class Renderer {
         this.hist[i] = this.picture(w, h);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[i]);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.hist[i], 0);
+        if (this.histW[i]) gl.deleteTexture(this.histW[i]);
+        this.histW[i] = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.histW[i]);
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16F, w, h);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.histW[i], 0);
       }
       this.prev = null;
       this.viewSize = [w, h];
@@ -261,6 +277,7 @@ export class Renderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.shaftFbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.shaftTex, 0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
       this.shaftSize = [w, h];
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.shaftFbo);
@@ -297,11 +314,18 @@ export class Renderer {
     // Shafts of light are soft, and costly (a ray toward the sun from each of
     // many points along every ray): drawn first, for every SHAFT_STRIDE-th
     // pixel each way, and spread over the rest by the texture's filtering.
+    // (Temporal upscaling: the view, and its shafts, drawn at fewer pixels,
+    // `render` of them, into the picture-sized textures' corner.)
+    const W = this.canvas.width, H = this.canvas.height;
+    const up = !!view.upscale && !!view.taa && !view.debug && !view.reference;
+    const render = up ? [Math.max(1, Math.round(W * view.upscale)), Math.max(1, Math.round(H * view.upscale))] : [W, H];
+    const toOut = [W / render[0], H / render[1]];
+    const shaftN = [Math.ceil(render[0] / SHAFT_STRIDE), Math.ceil(render[1] / SHAFT_STRIDE)];
     if (view.scheme.shafts > 0 && !view.debug) {
-      const w = Math.ceil(this.canvas.width / SHAFT_STRIDE), h = Math.ceil(this.canvas.height / SHAFT_STRIDE);
-      this.shaftTarget(w, h);
-      gl.viewport(0, 0, w, h);
+      this.shaftTarget(Math.ceil(W / SHAFT_STRIDE), Math.ceil(H / SHAFT_STRIDE));
+      gl.viewport(0, 0, ...shaftN);
       const p = this.setView(recs, view, SHAFT_STRIDE);
+      gl.uniform2f(p.u.uToOut, ...toOut);
       gl.uniform1i(p.u.uDebug, 6);
       gl.activeTexture(gl.TEXTURE1); // (not the texture being drawn into)
       gl.bindTexture(gl.TEXTURE_2D, null);
@@ -312,8 +336,13 @@ export class Renderer {
     const raw = view.debug === 4;
     if (raw) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     else this.viewTarget();
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.viewport(0, 0, ...render);
     const p = this.setView(recs, view, 1);
+    gl.uniform2f(p.u.uToOut, ...toOut);
+    if (up) {
+      gl.uniform2f(p.u.uShaftAt, 1 / SHAFT_STRIDE, 1 / SHAFT_STRIDE);
+      gl.uniform2i(p.u.uShaftN, ...shaftN);
+    }
     const taa = !!view.taa && !raw && !view.debug;
     const jit = taa ? jitter(this.frameNo++) : [0, 0];
     gl.uniform2f(p.u.uJitter, ...jit);
@@ -325,10 +354,11 @@ export class Renderer {
     if (raw) return;
 
     let shown = this.viewTex;
-    if (taa) shown = this.resolve(recs, view, jit);
+    if (taa) shown = up || view.upscaleAlways ? this.resolveUp(recs, view, jit, render) : this.resolve(recs, view, jit);
     else this.prev = null;
     const q = this.smoothProg;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, W, H);
     gl.useProgram(q.prog);
     gl.bindTexture(gl.TEXTURE_2D, shown);
     gl.uniform1i(q.u.uTex, 0);
@@ -371,6 +401,7 @@ export class Renderer {
     this.still = still ? Math.min(this.still + 1, TAA_N - 1) : 0;
     const out = 1 - this.histAt;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[out]);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(q.prog);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
@@ -388,6 +419,64 @@ export class Renderer {
     gl.uniform1f(q.u.uLog, D ? D.log : 0);
     gl.uniform1i(q.u.uStill, still ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.histAt = out;
+    this.prev = now;
+    this.lastD = D;
+    return this.hist[out];
+  }
+
+  // The same, upscaling (see TAAU_FRAG): the frame drawn at render pixels
+  // gathered into the picture-sized history, with its weights.
+  resolveUp(recs, view, jit, render) {
+    const gl = this.gl, q = this.taauProg;
+    const now = { cam: view.cam, levels: new Map(recs.map((r) => [r.level, { id: [...r.id, ...r.pid].join(), at: r.L.map((x, a) => x + r.f[a]), sig: r.sig }])) };
+    let D = null;
+    if (this.prev)
+      for (const [lv, n] of now.levels) {
+        const o = this.prev.levels.get(lv);
+        if (o && o.id === n.id && n.sig > TAA_SIG_MIN && (D === null || n.sig > D.sig)) D = { sig: n.sig, d: n.at.map((x, a) => (x - o.at[a]) / n.sig), log: Math.log2(n.sig / o.sig) };
+      }
+    const still = D && D.d.every((x) => x === 0) && D.log === 0 && view.cam.every((x, i) => x === this.prev.cam[i]);
+    // (Still, but drawn at another size than the frame before: the still
+    // average starts over, counting what was before as one frame.)
+    const resized = !this.lastRender || render[0] !== this.lastRender[0] || render[1] !== this.lastRender[1];
+    this.lastRender = render;
+    this.still = still ? (resized ? 1 : Math.min(this.still + 1, TAA_N - 1)) : 0;
+    const out = 1 - this.histAt;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[out]);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.useProgram(q.prog);
+    // (Units 0, 1 and WEIGHT_UNIT: the history drawn into is none of them.)
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
+    gl.uniform1i(q.u.uCur, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.hist[this.histAt]);
+    gl.uniform1i(q.u.uHist, 1);
+    gl.activeTexture(gl.TEXTURE0 + WEIGHT_UNIT);
+    gl.bindTexture(gl.TEXTURE_2D, this.histW[this.histAt]);
+    gl.uniform1i(q.u.uHistW, WEIGHT_UNIT);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
+    gl.uniform2f(q.u.uRender, ...render);
+    gl.uniform2f(q.u.uJit, ...jit);
+    gl.uniformMatrix3fv(q.u.uCam, false, view.cam);
+    gl.uniformMatrix3fv(q.u.uPrev, false, this.prev ? this.prev.cam : view.cam);
+    gl.uniform3f(q.u.uD, ...(D ? D.d : [0, 0, 0]));
+    gl.uniform1f(q.u.uTan, view.tan);
+    gl.uniform1f(q.u.uLog, D ? D.log : 0);
+    // (At most KEEP's worth of frames' weight moving (as TAA_FRAG's blend),
+    // TAA_N - 1 still; the first still frame counts what was before as one.)
+    gl.uniform1f(q.u.uCap, still ? TAA_N - 1 : TAA_KEEP / (1 - TAA_KEEP));
+    gl.uniform1i(q.u.uHave, D ? 1 : 0);
+    gl.uniform1i(q.u.uStill, still ? 1 : 0);
+    gl.uniform1i(q.u.uRestart, still && this.still === 1 ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    gl.activeTexture(gl.TEXTURE0 + WEIGHT_UNIT);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE0);
     this.histAt = out;
     this.prev = now;
     this.lastD = D;
@@ -510,6 +599,13 @@ export class Renderer {
     gl.uniform1i(p.u.uDebug, view.debug | 0);
     gl.uniform1f(p.u.uStride, stride);
     gl.uniform2f(p.u.uJitter, 0, 0);
+    gl.uniform2f(p.u.uToOut, 1, 1);
+    // (On its own unit, which no pass draws into while it is bound there.)
+    gl.uniform1i(p.u.uShaftTex, 1);
+    // (The shafts' texture as drawn for the whole canvas: see drawFrame.)
+    const sn = this.shaftTex ? this.shaftSize : [1, 1];
+    gl.uniform2f(p.u.uShaftAt, sn[0] / this.canvas.width, sn[1] / this.canvas.height);
+    gl.uniform2i(p.u.uShaftN, ...sn);
     gl.uniform1i(p.u.uThreadN, view.thread ? view.thread.length / 3 : 0);
     if (view.thread?.length) gl.uniform3fv(p.u.uThread, view.thread);
     return p;

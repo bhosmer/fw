@@ -324,6 +324,9 @@ uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: 
                           // 6: the light the haze catches, alone (see shafts())
 uniform sampler2D uShaftTex; // that light, drawn coarser (see Renderer.draw)
 uniform float uStride;     // draw only every this many pixels (see Renderer.look)
+uniform vec2 uToOut;       // the picture's pixels per pixel drawn, each way (temporal upscaling: see TAAU_FRAG)
+uniform vec2 uShaftAt;     // where in the shafts' texture a pixel drawn is (texels per pixel)
+uniform ivec2 uShaftN;     // and how much of it was drawn
 
 out vec4 outColor;
 
@@ -694,8 +697,8 @@ float shafts(vec3 rd, float end, float pix, int slot, vec3 n) {
 // where this pixel's ray does, so that light in the haze behind an edge does
 // not spill over onto what stands in front of it.
 float shaftsHere(float end) {
-  ivec2 size = textureSize(uShaftTex, 0);
-  vec2 at = gl_FragCoord.xy * vec2(size) / uRes - 0.5;
+  ivec2 size = uShaftN;
+  vec2 at = gl_FragCoord.xy * uShaftAt - 0.5;
   ivec2 c = ivec2(floor(at));
   vec2 f = at - vec2(c);
   float here = log2(max(end, 1e-30));
@@ -712,7 +715,7 @@ float shaftsHere(float end) {
 }
 
 void main() {
-  vec2 uv = ((gl_FragCoord.xy + uJitter) * uStride * 2.0 - uRes) / uRes.y;
+  vec2 uv = ((gl_FragCoord.xy + uJitter) * uStride * uToOut * 2.0 - uRes) / uRes.y;
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
   float pix = 2.0 * uTan / uLodH;
 
@@ -951,6 +954,89 @@ void main() {
   if (uFadeW > 0.0) outColor.rgb = mix(outColor.rgb, texture(uFade, gl_FragCoord.xy / uRes).rgb, uFadeW);
 }`;
 
+
+// Temporal upscaling (.claude/design/taau.md, review23, review24): the view
+// drawn at fewer pixels (uRender of them, each its pixel's middle moved by
+// uJit), gathered into a history the picture's size (uRes). Each pixel of it
+// takes the frames' samples that fall inside it, weighed into what it has
+// (its weight in a second target, at most uCap: KEEP's worth moving, TAA_N -
+// 1 still, as TAA_FRAG's blends once its weight has built up); with no
+// history (somewhere new to it), a wider gather of the samples around it.
+export const TAAU_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+uniform sampler2D uCur, uHist, uHistW;
+uniform vec2 uRes, uRender, uJit;
+uniform mat3 uCam, uPrev;
+uniform vec3 uD;
+uniform float uTan, uLog, uCap;
+uniform bool uHave, uStill, uRestart;
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outW;
+
+vec3 ycocg(vec3 c) { return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
+vec3 rgb(vec3 y) { return vec3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z); }
+
+void main() {
+  vec2 x = gl_FragCoord.xy, sc = uRender / uRes, y = x * sc;
+  ivec2 at = ivec2(x), k0 = ivec2(floor(y - uJit)), top = ivec2(uRender) - 1;
+  // The samples around: in this pixel (box), and all, weighed by nearness
+  // (wide, for want of history); their range, for what history may take.
+  vec3 lo = vec3(1e9), hi = vec3(-1e9), cb = vec3(0.0), cw = vec3(0.0);
+  float wb = 0.0, ww = 0.0, near = 1e9, dep = 1e4, sw = max(0.5 / min(sc.x, sc.y), 0.5);
+  for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      ivec2 k = k0 + ivec2(i, j);
+      // (Past the picture's edge there are no samples: none counted twice.)
+      if (any(lessThan(k, ivec2(0))) || any(greaterThan(k, top))) continue;
+      vec4 c = texelFetch(uCur, k, 0);
+      vec2 d = (vec2(k) + 0.5 + uJit) / sc - x;
+      vec3 yc = ycocg(c.rgb);
+      lo = min(lo, yc); hi = max(hi, yc);
+      if (abs(d.x) < 0.5 && abs(d.y) < 0.5) { cb += c.rgb; wb += 1.0; }
+      float w = exp(-dot(d, d) / (2.0 * sw * sw));
+      cw += w * c.rgb; ww += w;
+      if (dot(d, d) < near) { near = dot(d, d); dep = c.a; }
+    }
+  vec3 here = wb > 0.0 ? cb / wb : cw / ww;
+  float hw = wb > 0.0 ? wb : 0.1;
+  outColor = vec4(here, dep);
+  outW = vec4(hw, 0.0, 0.0, 1.0);
+  if (!uHave) return;
+  // Still: the frames are samples of one picture, gathered as they come.
+  if (uStill) {
+    vec4 h = texelFetch(uHist, at, 0);
+    float W = texelFetch(uHistW, at, 0).r;
+    if (uRestart) W = min(W, 1.0);
+    W = min(W, uCap);
+    outColor = wb > 0.0 ? vec4((h.rgb * W + cb) / (W + wb), dep) : h;
+    outW = vec4(min(W + wb, uCap), 0.0, 0.0, 1.0);
+    return;
+  }
+  // Where this pixel's middle was seen the frame before (see TAA_FRAG).
+  vec2 uv = (x * 2.0 - uRes) / uRes.y;
+  vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
+  bool far = dep > 1e3;
+  vec3 q = far ? rd : rd * exp2(dep) + uD;
+  vec3 v = inverse(uPrev) * q;
+  if (v.z >= 0.0) return;
+  vec2 pv = v.xy / (-v.z * uTan);
+  vec2 pp = (pv * uRes.y + uRes) * 0.5;
+  if (any(lessThan(pp, vec2(0.5))) || any(greaterThan(pp, uRes - 0.5))) return;
+  vec4 h = texture(uHist, pp / uRes);
+  float W = texture(uHistW, pp / uRes).r;
+  float was = far ? 1e4 : log2(length(q)) + uLog;
+  ivec2 c = ivec2(floor(pp - 0.5));
+  bool same = false;
+  for (int k = 0; k < 4; k++) {
+    float a = texelFetch(uHist, clamp(c + ivec2(k & 1, k >> 1), ivec2(0), ivec2(uRes) - 1), 0).a;
+    same = same || (far ? a > 1e3 : a < 1e3 && abs(a - was) < 0.07);
+  }
+  if (!same) return;
+  vec3 kept = rgb(clamp(ycocg(h.rgb), lo, hi));
+  W = min(W, uCap);
+  outColor = vec4(wb > 0.0 ? (kept * W + cb) / (W + wb) : kept, dep);
+  outW = vec4(min(W + wb, uCap), 0.0, 0.0, 1.0);
+}`;
 
 // Temporal antialiasing (.claude/design/taa.md): each frame's rays go
 // through a different point of their pixels; this blends the frame (uCur:
