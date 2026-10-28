@@ -14,11 +14,9 @@
 //   the turn between the masses 60 deg (fit 63 +- 2.4).
 // Rounded to quarter cells (0.008 E), within the fit's errors.
 //
-// The towers under the lower are a placeholder: elevation 1 shows a block
-// 0.20 wide coming down out of the lower to 0.08 over the ground, on two
-// legs 0.065 wide at +-0.067 from the axis; the photo, four thin shafts. Their
-// plan is not resolved; four legs at the block's corners give two in either
-// elevation.
+// Under the lower's apex, elevation 1 shows a block 0.20 wide coming down
+// out of the lower to 0.08 over the ground, on two legs; the photo, four thin
+// shafts. In their place, a central column (see CORE).
 
 // Rational points are kept in 24ths of a cell (thirds and quarters both
 // occur, and the pillars' half sides need eighths), and each plane is reduced to whole numbers n . X < K, X in cells.
@@ -102,7 +100,28 @@ const EDGES = {
 };
 // (y: the heights a pillar wears a band's at; a band's own are its own.)
 const edge = (which) => EDGES[EDGE][which] ?? EDGES[EDGE];
-const TOWER = 3, LEG = 1, LEG_AT = 2, TOWER_LO = GROUND + 2.5; // the towers (placeholder)
+// The central column (Basil, 2026-10-27/28: the structure needs it to look
+// as if it could stand; square, for variety with the pyramids' turn;
+// rusticated, unlike the pyramids and the pillars: a grid of raised blocks
+// between grooves, three to a face, and rings, the blocks framing pocks: a
+// shallow panel in nearly every block, deeper medium and small pocks within
+// and across it, each pock's edges jittered, so that overlapping ones join in
+// L, T and stepped shapes): a square prism on the axis, CORE each side of
+// it, from the ground (and a cell under it) through the open storey to the
+// plate's top. (CORE off
+// the cells' sides: a face on one would leave the cells inside it wholly
+// inside the column, where the halls are, and which cut no openings.) Units
+// of a 24th of a cell (see OPENINGS in arcology.js); the rings a pitch apart,
+// one centred in the open storey; the panels' rows between them.
+const CORE = 2.875;
+const RING = { pitch: 36, up: 6, deep: 6 };
+const CORE_FACE = [
+  { kind: 'flutes', pitch: 46, groove: 8, deep: 4 },
+  { kind: 'rings', ...RING, from: (((ROOF_HI + PLATE_LO) / 2 - GROUND) * T - RING.up / 2) % RING.pitch },
+  { kind: 'segments', rows: [35, 36, 26], block: 92, cut: 23, inset: 4, deep: [2, 2], none: 10, jitter: 4 },
+  { kind: 'segments', rows: [11, 12, 10], block: 60, cut: 12, inset: 2, deep: [3, 5], none: 50, jitter: 3 },
+  { kind: 'segments', rows: [5, 12, 10], block: 48, cut: 12, inset: 2, deep: [4, 6], none: 60, jitter: 3 },
+];
 
 function prism(corners, y0, y1) {
   const mid = tw([0, (y0 + y1) / 2, 0]);
@@ -124,19 +143,22 @@ function pyramid(corners, yb, apex) {
 
 // The solids: each a list of planes, inside where n . X < K for all of them
 // (X in cells from the axis at the lower's apex). A rim (the plate, the roof
-// band) may meet a mass's relief; nothing else may, but at heights the
-// relief is not cut at. Pillars, towers and the rims have openings on their
-// upright faces (windows: a kind in OPENINGS in arcology.js, or a list of
-// kinds by height; S6). A mass's sloped faces carry
+// band) may meet a mass's relief; so may the solids without relief (pillars,
+// the column), which it keeps clear of (see bareIn and F.bare in
+// arcology.js). Pillars, the column and the rims
+// have openings on their upright faces (windows: a kind in OPENINGS in
+// arcology.js, or a list of them; S6). A mass's sloped faces carry
 // relief (see arcology.js), kept clear of its base: ylo, yhi bound the
 // relief's height.
 export function hexahedron() {
   const solids = [];
   const upper = pyramid(UP, PLATE_HI, APEX_HI), lower = pyramid(DOWN, ROOF_LO, APEX_LO);
   solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: APEX_HI });
-  solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO });
+  // (The lower fills the central column's openings where it meets them; the
+  // pillars' run on through it.)
+  solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO, yields: ['pillar'] });
   solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true, windows: edge('plate') });
-  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true, yields: true, windows: edge('roof') });
+  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true, yields: ['pillar'], windows: edge('roof') });
   // Pillars: squares facing the centre, from the ground (and a cell under
   // it) to the plate's top, a buttress at the plate (see BEARING). Their
   // radial direction, as whole numbers.
@@ -155,8 +177,6 @@ export function hexahedron() {
     // (keep: others' openings stop that far clear of it: see arcology.js.)
     solids.push({ name: 'pillar', planes: [...sides.map((n) => offset(n, c, PILLAR)), ...sides.map(slope), offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, PLATE_HI, 0], 0)], windows: 'bays', keep: BEARING });
   }
-  solids.push({ name: 'tower', planes: box([-TOWER, TOWER_LO, -TOWER], [TOWER, ROOF_LO, TOWER]), windows: 'windows' });
-  for (const sx of [-1, 1]) for (const sz of [-1, 1])
-    solids.push({ name: 'leg', planes: box([sx * LEG_AT - LEG, GROUND - 1, sz * LEG_AT - LEG], [sx * LEG_AT + LEG, TOWER_LO, sz * LEG_AT + LEG]) });
+  solids.push({ name: 'core', planes: box([-CORE, GROUND - 1, -CORE], [CORE, PLATE_HI, CORE]), windows: CORE_FACE });
   return solids;
 }
