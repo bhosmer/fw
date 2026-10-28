@@ -1,28 +1,34 @@
 import { VERT, SMOOTH_FRAG, TAAU_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
 import { levelSeed } from './util.js';
 
-function compile(gl, type, src) {
-  const sh = gl.createShader(type);
-  gl.shaderSource(sh, src);
-  gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    throw new Error('shader compile failed:\n' + gl.getShaderInfoLog(sh));
+// A program is built in two halves: begun (compiled and linked, without
+// asking how that went, which would wait for it), then finished (its status
+// checked, its uniforms found). Between them the GPU works on it while the
+// page goes on (KHR_parallel_shader_compile: see Renderer.ready).
+function begin(gl, frag) {
+  const prog = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, VERT], [gl.FRAGMENT_SHADER, frag]]) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    gl.attachShader(prog, sh);
   }
-  return sh;
+  gl.linkProgram(prog);
+  return prog;
 }
 
-function link(gl, frag, names) {
-  const prog = gl.createProgram();
-  gl.attachShader(prog, compile(gl, gl.VERTEX_SHADER, VERT));
-  gl.attachShader(prog, compile(gl, gl.FRAGMENT_SHADER, frag));
-  gl.linkProgram(prog);
+function finish(gl, prog, names) {
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    for (const sh of gl.getAttachedShaders(prog))
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error('shader compile failed:\n' + gl.getShaderInfoLog(sh));
     throw new Error('program link failed:\n' + gl.getProgramInfoLog(prog));
   }
   const u = {};
   for (const n of names) u[n] = gl.getUniformLocation(prog, n);
   return { prog, u };
 }
+
+const link = (gl, frag, names) => finish(gl, begin(gl, frag), names);
 
 const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm', 'uLs', 'uFs'];
 
@@ -60,22 +66,27 @@ export class Renderer {
     this.nProbe = nProbe;
     this.nView = nView;
 
-    this.probeProg = link(gl, probeFrag(nProbe, space), LEVEL_UNIFORMS);
+    // (The programs, begun here and finished in ready; parallel compiling is
+    // asked for first, to cover them.)
+    this.parallel = gl.getExtension('KHR_parallel_shader_compile');
     const viewUniforms = [
       ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH', 'uToOut', 'uShaftAt', 'uShaftN',
     ];
-    this.viewProg = link(gl, viewFrag(nView, space, nThread, true), viewUniforms);
+    this.pending = [
+      ['probeProg', probeFrag(nProbe, space), LEVEL_UNIFORMS],
+      ['viewProg', viewFrag(nView, space, nThread, true), viewUniforms],
+      ['smoothProg', SMOOTH_FRAG, ['uTex', 'uRes']],
+      ['taauProg', TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']],
+    ].map(([key, frag, names]) => ({ key, names, prog: begin(gl, frag) }));
     // The older way of finding what each pixel sees, to check the above
     // against: made the first time it is asked for (see refProg).
     this.makeRef = () => link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
 
-    this.smoothProg = link(gl, SMOOTH_FRAG, ['uTex', 'uRes']);
     // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
     // pictures, drawn into in turn, each with its weights; and what the frame
     // before was drawn from.
     this.hist = [null, null];
     this.histW = [null, null];
-    this.taauProg = link(gl, TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']);
     this.histFbo = [gl.createFramebuffer(), gl.createFramebuffer()];
     this.histAt = 0;
     this.prev = null;
@@ -135,6 +146,16 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE0);
       return { name, tex, unit: TABLES_UNIT + i };
     });
+  }
+
+  // Once the GPU has built the programs (asked without waiting, where it can
+  // say), finishes them: nothing is drawn before. (Their errors are thrown
+  // here.)
+  async ready() {
+    const gl = this.gl, par = this.parallel;
+    while (par && !this.pending.every(({ prog }) => gl.getProgramParameter(prog, par.COMPLETION_STATUS_KHR))) await new Promise((r) => setTimeout(r, 16));
+    for (const { key, prog, names } of this.pending) this[key] = finish(gl, prog, names);
+    this.pending = null;
   }
 
   setLevels(p, recs, n) {

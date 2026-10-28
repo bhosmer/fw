@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>fractal world</title>
+    <!-- (The app is started once the page has shown: see below. Fetched meanwhile.) -->
+    <link rel="modulepreload" href="src/main.js" />
     <style>
       html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
       #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
@@ -38,7 +40,7 @@
   </head>
   <body>
     <canvas id="view"></canvas>
-    <!-- Shown until the first picture: building the shaders holds the page for some seconds. -->
+    <!-- Shown until the first picture: the app's tables and shaders take a second or two to build. -->
     <div id="loading">loading…</div>
     <div id="help"><pre class="keys">drag         look            W A S D     fly
 right-drag   slide           space / C   up / down
@@ -64,7 +66,15 @@ scheme        <span class="scheme"></span> (next)
       <button id="help-button">?</button>
     </div>
     <pre id="hud"></pre>
-    <!-- (If any of the app's files fails to arrive, it never starts: say so, rather than loading for ever.) -->
-    <script type="module" src="src/main.js" onerror="document.getElementById('loading').textContent = 'a file failed to load: reload the page'"></script>
+    <!-- The app, once the page has shown (its work would otherwise hold the first picture of the page, leaving it
+         blank); if it cannot start (one of its files failed to arrive, say), say why, rather than loading for ever. -->
+    <script type="module">
+      await new Promise((r) => (requestAnimationFrame(() => setTimeout(r)), setTimeout(r, 100)));
+      import('./src/main.js').catch((err) => {
+        const loading = document.getElementById('loading');
+        if (loading) loading.textContent = `could not start (${err.message}): reload the page`;
+        throw err;
+      });
+    </script>
   </body>
 </html>

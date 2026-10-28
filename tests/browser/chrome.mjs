@@ -145,6 +145,10 @@ class Page {
     });
     await this.send('Page.navigate', { url });
     await loaded;
+    // (The app starts after the page has shown, and once its programs are
+    // built: wait for it, or until it says it cannot, or for long enough to
+    // say it did not.)
+    await this.eval(`new Promise((ok) => { const t0 = Date.now(); const f = () => (window.fw || document.querySelector('#help.error') || document.getElementById('loading')?.textContent.startsWith('could not') || Date.now() - t0 > 30000 ? ok() : setTimeout(f, 10)); f(); })`);
   }
 
   // Evaluate an expression (it may await) in the page; returns its value.

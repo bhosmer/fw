@@ -52,6 +52,7 @@ function toggleHelp() {
 let renderer;
 try {
   renderer = new Renderer(canvas, space, UP + DOWN + 1, N_VIEW, N_THREAD);
+  await renderer.ready();
 } catch (err) {
   help.textContent = err.message;
   help.classList.add('error');
