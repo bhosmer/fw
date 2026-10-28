@@ -69,7 +69,8 @@ const PILLAR = 1.75 / 2; // half the pillar's side
 const BEARING = 6 / 24, TAPER = 6 / 24;
 // What the plate's and the roof band's edges carry (fringe.md): rows of
 // segments (see OPENINGS' segments in arcology.js), units over the band's
-// bottom (18 high); rows from its bottom start 2 under it (to open through
+// bottom (18 high to the open storey's floor; the roof band's slab, the
+// town's, another 12 over it); rows from its bottom start 2 under it (to open through
 // it). Basil chose the cornice (2026-10-26): heavy, uninhabited structure;
 // its variations elaborate it structurally, with vertical joints a cell or
 // more apart (fine upright cuts shimmer); of them, the steps. The rest are
@@ -113,6 +114,12 @@ const edge = (which) => EDGES[EDGE][which] ?? EDGES[EDGE];
 // inside the column, where the halls are, and which cut no openings.) Units
 // of a 24th of a cell (see OPENINGS in arcology.js); the rings a pitch apart,
 // one centred in the open storey; the panels' rows between them.
+// The plaza (Basil, 2026-10-28: the photo's roof top, a section of
+// cityscape, clusters of low structures with open floor between; the
+// drawing's PARK and PROMENADE, planting, left for now): carved one level
+// finer from a slab TOWN_H over the open storey's floor, to the band's edge
+// (see TOWN in arcology.js).
+const TOWN_H = 0.5;
 const CORE = 2.875;
 const RING = { pitch: 36, up: 6, deep: 6 };
 const CORE_FACE = [
@@ -158,7 +165,9 @@ export function hexahedron() {
   // pillars' run on through it.)
   solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO, yields: ['pillar'] });
   solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true, windows: edge('plate') });
-  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI), rim: true, yields: ['pillar'], windows: edge('roof') });
+  // (Its top raised TOWN_H over the open storey's floor, a slab the town is
+  // carved from: see town in arcology.js.)
+  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI + TOWN_H), rim: true, yields: ['pillar'], windows: edge('roof'), town: { floor: ROOF_HI } });
   // Pillars: squares facing the centre, from the ground (and a cell under
   // it) to the plate's top, a buttress at the plate (see BEARING). Their
   // radial direction, as whole numbers.

@@ -238,3 +238,27 @@ test('the building has skin, deep and plain cells', () => {
   for (const k of VOLUME.kind) count[k]++;
   assert.ok(count[1] > 500 && count[2] > 1000 && count[3] > 500, `deep ${count[1]}, skin ${count[2]}, plain ${count[3]}`);
 });
+
+// The town's boxes (see TOWN in arcology.js): each stands far enough inside
+// its lot that its distance is at least the margin on the lot's edge at every
+// height (the town asks only the point's own lot).
+test('the town\'s buildings keep their margin within their lots', () => {
+  const { TOWN, TOWN_PLANS, townShape, boxDist } = _V2;
+  if (!TOWN) return;
+  const rnd = rand(13);
+  let worst = Infinity, shapes = 0;
+  for (let it = 0; it < 600; it++) {
+    const h = Math.floor(rnd() * 2 ** 32), h2 = Math.floor(rnd() * 2 ** 32 / 100) * 100;
+    for (const plan of TOWN_PLANS) for (const r of plan) for (let k = 0; k < _V2.TOWN_SHAPES; k++) {
+      const s = townShape(h, h2, r, 100, k);
+      if (!s) continue;
+      shapes++;
+      assert.ok(s[0] >= r[0] + 1 && s[2] >= r[1] + 1 && s[3] <= r[2] - 1 && s[5] <= r[3] - 1 && s[1] >= 0 && s[4] <= TOWN.H && s[0] < s[3] && s[1] < s[4] && s[2] < s[5], `${s} in ${r}`);
+      for (let y = 0; y <= TOWN.H; y += 0.5) for (let t = 0; t <= 1; t += 1 / 24)
+        for (const p of [[r[0] + t * (r[2] - r[0]), y, r[1]], [r[0] + t * (r[2] - r[0]), y, r[3]], [r[0], y, r[1] + t * (r[3] - r[1])], [r[2], y, r[1] + t * (r[3] - r[1])]])
+          worst = Math.min(worst, boxDist(s, p));
+    }
+  }
+  assert.ok(shapes > 1000, `${shapes} boxes`);
+  assert.ok(worst >= 1 - 1e-9, `a box ${worst} from its lot's edge`);
+});

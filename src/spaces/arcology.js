@@ -182,6 +182,13 @@ const SOLID_PL = SOLIDS.map((s) => s.planes.map(({ n, K }) => [...n.map((x) => x
 // The solids that are neither masses nor their rims (pillars, the column): the
 // city's cuts stop at them (see bareIn), and the notches one level finer
 // keep clear of the cells they touch (see F.bare).
+// (No upright face, nor top, of a solid without relief on a cell's side:
+// the cells inside it would be wholly inside the solid, where the halls are,
+// and those next to open air would show them through its face.)
+SOLIDS.filter((s) => !s.relief && !s.rim).forEach((s) => s.planes.forEach(({ n, K }) => {
+  const axis = n.filter((x) => x).length === 1, a = n.findIndex((x) => x);
+  if (axis && (a !== 1 || n[1] > 0) && Number.isInteger(K / n[a])) throw new Error(`arcology: a face of ${s.name} on a cell's side (${'xyz'[a]} = ${K / n[a]})`);
+}));
 const BARE = SOLIDS.filter((s) => !s.relief && !s.rim);
 const BARE_PL = BARE.map((s) => SOLID_PL[SOLIDS.indexOf(s)]);
 // (And their bounds, cells from the building's origin: a first, cheap test.)
@@ -717,9 +724,90 @@ const slabMeets = (W, c) => {
 const WORDS = 4, DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, SOLID_BITS = 5, WIN_AT = [0, 9, 18], WIN_BITS = 9;
 const CLIP_MOST = 6, CROSS_AT = SOLID_BITS * CLIP_MOST;
 if (SOLIDS.length >= 1 << SOLID_BITS) throw new Error(`arcology: ${SOLIDS.length} solids, at most ${(1 << SOLID_BITS) - 1}`);
+// The town on the roof band's top (.claude/design/town.md): carved from the
+// slab the band's top is raised by, one level finer, in its cells (TOWN_AT,
+// in a plain cell's first number; its run-on as a deep cell's, OPEN_AT, for
+// its four upright sides, and for its four corners, TOWN_CORNER_AT: ++, +-,
+// -+, --). Each cell is laid out in lots by one of TOWN_PLANS, and each lot
+// holds up to TOWN_SHAPES boxes (a building) standing in it, by its hash,
+// all at least TOWN_MARGIN inside it.
+const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = 1, TOWN_SHAPES = 4;
+const TOWN = (() => {
+  const s = SOLIDS.find((x) => x.town);
+  if (!s) return null;
+  const floor = s.town.floor, H = Math.round((heightsOf(s)[1] - floor) * R);
+  if (!Number.isInteger(floor) || H < 1 || H > R || R !== 24) throw new Error('arcology: a town that does not fit');
+  return { solid: s, floor, H };
+})();
+// A cell's lots, [x0, z0, x1, z1] in units, by plan (after real towns' blocks:
+// a grid of small lots; a 2 by 2 of larger; strips, along x or z, as of row
+// houses on a street; one whole block; a strip beside a grid), picked by the
+// cell's hash from TOWN_PICK.
+const TOWN_PLANS = [
+  [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8])),
+  [0, 1].flatMap((j) => [0, 1].map((i) => [12 * i, 12 * j, 12 * i + 12, 12 * j + 12])),
+  [0, 1, 2].map((j) => [0, 8 * j, 24, 8 * j + 8]),
+  [0, 1, 2].map((i) => [8 * i, 0, 8 * i + 8, 24]),
+  [[0, 0, 24, 24]],
+  [[0, 0, 8, 24], ...[0, 1, 2].flatMap((j) => [1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8]))],
+];
+const TOWN_PICK = [0, 0, 1, 1, 2, 3, 4, 5];
+// Box k of a lot r, by the lot's hashes h, h2 and its cluster's density:
+// [x0, y0, z0, x1, y1, z1] in units over the cell's corner and the floor, or
+// null (see townShape in the GLSL, the same). Buildings: a block; a block
+// with a setback tier; an L; a court (a ring round an open yard); a tower on
+// a podium; a row of attached units along a long lot.
+function townShape(h, h2, r, dens, k) {
+  if (h2 % 100 >= dens) return null;
+  const H = TOWN.H, top = (y) => Math.min(H, y);
+  const ix0 = r[0] + 1, iz0 = r[1] + 1, ix1 = r[2] - 1, iz1 = r[3] - 1, W = ix1 - ix0, D = iz1 - iz0;
+  let t = (h >>> 7) % 6;
+  if (t === 5 && Math.max(W, D) < 14) t = 0;
+  if (t === 3 && (W < 9 || D < 9)) t = 2;
+  if (t === 4 && (W < 6 || D < 6)) t = 1;
+  if (t === 2 && (W < 5 || D < 5)) t = 0;
+  if (t === 1 && (W < 4 || D < 4)) t = 0;
+  const h1 = top(3 + ((h >>> 10) % 10)), hb = top(3 + ((h2 >>> 7) % 10));
+  if (t === 0) return k === 0 ? [ix0 + ((h >>> 14) & 1), 0, iz0 + ((h >>> 15) & 1), ix1 - ((h >>> 16) & 1), h1, iz1 - ((h >>> 17) & 1)] : null;
+  if (t === 1) {
+    if (k === 0) return [ix0, 0, iz0, ix1, h1, iz1];
+    const s = 1 + ((h >>> 14) & 1);
+    return k === 1 ? [ix0 + s, 0, iz0 + s, ix1 - s, top(h1 + 2 + ((h >>> 18) % 4)), iz1 - s] : null;
+  }
+  if (t === 2) {
+    const a = 2 + ((h2 >>> 11) % (W - 3)), b = 2 + ((h2 >>> 15) % (D - 3)), fx = (h >>> 14) & 1, fz = (h >>> 15) & 1;
+    if (k === 0) return [fx ? ix1 - a : ix0, 0, iz0, fx ? ix1 : ix0 + a, h1, iz1];
+    return k === 1 ? [ix0, 0, fz ? iz1 - b : iz0, ix1, hb, fz ? iz1 : iz0 + b] : null;
+  }
+  if (t === 3) {
+    const w = 2 + ((h2 >>> 11) & 1), hh = top(3 + ((h2 >>> 12) % 6));
+    if (k === 0) return [ix0, 0, iz0, ix1, hh, iz0 + w];
+    if (k === 1) return [ix0, 0, iz1 - w, ix1, hh, iz1];
+    if (k === 2) return [ix0, 0, iz0 + w, ix0 + w, hh, iz1 - w];
+    return [ix1 - w, 0, iz0 + w, ix1, top(hh + ((h2 >>> 16) % 3)), iz1 - w];
+  }
+  if (t === 4) {
+    if (k === 0) return [ix0, 0, iz0, ix1, top(2 + ((h2 >>> 11) & 1)), iz1];
+    const s = 2 + ((h2 >>> 12) % 3), ox = ix0 + 1 + ((h2 >>> 14) % (W - s - 1)), oz = iz0 + 1 + ((h2 >>> 18) % (D - s - 1));
+    return k === 1 ? [ox, 0, oz, ox + s, top(8 + ((h2 >>> 22) % 5)), oz + s] : null;
+  }
+  const n = 2 + ((h2 >>> 11) % 3), along = W >= D, a0 = along ? ix0 : iz0, w = along ? W : D;
+  if (k >= n) return null;
+  const u0 = a0 + Math.floor((w * k) / n), u1 = a0 + Math.floor((w * (k + 1)) / n), hk = top(3 + ((h2 >>> (14 + 3 * k)) % 8));
+  return along ? [u0, 0, iz0, u1, hk, iz1] : [ix0, 0, u0, ix1, hk, u1];
+}
+// A box's distance at p.
+const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
+// A cell's plan and its density (by its cluster, two cells square), by its hashes.
+function townCell() {
+  const hc = hashCell([fdiv(cellB[0], 2), fdiv(cellB[2], 2), 9], TOWN_SALT), hl = hashCell([cellB[0], cellB[2], 11], TOWN_SALT);
+  return { dens: [15, 45, 80][hc % 3], plan: TOWN_PLANS[TOWN_PICK[hl % 8]] };
+}
+const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_SALT);
+const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // (For the checks in .claude/verify.)
-export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT } };
+export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT }, TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist };
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
   const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -829,6 +917,19 @@ export const VOLUME = (() => {
     if (out.length > CLIP_MOST) throw new Error(`arcology: ${out.length} solids to stop openings at, at ${[x, y, z]}`);
     return out.reduce((w, i, k) => w | (i << (SOLID_BITS * k)), 0);
   };
+  // (The town's cells: plain, the roof band the only solid touching them, in
+  // the floor's row, to the band's edge (what stands past its faces is air
+  // anyway). Cells by the pillars and the column are left: plinths.)
+  const town = new Uint8Array(n);
+  if (TOWN)
+    for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+      const c = [x + lo[0], y + lo[1], z + lo[2]], v = at([x, y, z]);
+      if (kind[v] !== PLAIN || c[1] - ORIGIN[1] !== TOWN.floor) continue;
+      const touched = SOLIDS.filter((s) => !cellOut(s, c));
+      if (touched.length !== 1 || touched[0] !== TOWN.solid) continue;
+      town[v] = 1;
+    }
+  const townOk = (u) => !within(u) || (open[at(u)] && !kind[at(u)]) || town[at(u)];
   const data = new Uint32Array(WORDS * n);
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = at([x, y, z]);
@@ -843,6 +944,11 @@ export const VOLUME = (() => {
       const [open, cross] = runOn(x, y, z, skinOk(faces[v]));
       word |= open << OPEN_AT;
       data[WORDS * v + 1] = cross ? 1 << CROSS_AT : 0;
+    }
+    if (town[v]) {
+      word |= 1 << TOWN_AT;
+      [0, 1, 4, 5].forEach((k) => townOk([x + SIDES[k][0], y, z + SIDES[k][2]]) && (word |= 1 << (OPEN_AT + k)));
+      TOWN_CORNERS.forEach(([sx, sz], c) => townOk([x + sx, y, z + sz]) && (word |= 1 << (TOWN_CORNER_AT + c)));
     }
     const ws = winsOf(v);
     if (ws.length) {
@@ -913,6 +1019,14 @@ const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
 const ivec3 ORIGIN = ivec3(${ORIGIN.join(', ')});
 const int FACE_AT = ${FACE_AT}, OPEN_AT = ${OPEN_AT}, CROSS_AT = ${CROSS_AT};
+// (The town: see TOWN in the JS.)
+const int TOWN_AT = ${TOWN_AT}, TOWN_CORNER_AT = ${TOWN_CORNER_AT}, TOWN_SHAPES = ${TOWN_SHAPES};
+const ivec4 TOWN_LOT[${TOWN_PLANS.flat().length}] = ivec4[${TOWN_PLANS.flat().length}](${TOWN_PLANS.flat().map((r) => `ivec4(${r.join(', ')})`).join(', ')});
+const int TOWN_PLAN_AT[${TOWN_PLANS.length + 1}] = int[${TOWN_PLANS.length + 1}](${TOWN_PLANS.map((_, i) => TOWN_PLANS.slice(0, i).flat().length).concat([TOWN_PLANS.flat().length]).join(', ')});
+const int TOWN_PICK[8] = int[8](${TOWN_PICK.join(', ')});
+const int TOWN_H = ${TOWN ? TOWN.H : 1};
+const uint TOWN_SALT = ${TOWN_SALT}u;
+const float TOWN_MARGIN = ${glf(TOWN_MARGIN)};
 const uint POCKET_SALT = ${POCKET_SALT}u, ROW_SALT = ${ROW_SALT}u, DEPTH_SALT = ${DEPTH_SALT}u;
 // The two levels' pockets (see LEVELS): sb, sby, quant, splits, and the
 // least a part may be (LV_MIN, in quanta); and their depths' shares, ND to a
@@ -1625,13 +1739,143 @@ float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3
   return a;
 }
 
+// Box k of a lot r of the town (see townShape in the JS, the same), in units
+// over the cell's corner and the floor.
+bool townShape(uint h, uint h2, ivec4 r, uint dens, int k, out vec3 lo, out vec3 hi) {
+  lo = vec3(0.0); hi = vec3(0.0);
+  if (h2 % 100u >= dens) return false;
+  int ix0 = r.x + 1, iz0 = r.y + 1, ix1 = r.z - 1, iz1 = r.w - 1, W = ix1 - ix0, D = iz1 - iz0;
+  int t = int((h >> 7u) % 6u);
+  if (t == 5 && max(W, D) < 14) t = 0;
+  if (t == 3 && (W < 9 || D < 9)) t = 2;
+  if (t == 4 && (W < 6 || D < 6)) t = 1;
+  if (t == 2 && (W < 5 || D < 5)) t = 0;
+  if (t == 1 && (W < 4 || D < 4)) t = 0;
+  int h1 = min(TOWN_H, 3 + int((h >> 10u) % 10u)), hb = min(TOWN_H, 3 + int((h2 >> 7u) % 10u));
+  ivec3 a, b;
+  if (t == 0) {
+    if (k != 0) return false;
+    a = ivec3(ix0 + int((h >> 14u) & 1u), 0, iz0 + int((h >> 15u) & 1u));
+    b = ivec3(ix1 - int((h >> 16u) & 1u), h1, iz1 - int((h >> 17u) & 1u));
+  } else if (t == 1) {
+    if (k == 0) { a = ivec3(ix0, 0, iz0); b = ivec3(ix1, h1, iz1); }
+    else if (k == 1) {
+      int s = 1 + int((h >> 14u) & 1u);
+      a = ivec3(ix0 + s, 0, iz0 + s); b = ivec3(ix1 - s, min(TOWN_H, h1 + 2 + int((h >> 18u) % 4u)), iz1 - s);
+    } else return false;
+  } else if (t == 2) {
+    int aa = 2 + int((h2 >> 11u) % uint(W - 3)), bb = 2 + int((h2 >> 15u) % uint(D - 3));
+    bool fx = ((h >> 14u) & 1u) != 0u, fz = ((h >> 15u) & 1u) != 0u;
+    if (k == 0) { a = ivec3(fx ? ix1 - aa : ix0, 0, iz0); b = ivec3(fx ? ix1 : ix0 + aa, h1, iz1); }
+    else if (k == 1) { a = ivec3(ix0, 0, fz ? iz1 - bb : iz0); b = ivec3(ix1, hb, fz ? iz1 : iz0 + bb); }
+    else return false;
+  } else if (t == 3) {
+    int ww = 2 + int((h2 >> 11u) & 1u), hh = min(TOWN_H, 3 + int((h2 >> 12u) % 6u));
+    if (k == 0) { a = ivec3(ix0, 0, iz0); b = ivec3(ix1, hh, iz0 + ww); }
+    else if (k == 1) { a = ivec3(ix0, 0, iz1 - ww); b = ivec3(ix1, hh, iz1); }
+    else if (k == 2) { a = ivec3(ix0, 0, iz0 + ww); b = ivec3(ix0 + ww, hh, iz1 - ww); }
+    else { a = ivec3(ix1 - ww, 0, iz0 + ww); b = ivec3(ix1, min(TOWN_H, hh + int((h2 >> 16u) % 3u)), iz1 - ww); }
+  } else if (t == 4) {
+    if (k == 0) { a = ivec3(ix0, 0, iz0); b = ivec3(ix1, min(TOWN_H, 2 + int((h2 >> 11u) & 1u)), iz1); }
+    else if (k == 1) {
+      int s = 2 + int((h2 >> 12u) % 3u), ox = ix0 + 1 + int((h2 >> 14u) % uint(W - s - 1)), oz = iz0 + 1 + int((h2 >> 18u) % uint(D - s - 1));
+      a = ivec3(ox, 0, oz); b = ivec3(ox + s, min(TOWN_H, 8 + int((h2 >> 22u) % 5u)), oz + s);
+    } else return false;
+  } else {
+    int n = 2 + int((h2 >> 11u) % 3u);
+    if (k >= n) return false;
+    bool along = W >= D;
+    int a0 = along ? ix0 : iz0, ww = along ? W : D, u0 = a0 + (ww * k) / n, u1 = a0 + (ww * (k + 1)) / n;
+    int hk = min(TOWN_H, 3 + int((h2 >> uint(14 + 3 * k)) % 8u));
+    if (along) { a = ivec3(u0, 0, iz0); b = ivec3(u1, hk, iz1); } else { a = ivec3(ix0, 0, u0); b = ivec3(ix1, hk, u1); }
+  }
+  lo = vec3(a); hi = vec3(b);
+  return true;
+}
+
+// A box of the town as a solid at p (its distance; for a ray, where it strikes).
+float boxSolid(vec3 lo, vec3 hi, vec3 p) {
+  solidPiece();
+  solidPlane(lo.x - p.x, -EX); solidPlane(p.x - hi.x, EX);
+  solidPlane(lo.y - p.y, -EY); solidPlane(p.y - hi.y, EY);
+  solidPlane(lo.z - p.z, -EZ); solidPlane(p.z - hi.z, EZ);
+  return solidDone();
+}
+
+// The town's air in its cell (w its first number): over the floor (the
+// cell's bottom), to its top, cut at the sides it does not run on across (a
+// corner too, aslant, where its two sides run on and the cell across it does
+// not), with each lot's boxes standing in it. Its distance asks only the
+// point's own lot (the others' boxes are TOWN_MARGIN inside theirs); a ray,
+// every lot it could reach before it leaves. As the openings, worked out
+// unshrunk (gO, gA 0: the caller takes gO off again), fading instead by its
+// floor rising to the slab's top with distance, as the level fades (so that
+// a capped distance still says whether the point is in its air).
+float townAir(ivec3 L, vec3 f, uint w, bool ray, inout float reach, inout vec3 nrm) {
+  vec3 p = vec3(L) + f;
+  uint open = (w >> uint(OPEN_AT)) & 63u, corner = (w >> uint(TOWN_CORNER_AT)) & 15u;
+  bool r0 = gRay;
+  float t = 1e9, fo = gO, fa = gA;
+  gO = 0.0; gA = 0.0;
+  float own = (gScale - 1.0 / LOD_HI) * LOD_K;
+  float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate : 0.0;
+  for (int pass = 0; pass < 2; pass++) {
+    gRay = pass == 1;
+    airPiece();
+    gA = fq * float(TOWN_H);
+    airPlane(fp * float(TOWN_H) - p.y, -EY);
+    gA = 0.0;
+    airPlane(p.y - float(R), EY);
+    airPlane(p.x - float(R) - ((open & 1u) != 0u ? TOWN_MARGIN : 0.0), EX);
+    airPlane(-p.x - ((open & 2u) != 0u ? TOWN_MARGIN : 0.0), -EX);
+    airPlane(p.z - float(R) - ((open & 16u) != 0u ? TOWN_MARGIN : 0.0), EZ);
+    airPlane(-p.z - ((open & 32u) != 0u ? TOWN_MARGIN : 0.0), -EZ);
+    for (int c = 0; c < 4; c++) {
+      float sx = c < 2 ? 1.0 : -1.0, sz = (c & 1) == 0 ? 1.0 : -1.0;
+      if ((open & (sx > 0.0 ? 1u : 2u)) != 0u && (open & (sz > 0.0 ? 16u : 32u)) != 0u && (corner & (1u << uint(c))) == 0u)
+        airPlane((sx * (p.x - (sx > 0.0 ? float(R) : 0.0)) + sz * (p.z - (sz > 0.0 ? float(R) : 0.0))) * 0.70710678, vec3(sx, 0.0, sz) * 0.70710678);
+    }
+    float box = gD;
+    uint hc = hashCell(ivec3(fdiv(gCellB.x, 2), fdiv(gCellB.z, 2), 9), TOWN_SALT), hl = hashCell(ivec3(gCellB.x, gCellB.z, 11), TOWN_SALT);
+    uint dens = hc % 3u == 0u ? 15u : hc % 3u == 1u ? 45u : 80u;
+    int plan = TOWN_PICK[hl % 8u], l0 = TOWN_PLAN_AT[plan], l1 = TOWN_PLAN_AT[plan + 1];
+    vec3 lo, hi;
+    if (pass == 0) {
+      // (The point's own lot: the first holding it.)
+      // (A lot at the cell's far side holds the side too: p can be on it.)
+      int n = l1 - 1;
+      for (int l = l0; l < l1; l++) if ((p.x < float(TOWN_LOT[l].z) || TOWN_LOT[l].z == R) && (p.z < float(TOWN_LOT[l].w) || TOWN_LOT[l].w == R)) { n = l; break; }
+      ivec4 r = TOWN_LOT[n];
+      uint h = hashCell(ivec3(gCellB.x * 16 + n - l0, gCellB.z, 7), TOWN_SALT), h2 = hashCell(ivec3(gCellB.x * 16 + n - l0, gCellB.z, 8), TOWN_SALT);
+      float d = min(min(p.x - float(r.x), float(r.z) - p.x), min(p.z - float(r.y), float(r.w) - p.z)) + TOWN_MARGIN;
+      for (int k = 0; k < TOWN_SHAPES; k++)
+        if (townShape(h, h2, r, dens, k, lo, hi)) d = min(d, boxSolid(lo, hi, p));
+      t = max(box, -d);
+      if (!ray || t > 0.0) break;
+    } else {
+      for (int l = l0; l < l1; l++) {
+        ivec4 r = TOWN_LOT[l];
+        vec3 off = max(vec3(float(r.x), 0.0, float(r.y)) - p, p - vec3(float(r.z), float(TOWN_H), float(r.w)));
+        if (max(max(off.x, off.y), off.z) >= gX) continue;
+        uint h = hashCell(ivec3(gCellB.x * 16 + l - l0, gCellB.z, 7), TOWN_SALT), h2 = hashCell(ivec3(gCellB.x * 16 + l - l0, gCellB.z, 8), TOWN_SALT);
+        for (int k = 0; k < TOWN_SHAPES; k++)
+          if (townShape(h, h2, r, dens, k, lo, hi)) boxSolid(lo, hi, p);
+      }
+      if (gX > reach) { reach = gX; nrm = gN; }
+    }
+  }
+  gRay = r0;
+  gO = fo; gA = fa;
+  return t;
+}
+
 // A level-(CITY + 1) cell the table says something of: deep in the
 // building, the halls (d, reach and nrm being what they say of it), cut off
 // at its sides across which they may not run on; in its skin, pockets and no
 // rooms (they are the city's surface, coloured as the city: gSkin), and any
-// openings it has (see openings); plain, solid but for its openings. Its air is
-// never further off than its sides (the next cell's may be just across
-// them).
+// openings it has (see openings); plain, solid but for its openings, and its
+// town (see townAir). Its air is never further off than its sides (the next
+// cell's may be just across them).
 float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout float reach, inout vec3 nrm) {
   uint kind = m.x & 3u;
   bool ray = gRay;
@@ -1670,6 +1914,7 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout f
   gCarveOpen = (m.x >> uint(OPEN_AT)) & 63u;
   gCarveCross = ((m.y >> uint(CROSS_AT)) & 1u) != 0u;
   if (kind == ${PLAIN}u) {
+    if (((m.x >> uint(TOWN_AT)) & 1u) != 0u) a = min(a, townAir(L, f, m.x, ray, reach, nrm));
     gSkin = ray ? reach >= 0.0 : a < 0.0;
     // (Less gO, which map takes off the whole level again: see cell.)
     return min(a - gO, max(e, 0.0));
@@ -2232,7 +2477,35 @@ function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d) {
   const a = openings(L, f, wins, clip);
   cellOpen = (m >>> OPEN_AT) & 63;
   cellCross = !!((clip >>> CROSS_AT) & 1);
-  return Math.min(a, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE) : NONE, Math.max(e, 0));
+  const t = kind === PLAIN && (m >>> TOWN_AT) & 1 ? townAir(L, f, m) : NONE;
+  return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE) : NONE, Math.max(e, 0));
+}
+
+// See townAir in the shader.
+function townAir(L, f, m) {
+  const p = [0, 1, 2].map((a) => L[a] + f[a]), open = (m >>> OPEN_AT) & 63, corner = (m >>> TOWN_CORNER_AT) & 15;
+  piece();
+  plane(-p[1]);
+  plane(p[1] - R);
+  plane(p[0] - R - (open & 1 ? TOWN_MARGIN : 0));
+  plane(-p[0] - (open & 2 ? TOWN_MARGIN : 0));
+  plane(p[2] - R - (open & 16 ? TOWN_MARGIN : 0));
+  plane(-p[2] - (open & 32 ? TOWN_MARGIN : 0));
+  TOWN_CORNERS.forEach(([sx, sz], c) => {
+    if (open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(corner & (1 << c))) plane((sx * (p[0] - (sx > 0 ? R : 0)) + sz * (p[2] - (sz > 0 ? R : 0))) * Math.SQRT1_2);
+  });
+  const box = gD;
+  // (The point's own lot: the first holding it.)
+  const { dens, plan } = townCell();
+  // (A lot at the cell's far side holds the side too: p can be on it.)
+  let n = plan.findIndex((r) => (p[0] < r[2] || r[2] === R) && (p[2] < r[3] || r[3] === R));
+  const r = plan[n], h = lotHash(n, 7), h2 = lotHash(n, 8);
+  let d = Math.min(p[0] - r[0], r[2] - p[0], p[2] - r[1], r[3] - p[2]) + TOWN_MARGIN;
+  for (let k = 0; k < TOWN_SHAPES; k++) {
+    const b = townShape(h, h2, r, dens, k);
+    if (b) d = Math.min(d, boxDist(b, p));
+  }
+  return Math.max(box, -d);
 }
 
 // See openings in the shader.
