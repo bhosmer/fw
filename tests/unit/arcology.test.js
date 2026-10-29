@@ -4,6 +4,7 @@ import arcology, { CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arco
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight } from '../../src/flight.js';
+import { rayHolds } from './rays.js';
 
 const R = arcology.R;
 const P = R * R;
@@ -269,4 +270,40 @@ test('the town\'s buildings keep their margin within their lots', () => {
   }
   assert.ok(shapes > 1000, `${shapes} boxes`);
   assert.ok(worst >= 1 - 1e-9, `a box ${worst} from its lot's edge`);
+});
+
+// Rays in the buildings' openings (see openings): from points in each skin
+// or plain cell with openings (but the town's) of the city's own cell, along
+// the axes and diagonals and two others, what a level says of a ray holds
+// (see rayHolds); and many more points where two or more solids' openings
+// are (they may overlap, or one run on through another).
+test('what the openings say of a ray holds', () => {
+  const { TOWN_AT, SKIN, PLAIN, WIN_AT, SOLID_BITS } = _V2.BITS;
+  const rnd = rand(19);
+  const s = Math.SQRT1_2;
+  const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
+  let cells = 0, shared = 0, inAir = 0;
+  const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 });
+  // (The camera at frac in cell x, y, z; its record of the level.)
+  const at = (x, y, z, frac) => {
+    Object.assign(flight.pos, { F: CITY + 1, frac, digits: new Map([[CITY + 1, [x, y, z]]]) });
+    return mine();
+  };
+  const mine = () => flight.pos.levels(CITY + 1, Math.max(CITY + 1, flight.pos.F)).find((q) => q.level === CITY + 1);
+  for (let x = 0; x < R; x++) for (let y = 0; y < R; y++) for (let z = 0; z < R; z++) {
+    const r0 = at(x, y, z, [0.5, 0.5, 0.5]);
+    const [m, , wins] = _V2.relief(r0.id.map((q) => ((q % P) + P) % P), r0.pid);
+    const kind = m & 3;
+    if (!(kind === SKIN || kind === PLAIN) || !wins || (kind === PLAIN && (m >>> TOWN_AT) & 1)) continue;
+    cells++;
+    const solids = WIN_AT.filter((b) => (wins >>> b) & ((1 << SOLID_BITS) - 1)).length;
+    shared += solids > 1;
+    for (let k = 0; k < (solids > 1 ? 40 : 1); k++) {
+      at(x, y, z, [rnd(), rnd(), rnd()]);
+      flight.sense();
+      const r = mine();
+      for (const e of k ? [dirs[k % dirs.length]] : dirs) inAir += rayHolds(flight, r, [0, 0, 0], e.map((v) => v / Math.hypot(...e))).inAir;
+    }
+  }
+  assert.ok(cells > 1000 && shared > 50 && inAir > 2000, `${cells} cells (${shared} with openings of more than one solid), ${inAir} rays in air: the test reaches the openings`);
 });

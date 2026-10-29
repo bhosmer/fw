@@ -813,7 +813,7 @@ const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_
 const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // (For the checks in .claude/verify.)
-export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT }, TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
+export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
   const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -1758,8 +1758,12 @@ float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3
       int i = int(c & ${(1 << SOLID_BITS) - 1}u) - 1;
       if (i == me) continue;
       bool through = ((SOLID_YIELDS[i] >> uint(me)) & 1u) != 0u;
-      float inside = (SOLID_KEEP[i] - solidOut(i, q)) * float(R);
-      for (int t = 0; t < ${WIN_AT.length}; t++) if (ms[t] == i) inside = min(inside, bs[t]);
+      float inside = (SOLID_KEEP[i] - solidOut(i, q)) * float(R), ri = -1.0;
+      vec3 rin = vec3(0.0);
+      for (int t = 0; t < ${WIN_AT.length}; t++) if (ms[t] == i) {
+        inside = min(inside, bs[t]);
+        if (rs[t] > ri) { ri = rs[t]; rin = ns[t]; }
+      }
       b = max(b, through ? min(inside, own * float(R)) : inside);
       if (rays) {
         solidBegin();
@@ -1767,7 +1771,9 @@ float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3
         float x = max(gIn, 0.0);
         vec3 n = gInN;
         if (through && x >= oIn && x < oOut) { x = oOut; n = -oN; }
-        // (Inside it here, outside the solid: no air, as the distance says.)
+        // (Inside it here: air only in its own openings, as the distance
+        // says, and as far as the ray stays in them.)
+        else if (x == 0.0 && ri >= 0.0) { x = ri; n = rin; }
         if (x < gOut && x < r) { r = x > 0.0 ? x : -1.0; rn = n; }
       }
     }
@@ -2636,6 +2642,13 @@ function openings(L, f, wins, clip, ray) {
         }
         let x = Math.max(sIn, 0), n = sN;
         if (through && x >= oIn && x < oOut) (x = oOut), (n = oN.map((v) => -v));
+        else if (x === 0) {
+          // (Inside it here: air only in its own openings, and as far as
+          // the ray stays in them.)
+          let ri = -1;
+          for (const o of raw) if (o.me === i && o.r.reach > ri) (ri = o.r.reach), (n = [o.r.nx, o.r.ny, o.r.nz]);
+          if (ri >= 0) x = ri;
+        }
         if (x < sOut && x < r) (r = x > 0 ? x : -1), (rn = n);
       }
     }
