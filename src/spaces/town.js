@@ -20,6 +20,8 @@
 // in turn). Its vars are worked out only once its needs are met (a field
 // modulo something that could be 0 or less must be guarded by them).
 
+import * as twin from '../twin.js';
+
 // The lot's own names, worked out first, in order.
 const PREAMBLE = {
   ix0: 'x0 + 1', iz0: 'z0 + 1', ix1: 'x1 - 1', iz1: 'z1 - 1',
@@ -52,58 +54,28 @@ export const TOWN_TYPES = [
     box: ['along ? u0 : ix0', '0', 'along ? iz0 : u0', 'along ? u1 : ix1', 'hk', 'along ? iz1 : u1'] },
 ];
 
-// (Its words, checked: nothing else may appear; h and h2 only as the first
-// argument of bit and field; each helper with its own number of arguments;
-// commas only between them.)
-const HELPERS = { bit: 2, field: 3, top: 1, div: 2, min: 2, max: 2 };
-const OPS = new Set(['+', '-', '*', '<', '>', '<=', '>=', '==', '!=', '?', ':', '(', ')', ',', '&&', '||', '!']);
-const TOKEN = /[A-Za-z_]\w*|\d+|>>>?|<<|\+\+|--|&&|\|\||[<>=!]=|\S/g;
-// (The helper called at e[i] (its name's start): its arguments, and where
-// its closing parenthesis is.)
-function call(e, i) {
-  const args = [];
-  let depth = 0, from = e.indexOf('(', i) + 1, j = from;
-  for (; ; j++) {
-    const c = e[j];
-    if (c === undefined) throw new Error(`town: unclosed ( in ${e}`);
-    if (c === '(') depth++;
-    else if (c === ')' && depth-- === 0) break;
-    else if (c === ',' && depth === 0) args.push(e.slice(from, j).trim()), (from = j + 1);
-  }
-  args.push(e.slice(from, j).trim());
-  return { args, end: j };
-}
-const CALL = /\b(bit|field|top|div|min|max)\(/g;
-function words(e, names, where) {
-  const bad = (what) => {
-    throw new Error(`town: ${what} in ${where}: ${e}`);
-  };
-  const tokens = e.match(TOKEN);
-  // (Each parenthesis: a helper's, or not.)
-  const helper = [];
-  tokens.forEach((t, i) => {
-    if (t === '(') helper.push(tokens[i - 1] in HELPERS);
-    else if (t === ')') helper.pop();
-    else if (t === ',' && !helper.at(-1)) bad('a comma outside a helper');
-    const ok = /^\d+$/.test(t) || OPS.has(t) || names.has(t) || t in HELPERS || t === 'h' || t === 'h2';
-    if (!ok) bad(`'${t}'`);
-  });
-  let hs = 0;
-  for (const m of e.matchAll(CALL)) {
-    const { args } = call(e, m.index), n = HELPERS[m[1]];
-    if (args.length !== n) bad(`${m[1]} with ${args.length} arguments, not ${n}`);
-    if (['bit', 'field'].includes(m[1])) {
-      if (args[0] !== 'h' && args[0] !== 'h2') bad(`${m[1]} of ${args[0]}, not h or h2`);
-      hs++;
-    }
-  }
-  if (tokens.filter((t) => t === 'h' || t === 'h2').length !== hs) bad('h or h2 outside bit and field');
-  return e;
-}
+// The words a catalogue of buildings is written in (see twin.js): its
+// helpers, and how GLSL writes each. (lit: a whole number as a uint
+// literal, anything else converted.)
+const lit = (x) => (/^\d+$/.test(x) ? `${x}u` : `uint(${x})`);
+const LANG = {
+  name: 'town',
+  hashes: ['h', 'h2'],
+  hashed: ['bit', 'field'],
+  helpers: {
+    bit: { n: 2, glsl: ([h, n]) => `int((${h} >> ${lit(n)}) & 1u)` },
+    field: { n: 3, glsl: ([h, n, m]) => `int((${h} >> ${lit(n)}) % ${lit(m)})` },
+    top: { n: 1, glsl: ([y]) => `min(TOWN_H, ${y})` },
+    div: { n: 2, glsl: ([a, b]) => `((${a}) / (${b}))` },
+    min: { n: 2, glsl: ([a, b]) => `min(${a}, ${b})` },
+    max: { n: 2, glsl: ([a, b]) => `max(${a}, ${b})` },
+  },
+};
+const words = (e, names, where) => twin.words(LANG, e, names, where);
+const glsl = (e) => twin.glsl(LANG, e);
 // (Names a type may not give its own: the function's, the preamble's, the
 // helpers', and GLSL's.)
-const TAKEN = new Set(['h', 'h2', 'k', 'r', 'dens', 'lo', 'hi', 't', 'x0', 'z0', 'x1', 'z1', ...Object.keys(PREAMBLE), ...Object.keys(HELPERS),
-  'int', 'uint', 'bool', 'float', 'vec2', 'vec3', 'vec4', 'ivec3', 'in', 'out', 'inout', 'if', 'else', 'for', 'while', 'do', 'return', 'true', 'false', 'const', 'discard', 'break', 'continue', 'mod', 'abs', 'sign', 'step']);
+const TAKEN = new Set(['h', 'h2', 'k', 'r', 'dens', 'lo', 'hi', 't', 'x0', 'z0', 'x1', 'z1', ...Object.keys(PREAMBLE), ...Object.keys(LANG.helpers), ...twin.GLSL_TAKEN]);
 
 // The types in the order their needs are asked: each before the one it
 // gives way to (so one pass follows any chain of them).
@@ -136,36 +108,12 @@ function demotion(types) {
 const JS_HELPERS = 'const bit = (x, n) => (x >>> n) & 1, field = (x, n, m) => (x >>> n) % m, top = (y) => Math.min(24, y), div = (a, b) => Math.floor(a / b), min = Math.min, max = Math.max;';
 function kinds(types) {
   const lot = `const h = 0x9e3779b9, h2 = 0x7f4a7c15, x0 = 0, z0 = 0, x1 = 24, z1 = 24, k = 0;\n${Object.entries(PREAMBLE).map(([v, e]) => `const ${v} = ${e};`).join('\n')}`;
-  return types.map((t) => {
-    const vs = Object.entries({ ...t.vars, ...t.each });
-    const f = new Function(`${JS_HELPERS}\n${lot}\n${vs.map(([v, e]) => `const ${v} = ${e};`).join('\n')}\nreturn {${vs.map(([v]) => `${v}: typeof ${v}`).join(', ')}};`);
-    return f();
-  });
+  return types.map((t) => twin.kinds(`${JS_HELPERS}\n${lot}`, Object.entries({ ...t.vars, ...t.each })));
 }
 
 // The most boxes a building of a catalogue has (by default, TOWN_TYPES).
 export const townShapes = (types = TOWN_TYPES) => Math.max(...types.map((t) => (t.box ? t.most : t.boxes.length)));
 export const TOWN_SHAPES = townShapes();
-
-// An expression in GLSL: the helpers written out where they are used, as
-// whole numbers and their shifts and modulos, in the forms the shader has
-// always had them. (Not as GLSL functions: under Chrome on the Mac (ANGLE's
-// Metal), a value shifted right by exactly 16 (or divided by 65536) and then
-// taken modulo or divided by a constant not a power of two gives wrong
-// numbers when the two meet only once a function is inlined: ledger B20.)
-function glsl(e) {
-  const lit = (x) => (/^\d+$/.test(x) ? `${x}u` : `uint(${x})`);
-  const helper = { bit: ([h, n]) => `int((${h} >> ${lit(n)}) & 1u)`, field: ([h, n, m]) => `int((${h} >> ${lit(n)}) % ${lit(m)})`, top: ([y]) => `min(TOWN_H, ${y})`, div: ([a, b]) => `((${a}) / (${b}))`, min: ([a, b]) => `min(${a}, ${b})`, max: ([a, b]) => `max(${a}, ${b})` };
-  let out = '', at = 0;
-  for (const m of e.matchAll(CALL)) {
-    if (m.index < at) continue;
-    // (Its arguments, each written out first.)
-    const { args, end } = call(e, m.index);
-    out += e.slice(at, m.index) + helper[m[1]](args.map(glsl));
-    at = end + 1;
-  }
-  return out + e.slice(at);
-}
 
 // Write the function in either language, `js` (true) or GLSL, for a
 // catalogue of types.

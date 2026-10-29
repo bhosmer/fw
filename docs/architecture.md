@@ -10,7 +10,7 @@ As of 2026-10-29 (the architecture sweep). For the history of how the drawing ca
 
 ## One geometry, written twice
 
-Each world answers, for a point at a level, its distance to that level's air, and for a ray, how far it goes in the piece of air it is in and the surface it meets there. It does so in GLSL (for drawing: the shader text is generated from the definition when the page loads) and in JavaScript (for flying and the tests: `cellAir`), on the same pieces: `src/pieces.js` and its GLSL twin in `src/shaders.js`. The two are kept in step by checks that compare them (`fw.check`, `fw.checkRays`, through the renderer's probe program: `src/debug.js`).
+Each world answers, for a point at a level, its distance to that level's air, and for a ray, how far it goes in the piece of air it is in and the surface it meets there. It does so in GLSL (for drawing: the shader text is generated from the definition when the page loads) and in JavaScript (for flying and the tests: `cellAir`), on the same pieces: `src/pieces.js` and its GLSL twin in `src/shaders.js`. The two are kept in step by checks that compare them (`fw.check`, `fw.checkRays`, through the renderer's probe program: `src/debug.js`). Where a part is a catalogue (the town's buildings), both are written from it: the catalogue's own writer (`write` in `town.js`) puts each language's function together, and `src/twin.js` checks the catalogue's expressions, in words both languages read the same way, and writes them out in each.
 
 ## Flying
 
