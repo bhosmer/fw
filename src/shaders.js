@@ -340,7 +340,7 @@ uniform float uInlay;
 uniform vec3 uSun;         // toward the sun
 uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
-uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float
+uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: the distance's log2, whole part and rest (the tour's look)
 uniform float uStride;     // draw only every this many pixels (see Renderer.look)
 uniform vec2 uToOut;       // the picture's pixels per pixel drawn, each way (temporal upscaling: see TAAU_FRAG)
 
@@ -817,7 +817,13 @@ void main() {
   }
 
   if (uDebug == 5) {
-    outColor = vec4(hit ? t : -1.0, 0.0, 0.0, 1.0);
+    // (The distance's log, its whole part and the rest apart: the tour's look
+    // is drawn in the view's own half floats, so that the GPU uses the
+    // pipeline it built for the view, not another it would build at the
+    // first look (ledger B10); so split, half floats hold it to a few parts
+    // in ten thousand, at any distance. -1000: nothing hit.)
+    float l = hit ? log2(max(t, 1e-30)) : -1000.0;
+    outColor = vec4(floor(l), l - floor(l), 0.0, 1.0);
     return;
   }
   if (uDebug == 4) {

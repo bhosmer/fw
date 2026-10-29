@@ -444,7 +444,9 @@ export class Renderer {
   // What the view sees, sparsely: for every stride-th pixel of the canvas
   // (each drawn in as much detail as on screen), the distance to what it hits,
   // or -1 for nothing. It is read back without waiting for the GPU; seen()
-  // hands it over once it has arrived. One at a time.
+  // hands it over once it has arrived. One at a time. (Drawn in the view's
+  // own format, so that the GPU need build nothing new for it: as the log of
+  // the distance, its whole part and the rest in two channels.)
   look(recs, view, stride) {
     const gl = this.gl;
     if (this.lookSync) return false;
@@ -455,7 +457,7 @@ export class Renderer {
       if (this.lookTex) gl.deleteTexture(this.lookTex);
       this.lookTex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, this.lookTex);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, w, h);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
       this.lookFbo ??= gl.createFramebuffer();
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.lookFbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.lookTex, 0);
@@ -494,7 +496,7 @@ export class Renderer {
     gl.deleteSync(this.lookSync);
     this.lookSync = null;
     const dist = new Float32Array(w * h);
-    for (let i = 0; i < w * h; i++) dist[i] = px[i * 4];
+    for (let i = 0; i < w * h; i++) dist[i] = px[i * 4] < -500 ? -1 : 2 ** (px[i * 4] + px[i * 4 + 1]);
     return { w, h, dist };
   }
 
