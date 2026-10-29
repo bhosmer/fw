@@ -5,7 +5,7 @@ As of 2026-10-29 (the architecture sweep). For the history of how the drawing ca
 ## Worlds, as definitions
 
 - `src/worlds.js`: the worlds there are (made when first asked for), named variants, and links: `index.html?variant&part.of.it=value#place`, with `&vs=other&vs.part=value` to compare two (V flips between them).
-- `src/spaces/halls.js`: the halls, `makeHalls(changes)` from `HALLS`: the share of cells left solid, and the kinds of room, wall opening, slab opening and furniture as rows (each kind's share, and its shape), from which both copies of their pieces are written.
+- `src/spaces/halls.js`: the halls, `makeHalls(changes)` from `HALLS`: the share of cells left solid, and the kinds of room, wall opening, slab opening and furniture as rows (each kind's share, and its shape), and what is otherwise at some levels (`byLevel`); both copies of the halls, the cell included, are written from them (`pieces`), after `families` has checked them.
 - `src/spaces/arcology.js`: the arcology, `makeArcology(changes)` from `ARCOLOGY`: its `building` (`src/spaces/hexahedron.js`: the Hexahedron's numbers, edge treatment, column), the `halls` it is built of, its `relief` (two levels of pockets cut into the masses' faces) and its `town` (plans, densities, and the kinds of building: `src/spaces/town.js`, one catalogue from which both copies are written). A definition with changes is checked (`define` in `src/util.js`, and the arcology's own `check`) and frozen.
 
 ## One geometry, written twice
