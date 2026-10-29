@@ -105,6 +105,11 @@ for (const { lo, hi } of SOLIDS)
   for (let a = Math.floor(lo[0] / R); a <= Math.floor((hi[0] - 1) / R); a++)
     for (let b = Math.floor(lo[2] / R); b <= Math.floor((hi[2] - 1) / R); b++) BUILT.add(`${a},${b}`);
 const BUILT_CELLS = [...BUILT].map((k) => k.split(',').map(Number));
+// See nearBuilt in the shader (o: a city cell across from the middle one, x and z).
+const nearBuilt = ([x, z]) => BUILT_CELLS.some(([a, b]) => Math.max(Math.abs(a - x), Math.abs(b - z)) <= 1);
+// See spaceRoom in the shader.
+const CITY_SEED = levelSeed(CITY);
+const roomRule = (id, seed) => seed !== CITY_SEED || id[1] > ROW_ID || nearBuilt([id[0] - MID, id[2] - MID]);
 
 // For each city cell (across from the middle one) with any solid near it,
 // the solids that reach into the air it answers for (its plaza piece, see
@@ -807,7 +812,7 @@ const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_
 const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // (For the checks in .claude/verify.)
-export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT }, TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist };
+export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT }, TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
   const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -974,8 +979,8 @@ export const ENTRANCES = (() => {
     const v = [x, y, z];
     if (kind[at(v)] !== DEEP) continue;
     const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
-    if (!hallsRoom(id, seed)) continue;
-    for (const o of hallsOpenings(id, seed)) {
+    if (!hallsRoom(id, seed, roomRule)) continue;
+    for (const o of hallsOpenings(id, seed, roomRule)) {
       if (o.e[1] !== 0) continue;
       const u = v.map((q, a) => q + o.e[a]);
       if (within(u) && open[at(u)]) out.push({ id, e: o.e, at: o.at });
@@ -1014,6 +1019,12 @@ const int NEAR_START[NNEAR + 1] = int[NNEAR + 1](${NEAR_START.join(', ')});
 const int NEAR_BLOCKS[${NEAR_BLOCKS.length}] = int[${NEAR_BLOCKS.length}](${NEAR_BLOCKS.join(', ')});
 const int NBUILT = ${BUILT_CELLS.length};
 const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `ivec2(${a}, ${b})`).join(', ')});
+// (Is city cell o, across from the middle one, one of those or next to one?
+// Cavities under the ground are only there: see spaceRoom.)
+bool nearBuilt(ivec3 o) {
+  for (int k = 0; k < NBUILT; k++) if (max(abs(BUILT_CELLS[k].x - o.x), abs(BUILT_CELLS[k].y - o.z)) <= 1) return true;
+  return false;
+}
 
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
@@ -1138,6 +1149,13 @@ float solidOut(int i, vec3 q) {
 ivec3 fromMiddle(ivec3 id) {
   return (id - ivec3(${MID}, ${ROW_ID}, ${MID})) * R;
 }
+// Where the halls may have rooms (see spaceRoom in halls.js): not in the
+// ground away from the building (Basil, 2026-10-28): at the city's level, in
+// the plaza's row and under it, only in the city cells by the building's
+// (nearBuilt). Without rooms there, there are no light wells there either.
+bool spaceRoom(ivec3 id, uint seed) {
+  return seed != ${levelSeed(CITY)}u || id.y > ${ROW_ID} || nearBuilt(fromMiddle(id) / R);
+}
 
 // What the table says of the level-(CITY + 1) cell id, in a city cell
 // (whose id is up): nothing, if it is not in the table. gCellB is set to the
@@ -1154,6 +1172,27 @@ uvec4 relief(ivec3 id, ivec3 up) {
 
 int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); } // floor, b > 0
 int cdiv(int a, int b) { return -fdiv(-a, b); } // ceiling, b > 0
+
+// The ground away from the building (Basil, 2026-10-28: no cavities in it
+// but very near the building): a level-(CITY + 1) cell of the plaza's row,
+// beyond the table's bounds across (see VOLUME), holds no halls. The floor
+// is on its cells' sides: under it, solid; over it, the plaza's air, which
+// is the city's own: this level adds none (so that the floor is the city's
+// surface alone, not a tie between two levels on one plane). (own: the
+// cell's place in its city cell.)
+bool groundCell(ivec3 own, ivec3 up) {
+  if (up.y != ${ROW_ID}) return false;
+  ivec3 v = fromMiddle(up) + own - VOL_LO;
+  return v.x < 0 || v.z < 0 || v.x >= VOL_SIZE.x || v.z >= VOL_SIZE.z;
+}
+float groundAir(ivec3 L, vec3 f, ivec3 own) {
+  // (No nearer air than the cell's sides, past which another cell may have
+  // some; under the floor, nor than the floor.)
+  float e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)),
+                min(float(R - L.z) - f.z, float(L.z) + f.z));
+  float d = max(e, 0.0);
+  return own.y < G ? min(float((G - own.y) * R - L.y) - f.y, d) : d;
+}
 
 // The rectangle of face k at level lv that the point is in (u along the
 // face, in its own measure, y its true height, each a whole
@@ -2041,7 +2080,9 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     uint kind = m.x & 3u;
     reach = -1.0;
     nrm = vec3(0.0);
-    if (m.x == 0u || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, reach, nrm);
+    ivec3 own = id - R * ivec3(floor((vec3(id) + 0.5) / float(R)));
+    if (level == ${CITY + 1} && m.x == 0u && groundCell(own, gUp)) d = groundAir(L, f, own);
+    else if (m.x == 0u || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, reach, nrm);
     if (m.x != 0u) d = reliefCell(L, f, id, seed, m, d, reach, nrm);
   }
   // (The buildings' relief, asked after in one place only, as the halls are.)
@@ -2121,7 +2162,7 @@ function setPoint(L, f, dg) {
 function well(L, f, id, seed) {
   const below = wrapId([id[0], id[1] - 1, id[2]]);
   const t = h01(hashCell(below, seed ^ 0x967a889b));
-  if (t < 0.66 || !(built(below, seed) || built(id, seed))) return NONE;
+  if (t < 0.66 || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return NONE;
   if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return NONE;
   const oculus = t < 0.88;
   const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
@@ -2534,18 +2575,33 @@ function openings(L, f, wins, clip) {
   return a;
 }
 
+// See groundCell and groundAir in the shader.
+function groundCell(own, up) {
+  if (up[1] !== ROW_ID) return false;
+  const o = fromMiddle(up), v = [0, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
+  return v[0] < 0 || v[1] < 0 || v[0] >= VOLUME.size[0] || v[1] >= VOLUME.size[2];
+}
+function groundAir(L, f, own) {
+  const d = Math.max(Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]), 0);
+  return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
+}
+
 function cellAir(L, f, id, seed, dg, level, up) {
   if (level < CITY) return NONE;
   if (level === CITY + 1) {
     const m = relief(id, up);
     if (m[0]) {
-      const d = hallsAir(L, f, id, seed, dg);
+      const d = hallsAir(L, f, id, seed, dg, roomRule);
       setPoint(L, f, dg);
       return reliefCell(L, f, id, seed, m, d);
     }
   }
+  if (level === CITY + 1 && up) {
+    const own = id.map((x) => x - R * Math.floor((x + 0.5) / R));
+    if (groundCell(own, up)) return groundAir(L, f, own);
+  }
   if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return L[1] + R * (id[1] - ROW_ID - ROWS) + f[1];
-  if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg);
+  if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule);
   setPoint(L, f, dg);
   return Math.min(plaza(L, f, id), id[1] === ROW_ID ? well(L, f, id, seed) : NONE, cityPockets(L, f, fromMiddle(id)));
 }
@@ -2568,6 +2624,7 @@ const arcology = {
   name: 'arcology',
   glsl: hallsGlsl + glsl,
   cellAir,
+  roomRule,
   volume: VOLUME,
   // What fraction of a surface opens at a level (see detail in shaders.js):
   // the halls' where they are; in the building's own cells, its relief (only
@@ -2579,6 +2636,9 @@ const arcology = {
   if (level != ${CITY + 1}) return OPEN_AREA;
   uvec4 m = relief(id, up);
   uint kind = m.x & 3u;
+  // (Nothing of this level opens in the ground away from the building (see
+  // groundCell), but finer levels do: -1.)
+  if (m.x == 0u && groundCell(id - R * ivec3(floor((vec3(id) + 0.5) / float(R))), up)) return -1.0;
   if (m.x == 0u || kind == ${DEEP}u) return OPEN_AREA;
   gOwnInk = true;
   return (kind == ${SKIN}u && skin) || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;

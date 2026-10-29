@@ -100,7 +100,10 @@ float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 
 // Does this cell have a room in it? Some are left solid, so that a surface
 // which cuts through cells (any diagonal) is not all cut-open rooms.
-bool built(ivec3 id, uint seed) { return h01(hashCell(id, seed ^ ${BUILT_SALT}u)) >= ${SOLID.toFixed(3)}; }
+// (And only where the space allows a room: spaceRoom, which each space
+// defines; the halls everywhere.)
+bool spaceRoom(ivec3 id, uint seed);
+bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${BUILT_SALT}u)) >= ${SOLID.toFixed(3)}; }
 
 // Which of three bays, each six units wide, holds u (integer division is slow).
 int bay(int u, float fu) { return int(clamp(floor((float(u - M) + fu) * (1.0 / 6.0)), 0.0, 2.0)); }
@@ -413,7 +416,8 @@ function roomAir(L, f, H, h, under, over) {
 }
 
 const ancestors = new Map(); // level -> where its cell sits in its parent
-export const built = (id, seed) => h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID;
+// (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
+export const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID;
 
 // dg is the point along the diagonals (see Position.levels). Without it they
 // are worked out from L and f, which is only good far from any such surface.
@@ -423,22 +427,22 @@ export const built = (id, seed) => h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID
 // openings in its six faces, each as the middle of where it crosses the
 // face, the way across it (e), and the cell on the other side. (Of a row
 // of three windows or arches, the middle one.) The same hashes as above.
-export function hallsRoom(id, seed) {
-  if (!built(id, seed)) return null;
+export function hallsRoom(id, seed, rule) {
+  if (!built(id, seed, rule)) return null;
   const H = h01(hashCell(id, seed)) < 0.65 ? HLO : HHI;
   // (As furniture has it: piers, unless over or under a light well.)
   const t = h01(hashCell(id, seed ^ 0x51ed270b));
   const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ 0x967a889b)), over = h01(hashCell(id, seed ^ 0x967a889b));
   return { H, middle: [C, M + H / 2, C], piers: t >= 0.4 && t < 0.62 && Math.max(under, over) < 0.88 };
 }
-export function hallsOpenings(id, seed) {
-  const here = built(id, seed);
+export function hallsOpenings(id, seed, rule) {
+  const here = built(id, seed, rule);
   const out = [];
   for (const [a, sign] of [[0, 1], [0, -1], [2, 1], [2, -1], [1, 1], [1, -1]]) {
     const e = [0, 0, 0];
     e[a] = sign;
     const nb = wrapId(id.map((x, b) => x + e[b]));
-    if (!here && !built(nb, seed)) continue;
+    if (!here && !built(nb, seed, rule)) continue;
     // A face belongs to the cell on its lower side.
     const owner = sign > 0 ? id : nb;
     const at = [C, 0, C];
@@ -456,7 +460,7 @@ export function hallsOpenings(id, seed) {
   return out;
 }
 
-export function hallsAir(L, f, id, seed, dg) {
+export function hallsAir(L, f, id, seed, dg, rule) {
   if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
   else {
     const pairs = [[0, 1], [2, 1], [0, 2]];
@@ -465,7 +469,7 @@ export function hallsAir(L, f, id, seed, dg) {
     dLm = pairs.map(([a, b]) => L[a] - L[b]);
     dFm = pairs.map(([a, b]) => f[a] - f[b]);
   }
-  const here = built(id, seed);
+  const here = built(id, seed, rule);
   const H = here && h01(hashCell(id, seed)) < 0.65 ? HLO : HHI;
   let room = NONE;
   const hup = hashCell(id, seed ^ 0x967a889b);
@@ -478,9 +482,9 @@ export function hallsAir(L, f, id, seed, dg) {
   const oz = hz ? id : wrapId([id[0], id[1], id[2] - 1]);
   let hwx = hashCell(ox, seed ^ 0x68bc21eb), hwz = hashCell(oz, seed ^ 0x02e5be93), hwy = hy ? hup : hdn;
   if (!here) {
-    if (!built(wrapId([id[0] + (hx ? 1 : -1), id[1], id[2]]), seed)) hwx = 0;
-    if (!built(wrapId([id[0], id[1], id[2] + (hz ? 1 : -1)]), seed)) hwz = 0;
-    if (!built(wrapId([id[0], id[1] + (hy ? 1 : -1), id[2]]), seed)) hwy = 0;
+    if (!built(wrapId([id[0] + (hx ? 1 : -1), id[1], id[2]]), seed, rule)) hwx = 0;
+    if (!built(wrapId([id[0], id[1], id[2] + (hz ? 1 : -1)]), seed, rule)) hwz = 0;
+    if (!built(wrapId([id[0], id[1] + (hy ? 1 : -1), id[2]]), seed, rule)) hwy = 0;
   }
   const ax = wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx);
   const az = wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz);
@@ -500,11 +504,12 @@ export default {
   name: 'halls',
   R,
   glsl: hallsGlsl + /* glsl */ `
+bool spaceRoom(ivec3 id, uint seed) { return true; }
 float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {
   return hallsCell(L, f, id, seed, reach, nrm);
 }
 `,
-  cellAir: hallsAir,
+  cellAir: (L, f, id, seed, dg) => hallsAir(L, f, id, seed, dg),
   maxInterior: 0.375,
   longestWay: 1.4,
   close: 0.3,

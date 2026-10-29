@@ -420,7 +420,8 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
 // (On a building's relief (skin), what opens in it is drawn in the relief's
 // own colour, in its shadow: not in the colour of the level it opens into.)
 // (The average is what the space says opens there, at that level: see
-// openAreaAt; none, and nothing finer opens there either.)
+// openAreaAt; none (0), and nothing finer opens there either; less than 0,
+// nothing of that level, but finer levels may.)
 vec3 detail(vec3 base, vec3 v, vec3 n, float foot, int slot, bool skin) {
   for (int i = max(slot + 1, 0); i < NLEV; i++) {
     if (i >= uN) break;
@@ -432,7 +433,8 @@ vec3 detail(vec3 base, vec3 v, vec3 n, float foot, int slot, bool skin) {
     vec3 f;
     ivec3 id = levelId(i, levelCell(i, v, I, f));
     float hole = openAreaAt(uLevel[i], id, gUp, skin, n);
-    if (hole <= 0.0) break;
+    if (hole < 0.0) continue;
+    if (hole == 0.0) break;
     float sharp = smoothstep(2.0, 8.0, px);
     if (gOwnInk) skin = true;
     vec3 ink = skin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);

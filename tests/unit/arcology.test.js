@@ -40,12 +40,20 @@ test('the city never changes faster than the point moves', () => {
 
 // Where a city cell meets the hall under it, the two say the same about
 // what is air (the light wells go through), and neither says air is further
-// off than the other finds it.
+// off than the other finds it. (Half of them in the ring of city cells
+// round the building's: light wells, and halls under the ground, are only
+// there.)
 test('the city and the halls under it agree where they meet', () => {
   const rnd = rand(8);
   let wells = 0;
   for (let n = 0; n < 20000; n++) {
-    const id = anywhere(rnd, ROW_ID);
+    // (The ring of city cells round the building's own, _V2.BUILT_CELLS.)
+    const near = () => {
+      const [a, b] = _V2.BUILT_CELLS[Math.floor(rnd() * _V2.BUILT_CELLS.length)], ring = [-1, 0, 1].flatMap((x) => [-1, 0, 1].map((z) => [a + x, b + z])).filter(([x, z]) => !_V2.BUILT_CELLS.some(([p, q]) => p === x && q === z));
+      const [x, z] = ring.length ? ring[Math.floor(rnd() * ring.length)] : [a + 2, b];
+      return wrapId([R * (R / 2) + R / 2 + x, ROW_ID, R * (R / 2) + R / 2 + z]);
+    };
+    const id = n % 2 ? near() : anywhere(rnd, ROW_ID);
     const below = wrapId([id[0], id[1] - 1, id[2]]);
     const x = 0.6 + rnd() * (R - 1.2), z = 0.6 + rnd() * (R - 1.2);
     const up = air([x, 0.01, z], id), down = air([x, R - 0.01, z], below);
