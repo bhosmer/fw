@@ -298,7 +298,7 @@ export function makeArcology(set) {
   // weights), level and square to the face. The same rule at two levels: the city's own (lengths in its lattice units,
   // cells), whose boxes make the masses and the ragged silhouettes; and the
   // next (in its units), smaller boxes cut into those. What keeps anything
-  // from being cut loose is in the setup after BARE_PL.
+  // from being cut loose is in the setup after BARE.
   // (Each level's depths' cumulative shares, as thresholds: see pieces.js.)
   const LEVELS = [def.relief.city, def.relief.finer].map((lv) => ({ ...lv, cumulative: lv.weights.map((_, i) => P.threshold(lv.weights.slice(0, i + 1).reduce((x, y) => x + y))) }));
   const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
@@ -350,7 +350,6 @@ export function makeArcology(set) {
     if (axis && (a !== 1 || n[1] > 0) && Number.isInteger(K / n[a])) throw new Error(`arcology: a face of ${s.name} on a cell's side (${'xyz'[a]} = ${K / n[a]})`);
   }));
   const BARE = SOLIDS.filter((s) => !s.relief && !s.rim);
-  const BARE_PL = BARE.map((s) => SOLID_PL[SOLIDS.indexOf(s)]);
   // (And their bounds, cells from the building's origin: a first, cheap test.)
   const BARE_BOX = BARE.map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
   // (Beyond this from all of them (cells: more than the diagonal of a city
@@ -1043,9 +1042,12 @@ export function makeArcology(set) {
     SOLID_YIELDS: YIELDS,
     SOLID_KEEP: SOLIDS.map((s) => s.keep ?? 0),
     WFIRST: SOLIDS.map((s) => s.wfirst ?? 0),
+    // (The solids without relief: their indices.)
+    BARE_ID: BARE.map((s) => SOLIDS.indexOf(s)),
   };
   // (planeAt's whole numbers stay under 2^31 in every cell of the table: n
-  // times the point, from the building's origin one level finer, less R K.)
+  // times the point, from the building's origin one level finer, less R K;
+  // cityPlaneAt's, at the city's level, R times smaller.)
   const FROM = [0, 1, 2].map((a) => R * (1 + Math.max(Math.abs(VOLUME.lo[a] - ORIGIN[a]), Math.abs(VOLUME.lo[a] + VOLUME.size[a] - 1 - ORIGIN[a]))));
   if (OPEN_ROWS.SOLID_PI.some((p) => p.slice(0, 3).reduce((t, x, a) => t + Math.abs(x) * FROM[a], 0) + Math.abs(p[3]) >= 2 ** 31)) throw new Error('arcology: a solid too fine for the openings\' whole numbers (planeAt): another slope (see slopes in hexahedron.js)');
   // (A table's GLSL declaration: its type, and each row's.)
@@ -1220,9 +1222,10 @@ export function makeArcology(set) {
   // The openings, in either language (js: true, or GLSL), written once from
   // their tables (OPEN_ROWS): which sides a cell's openings run on across
   // (runsOn, openLo, openHi), how far outside a solid the point is (planeAt
-  // and solidAt, the whole part exactly; solidOut, in floats, for the city's bare solids:
-  // see bareIn, until the relief is written so too), one face's openings
-  // (windowAir), and a cell's (openings).
+  // and solidAt, the whole part exactly), one face's openings (windowAir),
+  // and a cell's (openings); and, at the city's level, how far inside the
+  // solids without relief (cityPlaneAt, bareIn), where the city's pockets
+  // stop.
   // (The JavaScript's, made into functions below; the cell's state, CELL,
   // as relief, reliefCell, eachPiece and windowAir set it.)
   function openingsPieces(js) {
@@ -1252,15 +1255,6 @@ export function makeArcology(set) {
       fn('bool', 'runsOn', ['int a', 'uint side']) + ` return (${OPEN} & (side << uint(2 * a))) != 0u && (${AXIS} < 0 || ${AXIS} == a); }`,
       fn('int', 'openLo', ['int a']) + ' return runsOn(a, 2u) ? -R : 0; }',
       fn('int', 'openHi', ['int a']) + ' return runsOn(a, 1u) ? 2 * R : R; }',
-    ];
-    const solidOut = [
-      '// How far outside solid i the point q is (cells from the building\'s origin;',
-      '// inside, less than 0): the most of its planes\'.',
-      fn('float', 'solidOut', ['int i', 'vec3 q']),
-      '  ' + decl('float', 's = -1e9', true),
-      `  ${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} s = max(s, ${dot('SOLID_PL[k]', 'q')} - SOLID_PL[k].w);`,
-      '  return s;',
-      '}',
     ];
 
     const windowAir = [
@@ -1408,11 +1402,16 @@ export function makeArcology(set) {
     // units): the whole part in whole numbers, the rest (f) in floats, as
     // the solids are asked at the city's level (see cityPieces); and how far
     // outside solid i (the most of its planes').
-    const planeAt = [
-      fn('float', 'planeAt', ['int k', 'ivec3 L', 'vec3 f', 'ivec3 base']),
+    // (Written for either level: K is R K one level finer (planeAt), and R K
+    // / R at the city's (cityPlaneAt: exact, K being whole).)
+    const planeOf = (name, K) => [
+      fn('float', name, ['int k', 'ivec3 L', 'vec3 f', 'ivec3 base']),
       '  ' + decl('ivec4', 'p = SOLID_PI[k]'),
-      `  return (float(p.x * (base.x + L.x) + p.y * (base.y + L.y) + p.z * (base.z + L.z) - p.w) + ${js ? '(p.x * f.x + p.y * f.y + p.z * f.z)' : 'dot(vec3(p.xyz), f)'}) * SOLID_INV[k];`,
+      `  return (float(p.x * (base.x + L.x) + p.y * (base.y + L.y) + p.z * (base.z + L.z) - ${K}) + ${js ? '(p.x * f.x + p.y * f.y + p.z * f.z)' : 'dot(vec3(p.xyz), f)'}) * SOLID_INV[k];`,
       '}',
+    ];
+    const planeAt = [
+      ...planeOf('planeAt', 'p.w'),
       fn('float', 'solidAt', ['int i', 'ivec3 L', 'vec3 f', 'ivec3 base']),
       '  ' + decl('float', 's = -1e9', true),
       `  ${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} s = max(s, planeAt(k, L, f, base));`,
@@ -1511,7 +1510,33 @@ export function makeArcology(set) {
     ];
     // (In JavaScript, vectors are arrays, and whole numbers as it has them.)
     const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'm', 'base', 'ht', 'g', 'gu', 'gv', 'gb', 'p'])) : lines.join('\n'));
-    return { cell: text(cell), solidOut: js ? null : text(solidOut), windowAir: text(windowAir), openings: text(openings) };
+    // How far inside the solids without relief (pillars, the column) the
+    // point is, at the city's level (in its lattice units, the cells one
+    // level finer; base: its cell's corner from the building's origin;
+    // outside, less than 0): the city's pockets stop at their faces. For a ray (ray), also where it strikes one, if sooner
+    // than it goes in its air (gX, set by the caller). Each plane as the
+    // openings ask it one level finer (see planeAt), its whole part exact.
+    const bare = [
+      ...planeOf('cityPlaneAt', idiv('p.w', 'R')),
+      fn('float', 'bareIn', ['ivec3 L', 'vec3 f', 'ivec3 base', 'bool ray']),
+      ...ins([
+        decl('bool', `r = ${RAY}`),
+        `${RAY} = ray;`,
+        decl('float', 'd = -1e9', true),
+        loop('i', 0, 'NBARE'),
+        ...ins([
+          decl('int', 'b = BARE_ID[i]'),
+          'solidPiece();',
+          `${each('k', 'SOLID_AT[b].x', 'SOLID_AT[b].x + SOLID_AT[b].y')} solidPlane(cityPlaneAt(k, L, f, base), ${arg(js ? 'SOLID_PL[k]' : 'SOLID_PL[k].xyz')});`,
+          'd = max(d, -solidDone());',
+        ]),
+        '}',
+        `${RAY} = r;`,
+        'return d;',
+      ]),
+      '}',
+    ];
+    return { cell: text(cell), windowAir: text(windowAir), openings: text(openings), bare: text(bare) };
   }
   // The town on the roof band's top, in either language (js: true, or GLSL),
   // written once: a box standing in it as a solid (boxSolid), and its air in
@@ -1879,7 +1904,7 @@ ${table('ivec4', 'LV', 2, vrow('ivec4'), RELIEF_ROWS)}
 ${table('int', 'LV_MIN', 2, String, RELIEF_ROWS)}
 ${table('float', 'CUM', '2 * ND', glf, RELIEF_ROWS)}
 const int NF = ${FACES.length};
-// Each face (see FACES and the setup after BARE_PL): n's slant (index, sign),
+// Each face (see FACES and the setup after BARE): n's slant (index, sign),
 // K, alpha; its rows' K term (F.yk); nn; its unit normal; its h and t as
 // slants (index, sign); its quanta along (q2, a level each) and lo, hi (4 y);
 // t; its length; its rows' m's slant (index, sign), gm and p (see faceAt);
@@ -1947,12 +1972,15 @@ const int WIN_BITS = ${WIN_BITS};
 // Each face's mass's bounds, from the building's origin, in cells.
 const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
 const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
-const int NBARE = ${BARE_PL.length};
+const int NBARE = ${BARE.length};
 const ivec3 BARE_LO[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[0]))});
 const ivec3 BARE_HI[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[1]))});
-// (Their indices in SOLIDS: their planes are SOLID_PL's.)
-const int BARE_ID[NBARE] = int[NBARE](${BARE.map((s) => SOLIDS.indexOf(s)).join(', ')});
-// Every solid's planes (SOLID_PL in the JS), and where each one's are (first, how many).
+// (Their indices in SOLIDS: see bareIn.)
+${table('int', 'BARE_ID', 'NBARE', String)}
+// Every solid's planes as unit normals and offsets (SOLID_PL in the JS; the
+// openings and bareIn read the normals, the offsets exactly: see planeAt and
+// cityPlaneAt; these offsets are not read here), and where each one's are
+// (first, how many).
 ${table('vec4', 'SOLID_PL', OPEN_ROWS.SOLID_PL.length, (p) => `vec4(${p.map(glf).join(', ')})`)}
 ${table('ivec2', 'SOLID_AT', SOLIDS.length, vrow('ivec2'))}
 // And exactly, one level finer: each plane's n and R K in whole numbers (from
@@ -1968,7 +1996,6 @@ ${table('uint', 'SOLID_YIELDS', SOLIDS.length, (m) => m + 'u')}
 ${table('float', 'SOLID_KEEP', SOLIDS.length, glf)}
 // Each solid's first face with openings (its index in WINDOWS).
 ${table('int', 'WFIRST', SOLIDS.length, String)}
-${OPEN_GLSL.solidOut}
 
 ${CITY_GLSL.middle}
 ${CITY_GLSL.room}
@@ -2002,11 +2029,6 @@ bool bareNear(vec3 q, float r) {
     if (max(max(o.x, o.y), o.z) < r) return true;
   }
   return false;
-}
-float bareIn(vec3 q) {
-  float d = -1e9;
-  for (int i = 0; i < NBARE; i++) d = max(d, -solidOut(BARE_ID[i], q));
-  return d;
 }
 ${RELIEF_GLSL.decide}
 
@@ -2282,6 +2304,8 @@ ${OPEN_GLSL.windowAir}
 
 ${OPEN_GLSL.openings}
 
+${OPEN_GLSL.bare}
+
 // Box k of a lot r of the town, in units over the cell's corner and the
 // floor (made from the definition's kinds of building: see town.js, as the
 // JS's is).
@@ -2426,19 +2450,15 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       vec3 q = vec3(gCarveBase + L) + f;
       // (It changes d only where c < d and the point is within -c of a
       // solid (inside one, if c >= 0); a ray, only within BARE_NEAR.)
-      if ((c < d && bareNear(q, max(-c, 0.0))) || (reach > r0 && bareNear(q, ${glf(BARE_NEAR)}))) bi = bareIn(q);
+      // (Asked once: for a ray the pockets took on, where it strikes one
+      // too, from its reach.)
+      if ((c < d && bareNear(q, max(-c, 0.0))) || (reach > r0 && bareNear(q, ${glf(BARE_NEAR)}))) {
+        gX = reach; gN = nrm;
+        bi = bareIn(L, f, gCarveBase, reach > r0);
+      }
       d = min(d, max(c, bi));
       if (bi + gO >= 0.0) { reach = r0; nrm = n0; }
-      else if (reach > r0 && bi > -${glf(BARE_NEAR)}) {
-        gX = reach; gN = nrm;
-        for (int i = 0; i < NBARE; i++) {
-          solidBegin();
-          ivec2 r = SOLID_AT[BARE_ID[i]];
-          for (int k = r.x; k < r.x + r.y; k++) solidFace(dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w, SOLID_PL[k].xyz);
-          solidEnd();
-        }
-        reach = gX; nrm = gN;
-      }
+      else if (reach > r0 && bi > -${glf(BARE_NEAR)}) { reach = gX; nrm = gN; }
     }
     else {
       // (With the cell's openings, in d: see reliefCell.)
@@ -2499,10 +2519,10 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
 
   // The openings in JavaScript (see openingsPieces), made into functions.
   const OPEN_JS = openingsPieces(true);
-  const { openLo, openHi, openings } = new Function(
-    'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', ...Object.keys(OPEN_ROWS),
-    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\nreturn { openLo, openHi, openings };\n//# sourceURL=openingsPieces.gen.js`,
-  )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, ...Object.values(OPEN_ROWS));
+  const { openLo, openHi, openings, bareIn } = new Function(
+    'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', 'NBARE', ...Object.keys(OPEN_ROWS),
+    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\n${OPEN_JS.bare}\nreturn { openLo, openHi, openings, bareIn };\n//# sourceURL=openingsPieces.gen.js`,
+  )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, BARE.length, ...Object.values(OPEN_ROWS));
   // The relief's whole-number decisions in JavaScript (see reliefPieces),
   // made into functions, and what the shader keeps in globals (gU0, gRY0 and
   // the rest), RS.
@@ -2736,19 +2756,14 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     // (The pockets, and how far off the rest are, stop at the solids without
     // relief: inside one they are no air; near one, a ray they take on
     // strikes it. Asked only where it could matter, as in the shader.)
-    const c = Math.min(far, a), pockets = ray && ray.reach > r0;
-    const bi = (c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR)) ? bareIn(q) : -1e9;
+    const c = Math.min(far, a), pockets = !!ray && ray.reach > r0;
+    let bi = -1e9;
+    if ((c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR))) {
+      if (pockets) (P.S.x = ray.reach), ([P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz]);
+      bi = bareIn(L, f, base, pockets);
+    }
     if (ray && bi >= 0) (ray.reach = r0), ([ray.nx, ray.ny, ray.nz] = n0);
     else if (pockets && bi > -BARE_NEAR) {
-      P.S.x = ray.reach;
-      [P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz];
-      P.S.ray = true;
-      for (const pls of BARE_PL) {
-        P.solidPiece();
-        for (const pl of pls) P.solidPlane(pl[0] * q[0] + pl[1] * q[1] + pl[2] * q[2] - pl[3], pl[0], pl[1], pl[2]);
-        P.solidDone();
-      }
-      P.S.ray = false;
       if (P.S.x < ray.reach) SEEN.clipped++;
       (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
     }
@@ -2756,12 +2771,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   }
   // See bareNear in the shader.
   const bareNear = (q, r) => BARE_BOX.some(([lo, hi]) => Math.max(...[0, 1, 2].map((a) => Math.max(lo[a] - q[a], q[a] - hi[a]))) < r);
-  // See bareIn in the shader.
-  function bareIn(q) {
-    let d = -1e9;
-    for (const pl of BARE_PL) d = Math.max(d, -Math.max(...pl.map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3])));
-    return d;
-  }
 
   function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
     const kind = m & 3;
