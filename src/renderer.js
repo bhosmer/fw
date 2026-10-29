@@ -89,8 +89,6 @@ export class Renderer {
     this.prev = null;
     this.frameNo = 0;
     this.still = 0;
-    // The texture unit a space's volume is kept on (0 and 1 are the picture's).
-
     this.viewTex = null;
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];

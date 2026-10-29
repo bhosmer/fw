@@ -29,8 +29,10 @@ for (const world of worlds) {
     writeFileSync(file, src.replace(MAIN, `void main() {\n  if (uN == ${nonce}) discard;\n  vec2 uv = `));
     const server = await serve(dir), chrome = await launch(), page = await chrome.page();
     await page.goto(`${server.url}index.html?1`, `window.requestAnimationFrame = () => 0; localStorage.setItem('fw.world', ${JSON.stringify(world)});`);
-    const r = await page.eval(`(() => { const ms = []; for (let i = 0; i < 2; i++) { const t0 = performance.now(); fw.snap(800, 733, true); ms.push(Math.round(performance.now() - t0)); } return ms; })()`);
-    console.log(`${world}: first frame ${r[0]} ms (then ${r[1]} ms)`);
+    // (The page is there once its programs are linked; the GPU's pipelines
+    // are built at the first draw: both, from when the page was asked for.)
+    const r = await page.eval(`(() => { const ms = []; let since = 0; for (let i = 0; i < 2; i++) { const t0 = performance.now(); fw.snap(800, 733, true); ms.push(Math.round(performance.now() - t0)); since ||= Math.round(performance.now()); } return [...ms, since]; })()`);
+    console.log(`${world}: first frame ${r[0]} ms (then ${r[1]} ms); from asking for the page to the first frame ${r[2]} ms`);
     page.close();
     await chrome.close();
     server.close();

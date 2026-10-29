@@ -246,7 +246,9 @@ check('distant detail does not sparkle', async () => {
     }
     return n / (N - 2);
   })()`);
-  assert(perFrame < 75, `${perFrame.toFixed(0)} pixels flicker per frame (it was 92 before detail went by its size as seen, 55 after)`);
+  // (Measured in de chirico, 39 on 2026-10-28; in the old sunlit scheme it
+  // was 92 before detail went by its size as seen, 55 after, held under 75.)
+  assert(perFrame < 50, `${perFrame.toFixed(0)} pixels flicker per frame (39 when this was set)`);
 });
 
 check('the tour keeps to the air', async () => {
