@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Flight } from '../../src/flight.js';
 import halls from '../../src/spaces/halls.js';
 import { rand } from './rand.js';
+import * as P from '../../src/pieces.js';
 
 const R = halls.R;
 
@@ -154,4 +155,109 @@ test('a first visit begins somewhere different each time, with room ahead', () =
     places.add(JSON.stringify([flight.pos.F, [...flight.pos.digits].sort()]));
   }
   assert.ok(places.size >= 25, `only ${places.size} different places in 30`);
+});
+
+// A room of two boxes of air one after the other along z, at level 0 (every
+// other level solid), meeting at z = 12 lattice units, or split there by a
+// wall wall units thick; answering rays as the worlds do. Where they only
+// touch, the clearance goes to nothing at the face they share, though
+// nothing is there.
+function twoBoxes(wall) {
+  const box = (p, z0, z1) => {
+    P.airPiece();
+    P.airSpan(p[0][0], p[0][1], 1, 23, 0);
+    P.airSpan(p[1][0], p[1][1], 1, 23, 1);
+    P.airSpan(p[2][0], p[2][1], z0, z1, 2);
+    return P.S.d;
+  };
+  return {
+    name: 'two boxes', R: 24, start: [0.5, 0.5, 0.25], fogK: 1, ground: 1e6, ancestorDigit: () => [0, 0, 0],
+    cellAir(L, f, id, seed, dg, level, up, ray) {
+      if (ray) (ray.known = true), (ray.reach = -1);
+      if (level !== 0) return 24;
+      // (Each axis as L and f apart, as the worlds keep it, for precision.)
+      const p = [0, 1, 2].map((a) => [L[a], f[a]]);
+      P.at(L, f, null);
+      let d = 1e9;
+      for (const [z0, z1] of [[1, 12], [12 + wall, 23]]) {
+        const a = box(p, z0, z1);
+        d = Math.min(d, a);
+        if (ray && a <= 0) {
+          (P.S.ray = true), (P.S.dx = ray.dir[0]), (P.S.dy = ray.dir[1]), (P.S.dz = ray.dir[2]);
+          box(p, z0, z1);
+          P.S.ray = false;
+          if (P.S.x > ray.reach) ray.reach = P.S.x;
+        }
+      }
+      return d;
+    },
+  };
+}
+
+// How far past z = 12 lattice units of level 0 a flight is (in those units;
+// short of it, less than 0), from its digits finer than that, so as to keep
+// its precision however deep.
+function past(flight) {
+  const { pos } = flight;
+  if (pos.F < 1) return (pos.digit(0)[2] + pos.frac[2]) * 24 - 12;
+  // (The whole lattice units, and the rest from the finer digits: past the
+  // face by less than a unit, the rest alone, which keeps every digit.)
+  const whole = pos.digit(0)[2] * 24 + pos.digit(1)[2] - 12;
+  let rest = pos.frac[2];
+  for (let j = pos.F; j >= 2; j--) rest = (rest + pos.digit(j)[2]) / 24;
+  return whole === 0 ? rest : whole + rest;
+}
+
+test('a face two pieces of air only share is flown through, head on and aslant', () => {
+  for (const pitch of [0, 0.3, -0.6]) {
+    const flight = new Flight(twoBoxes(0), { yaw: Math.PI, pitch, boost: () => 1 });
+    flight.begin();
+    const dir = [0, Math.sin(pitch), Math.cos(pitch)];
+    let frames = 0;
+    while (!(past(flight) > 0.5) && frames < 600) flight.step(1 / 60, dir), frames++;
+    assert.ok(frames < 300, `at pitch ${pitch}, still short of the face after ${frames} frames (${past(flight)} past)`);
+  }
+});
+
+test('a wall however thin is never flown through', () => {
+  for (const wall of [1e-7, 1e-3, 0.5]) {
+    for (const pitch of [0, 0.3, -0.6, 1.0]) {
+      for (const [dt, boost] of [[1 / 60, 1], [0.1, 8]]) {
+        const flight = new Flight(twoBoxes(wall), { yaw: Math.PI, pitch, boost: () => 1 });
+        flight.begin();
+        const dir = [0, Math.sin(pitch) * boost, Math.cos(pitch) * boost];
+        for (let i = 0; i < 600; i++) {
+          flight.step(dt, dir);
+          assert.ok(past(flight) <= 0, `into a wall ${wall} thick, at pitch ${pitch}, step ${i} (${past(flight)} past its face)`);
+        }
+        // (And it came up to the wall, not to a stop somewhere short of it.)
+        assert.ok(past(flight) > -0.5, `at pitch ${pitch}, still ${-past(flight)} short of the wall`);
+      }
+    }
+  }
+});
+
+// However far the way ahead is found open, all of it is air: along rays every
+// which way from places on a wander, nothing solid comes before it.
+test('the way found open is air all the way', async () => {
+  const { default: arcology } = await import('../../src/spaces/arcology.js');
+  for (const space of [halls, arcology]) {
+  const flight = new Flight(space, controls());
+  if (space === halls) flight.begin(true);
+  else flight.elsewhere(rand(3));
+  const rnd = rand(51);
+  let i = 0;
+  wander(flight, space === halls ? 1500 : 600, (f) => {
+    if (i++ % 5) return;
+    f.sense();
+    for (let k = 0; k < 4; k++) {
+      const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], l = Math.hypot(...d);
+      const dir = d.map((x) => x / l), open = f.ahead(dir);
+      for (let j = 1; j <= 200; j++) {
+        const t = (open * j) / 200;
+        assert.ok(Math.max(f.sky + dir[1] * t, ...f.here.map((r) => -f.airAt(r, dir.map((x) => x * t)) / r.sig)) > -1e-9 * open, `${space.name}: solid at ${t} of ${open} open`);
+      }
+    }
+  }, 1);
+  }
 });

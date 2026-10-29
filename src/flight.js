@@ -81,6 +81,7 @@ export class Flight {
   // nothing waits on the GPU. And if ray is given ({ dir }), what the world
   // says of a ray from there along dir (see hallsAir in spaces/halls.js).
   airAt(rec, v = [0, 0, 0], ray = null) {
+    if (ray) ray.known = false; // (a world that does not say, does not know)
     const R = this.R;
     const L = [0, 0, 0], f = [0, 0, 0], id = [0, 0, 0], cell = [0, 0, 0];
     for (let a = 0; a < 3; a++) {
@@ -147,18 +148,55 @@ export class Flight {
   // clearance here: that dips wherever one piece of air hands over to the
   // next (a room to its doorway), though nothing there is in the way. The
   // open sky has no width: there, how high we are is how big the space is.
+  // Where the strides would stop, what is ahead may be no surface at all but
+  // a face two pieces of air only share (a seam: the clearance goes to
+  // nothing there, on both sides): so there the levels are asked how far a
+  // ray goes in their air, as the shader's march does, and if one takes it
+  // further than a stride would, the look goes on from there.
   ahead(dir) {
-    let t = 0, width = 0;
+    const at = (t) => [dir[0] * t, dir[1] * t, dir[2] * t];
+    const clear = (v) => Math.max(...this.here.map((r) => -this.airAt(r, v) / r.sig));
+    const ray = { dir };
+    let t = 0, open = 0, width = 0;
     const far = () => Math.max(LOOK * width, SKY_LOOK * this.sky);
     for (let i = 0; i < 10 && t < far() + 1e-30; i++) {
-      const v = dir.map((x) => x * t);
-      const built = Math.max(...this.here.map((r) => -this.airAt(r, v) / r.sig));
-      const c = Math.max(this.sky + v[1], built);
-      if (c <= 0.02 * t) break;
-      width = Math.max(width, built);
-      t += c;
+      const v = at(t);
+      const built = clear(v), c = Math.max(this.sky + v[1], built);
+      if (c > 0.02 * t) {
+        width = Math.max(width, built);
+        open = t += c;
+        continue;
+      }
+      // (Over the ground plane, a ray going up is gone; coming down, it
+      // has a clear run to the ground. A level's ray, where it says how
+      // far it goes: no less than its distance.)
+      const high = this.sky + v[1];
+      let e = high > 0 ? (dir[1] >= 0 ? Infinity : high / -dir[1]) : -1;
+      for (const r of this.here) {
+        const a = this.airAt(r, v, ray);
+        if (ray.known && ray.reach >= 0) e = Math.max(e, Math.max(ray.reach, -a) / r.sig);
+      }
+      if (!(e > c)) break;
+      if (e === Infinity) return far();
+      // (How wide the way is within the stretch so passed: the clearance at
+      // its middle, no more than half of it.)
+      width = Math.max(width, built, Math.min(clear(at(t + e / 2)), e / 2));
+      open = t += e;
+      // (Just past where that piece of air ends, to be in the next: a point
+      // on the face two pieces share is in both, so this is only for the
+      // rounding; nothing that stands there is anywhere near this thin. It
+      // is not counted in what is open unless a stride goes on from it.)
+      t += 1e-12 * Math.max(t, this.scale);
     }
-    return Math.min(t, far());
+    return Math.min(open, far());
+  }
+
+  // Whether some level says a ray along dir from here is in its air (where
+  // the clearance is nothing: on the surface of some level's air, which
+  // may be a face two pieces of air share, with more air beyond).
+  goesOn(dir) {
+    const ray = { dir };
+    return this.here.some((r) => (this.airAt(r, [0, 0, 0], ray), ray.known && ray.reach >= 0));
   }
 
   // The way directly away from the nearest built surface (for the tour). Out
@@ -333,11 +371,14 @@ export class Flight {
     // doorway or a wall alongside does not slow us, only a wall in front.
     // (Slowing down is immediate; only speeding up is eased, over about a
     // second, and always from the speed we are actually going.)
-    const open = (this.opened = this.clearance > 0 ? this.ahead(aim.map((x) => x / size)) : 0);
+    const way = aim.map((x) => x / size);
+    // (In air, or on a face two pieces of air share, which is air too.)
+    const inAir = this.clearance > 0 || this.goesOn(way);
+    const open = (this.opened = inAir ? this.ahead(way) : 0);
     this.pace = toward(this.pace, Math.max(open, 1e-6), 1 - Math.exp(-dt / 1.0));
     this.pace = Math.min(this.pace, Math.max(open, 0.05 * this.scale));
     const want = size * this.pace;
-    const len = this.clearance > 0 ? Math.min(want, 0.5 * open) : want;
+    const len = inAir ? Math.min(want, 0.5 * open) : want;
     if (len <= 0) return 0;
     const delta = aim.map((x) => (x * len) / size);
     this.pos.move(delta);

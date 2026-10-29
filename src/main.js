@@ -470,12 +470,14 @@ window.fw = {
   // Compare the JavaScript cell function with the shader's along a random
   // flight, at the camera and at points round it out to a few cells away
   // (where cells, diagonals and slants are found from the camera's): returns
-  // the worst disagreement found, in lattice units, and how many comparisons
-  // away from the camera were made.
+  // the worst disagreement found, in lattice units (and of those, the worst
+  // where the JavaScript says there is more air than the shader: more
+  // than there is, for the flight), and how many comparisons away from the
+  // camera were made.
   check(n = 300, round = 15) {
     let seed = 99;
     const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-    let worst = { diff: 0 }, compared = 0;
+    let worst = { diff: 0 }, more = { diff: 0 }, compared = 0;
     for (let i = 0; i < n; i++) {
       if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
       this.fly(0.05 + rnd() * 0.4, { f: 1 });
@@ -493,10 +495,13 @@ window.fw = {
         compared += k > 0;
         const cpu = flight.airAt(r, points[k]);
         const diff = Math.abs(cpu - gpu[j]) / Math.max(1, Math.abs(cpu));
-        if (diff > worst.diff) worst = { diff, level: r.level, F: pos.F, v: points[k], cpu, gpu: gpu[j] };
+        if (diff <= worst.diff && !(cpu < gpu[j] && diff > more.diff)) return;
+        const found = { diff, level: r.level, v: points[k], cpu, gpu: gpu[j], at: { F: pos.F, frac: pos.frac.slice(), digits: [...pos.digits].map(([j, d]) => [j, d.slice()]) } };
+        if (diff > worst.diff) worst = found;
+        if (cpu < gpu[j] && diff > more.diff) more = found;
       }));
     }
-    return { ...worst, compared };
+    return { ...worst, more, compared };
   },
   // The same for rays, where the JavaScript answers them (see hallsAir in
   // spaces/halls.js): along random directions, the axes and diagonals, from
