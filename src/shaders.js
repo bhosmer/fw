@@ -194,7 +194,7 @@ float diag(int p, int sa, int sb, int ca, int cb, int k) {
 ${slantGlsl(space)}
 ${space.glsl}
 // (What fraction of a surface (its normal n) opens at a level, there: see
-// detail. gOwnInk:
+// the detail asked after in main. gOwnInk:
 // what opens is the surface's own relief, seen in its shadow, not the level's
 // walls.)
 bool gOwnInk;
@@ -328,7 +328,8 @@ out vec4 outColor;
 const int STEPS = EXACT == 1 ? 96 : 160;
 // A level's cells are carved as geometry between these sizes in pixels, so
 // that nothing much under a pixel wide is ever carved (it would only
-// shimmer). Below that the level shows as surface texture: see detail().
+// shimmer). Below that the level shows as surface texture: see the detail
+// asked after in main.
 // In between, its air is shrunk back from its surfaces, by an amount that
 // grows evenly with distance (so that a ray's way out of a piece of air is
 // still where a straight line crosses a plane).
@@ -365,7 +366,9 @@ const float SLACK = ${glf(SLACK)};
 // is left after every level has carved out its air, so this is the largest
 // clearance any single level gives us. foot is the pixel footprint here and
 // along is the distance from the camera; advance says this is a step of the
-// ray itself, so what it learns can be remembered.
+// ray itself, so what it learns can be remembered. (Only the older way of
+// stepping rays, kept to check against, uses this; main asks the same for
+// its ambient occlusion in its own loop, as this does.)
 float map(vec3 v, float foot, float along, bool advance, out int slot) {
   float d = -1e20;
   slot = 0;
@@ -401,41 +404,6 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     }
   }
   return d;
-}
-
-// Levels too small to carve still show: their openings are drawn onto the
-// surface as texture, which the real geometry later grows into. Smaller
-// still, the texture dissolves into the average tone it would have had.
-// (On a building's relief (skin), what opens in it is drawn in the relief's
-// own colour, in its shadow: not in the colour of the level it opens into.)
-// (The average is what the space says opens there, at that level: see
-// openAreaAt; none (0), and nothing finer opens there either; less than 0,
-// nothing of that level, but finer levels may.)
-vec3 detail(vec3 base, vec3 v, vec3 n, float foot, int slot, bool skin) {
-  for (int i = max(slot + 1, 0); i < NLEV; i++) {
-    if (i >= uN) break;
-    float px = float(R) / uSig[i] / foot;
-    if (px < 0.5) break;
-    float wgt = (1.0 - smoothstep(0.75, 1.0, smoothstep(LOD_LO, LOD_HI, px))) * smoothstep(0.5, 4.0, px);
-    if (wgt <= 0.0) continue;
-    ivec3 I;
-    vec3 f;
-    ivec3 id = levelId(i, levelCell(i, v, I, f));
-    float hole = openAreaAt(uLevel[i], id, gUp, skin, n);
-    if (hole < 0.0) continue;
-    if (hole == 0.0) break;
-    float sharp = smoothstep(2.0, 8.0, px);
-    if (gOwnInk) skin = true;
-    vec3 ink = skin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
-    if (sharp > 0.0) {
-      float a = levelAir(i, v, 0.0, 0.0) / uSig[i];
-      hole = mix(hole, 1.0 - smoothstep(-foot, 0.5 * foot, a), sharp);
-      // (Relief is the surface's own, in its shadow.)
-      if (gSkin) ink = mix(ink, base * 0.55, sharp);
-    }
-    base = mix(base, ink, hole * wgt * mix(0.8, 1.0, uInlay));
-  }
-  return base;
 }
 
 // Wherever a ray is, it is in some level's air, inside one convex piece of
@@ -605,54 +573,25 @@ vec3 beyond(vec3 rd, bool open) {
   return open ? openSky(col, rd) : col;
 }
 
-// The colour of a surface of level slot at p (camera-relative), facing n,
-// seen along rd from t away, before any haze.
-vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix) {
-  float foot = max(t * pix, 1e-5 * uScale);
-  float seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
-  int s2;
-
-  // How open is it in front of this surface, at a spread of scales?
-  float ao = 0.0;
-  float h = max(2.0 * foot, 0.004 * uScale);
-  float wt = 0.4;
-  for (int i = 0; i < 4; i++) {
-    ao += wt * clamp(map(p + n * h, seenFoot, t + h, false, s2) / h, 0.0, 1.0);
-    h *= 4.7;
-    wt *= 0.7;
-  }
-  ao = clamp(ao / 0.96, 0.0, 1.0);
-
-  // Ceilings are coloured as floors.
+// The colour of a surface of level slot facing n, before it is lit.
+// (Ceilings are coloured as floors.)
+vec3 surfaceColour(int slot, vec3 n) {
   float flatness = smoothstep(0.5, 0.9, abs(n.y));
-  vec3 base = slot == -2 ? uGround
-            : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
-                       : mix(uWall[slot], uFloor[slot], flatness);
-  base = detail(base, p, n, seenFoot, slot, skin);
+  return slot == -2 ? uGround
+       : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
+                  : mix(uWall[slot], uFloor[slot], flatness);
+}
 
+// A surface of colour base facing n, seen along rd from t away, lit: by the
+// sky (as open as ao says it is in front of it), the fill light, the light
+// we carry, and the sun, as much as reaches it (sunlit), before any haze.
+vec3 litBy(vec3 base, vec3 n, vec3 rd, float t, float ao, float sunlit) {
   float hemi = 0.5 + 0.5 * n.y;
   float key = max(dot(n, uSun), 0.0);
-
-  // Sunlight: does a ray from here toward the sun get out into the sky?
-  // Not tried from too far below the ground for any to come in: further
-  // than the space lets sunlight reach, and further than we see from here.
-  // (Going by how far we see alone, where the space is open well under the
-  // ground, shadows came and went as that changed.)
-  float sunlit = 0.0;
-  float below = -(p.y + uSkyH);
-  if (uSunK > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach)) {
-    for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
-    bool sh, so;
-    int ss = slot, st = 0;
-    vec3 sn = n;
-    march(p + n * foot, uSun, t, pix, 1e30, SUN_STEPS, false, sh, so, ss, sn, st);
-    sunlit = so ? 1.0 : 0.0;
-  }
   float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uLampReach * uScale), 2.0));
   vec3 light = (0.15 + 0.85 * ao) * (uSky * uAmbient * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * uFill)
              + vec3(1.0, 0.9, 0.75) * lamp * uLamp
              + uSunCol * uSunK * key * sunlit;
-
   // Where sunlight adds to what was already bright, roll off gently
   // instead of clipping (nothing under 0.8 changes).
   vec3 lit = base * light;
@@ -666,44 +605,196 @@ void main() {
 
   float t = 0.0, d = 0.0;
   int slot = 0, steps = 0;
-  bool hit = false, open = false;
+  bool hit = false, open = false, skin = false;
   vec3 n = -rd;
   // How far we see goes by the space we are in: out in the open, by how high
   // we are (uFogLen). But a ray that goes down into a cavity in the ground is
   // in that cavity from there on, and sees as far as it would from inside:
   // by the cavity's size (that of the coarsest level whose air it is).
   float down = 1e30, fogIn = uFogLen, maxT = uMaxT;
+  bool fogDown = false;
   if (uSkyH > 0.0 && rd.y < 0.0) {
     down = uSkyH / -rd.y;
-    if (down < 4.0 * uFogLen) {
-      vec3 c = rd * down - vec3(0.0, 0.01 * uScale, 0.0);
-      // (Not as far as levels too small to see from here, as with drawing.)
-      for (int i = 0; i < NLEV; i++) {
-        if (i >= uN || float(R) / uSig[i] < LOD_LO * down * pix) break;
-        if (levelAir(i, c, 0.0, 0.0) < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
-      }
-      maxT = max(maxT, down + (4.0 - down / uFogLen) * fogIn);
-    }
+    fogDown = down < 4.0 * uFogLen;
   }
-  gWideT = fogIn > uFogLen ? down : 1e30;
-  gWideFog = fogIn;
 
-  for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
-  gHitSkin = false;
+  // The world's levels are asked about points in one place in this program,
+  // and rays are marched through them in one other: each place writes out the
+  // whole of the world's geometry, and the time it takes to build the
+  // program grows steeply with how many there are (for the arcology, two
+  // places take about 3 s, three about 11 s: see tests/unit/shader.test.js).
+  // So everything that asks goes round one loop, in two phases. Phase 0:
+  // where the ray goes down into the ground near enough, whose air it is
+  // there (the fog); then the camera's ray. Phase 1, if that met a surface:
+  // how open it is in front of the surface, at four points (ambient
+  // occlusion), and what finer levels show on it (detail); then, if the sun
+  // may reach it, the sun's ray.
+  // (The loops' bounds are worked out as the pixel goes, on purpose: a
+  // compiler that could count them might write the loop out once for each
+  // time round, and each copy would hold the whole geometry again. This
+  // one, ANGLE on Metal, does not, by bench/cold.mjs; keep the bounds so,
+  // and time any change to these loops with it: the unit test counts only
+  // the places written in the source.)
+  const int ASK_FOG = 0, ASK_SHADE = 1, ASK_DETAIL = 5, ASKS = 6; // 1 to 4: occlusion's points
+  vec3 p = vec3(0.0), base = vec3(0.0);
+  float foot = 0.0, seenFoot = 0.0, ao = 0.0, sunlit = 0.0;
+  bool inkSkin = false, sunTried = false;
+  int phases = 1;
+  for (int ph = 0; ph < phases; ph++) {
+    float h = max(2.0 * foot, 0.004 * uScale), wt = 0.4;
+    for (int q = ph == 0 ? ASK_FOG : ASK_SHADE; q < (ph == 0 ? (fogDown ? 1 : 0) : ASKS); q++) {
+      // Asking about a point: the fog's; occlusion's (each as map finds the
+      // distance there: the most clearance any level gives); or the surface
+      // itself, for its detail.
+      bool occlusion = q > ASK_FOG && q < ASK_DETAIL;
+      vec3 v = q == ASK_FOG ? rd * down - vec3(0.0, 0.01 * uScale, 0.0) : occlusion ? p + n * h : p;
+      float along = t + h, m = -1e20;
+      if (occlusion) {
+        if (uOuter.w >= 0.0) m = dot(uOuter.xyz, v) + uOuter.w;
+        if (v.y + uSkyH > m) m = v.y + uSkyH;
+      }
+      for (int i = q == ASK_DETAIL ? max(slot + 1, 0) : 0; i < NLEV; i++) {
+        if (i >= uN) break;
+        float cell = float(R) / uSig[i];
+        bool ask = true;
+        float o = 0.0, sc = 0.0, wgt = 0.0, hole = 0.0, sharp = 0.0;
+        vec3 ink = vec3(0.0);
+        if (q == ASK_FOG) {
+          // (Not as far as levels too small to see from here, as with drawing.)
+          if (cell < LOD_LO * down * pix) break;
+        } else if (occlusion) {
+          if (along < gSolid[i]) continue;   // nothing but solid at this level yet
+          if (m > MAX_IN * cell) break;      // already in bigger air than this level has
+          float px = cell / seenFoot;
+          if (px < LOD_LO) break;            // too small to see: leave it solid
+          o = CLOSE * float(R) * clamp((seenFoot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0);
+          sc = seenFoot / cell;
+        } else {
+          // Levels too small to carve still show: their openings are drawn
+          // onto the surface as texture, which the real geometry later grows
+          // into. Smaller still, the texture dissolves into the average tone
+          // it would have had. (On a building's relief (skin), what opens in
+          // it is drawn in the relief's own colour, in its shadow: not in the
+          // colour of the level it opens into.) (The average is what the
+          // space says opens there, at that level: see openAreaAt; none (0),
+          // and nothing finer opens there either; less than 0, nothing of
+          // that level, but finer levels may.)
+          float px = float(R) / uSig[i] / seenFoot;
+          if (px < 0.5) break;
+          wgt = (1.0 - smoothstep(0.75, 1.0, smoothstep(LOD_LO, LOD_HI, px))) * smoothstep(0.5, 4.0, px);
+          if (wgt <= 0.0) continue;
+          ivec3 I;
+          vec3 f;
+          ivec3 id = levelId(i, levelCell(i, v, I, f));
+          hole = openAreaAt(uLevel[i], id, gUp, inkSkin, n);
+          if (hole < 0.0) continue;
+          if (hole == 0.0) break;
+          sharp = smoothstep(2.0, 8.0, px);
+          if (gOwnInk) inkSkin = true;
+          ink = inkSkin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
+          ask = sharp > 0.0;
+        }
+        float a = ask ? levelAir(i, v, o, sc) : 0.0;
+        if (q == ASK_FOG) {
+          if (a < 0.0) { fogIn = max(uFogK / uSig[i], uFogLen); break; }
+        } else if (occlusion) {
+          float w = -a / uSig[i];
+          w -= clamp((seenFoot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0) * CLOSE * cell;
+          if (w > m) m = w;
+        } else {
+          if (ask) {
+            hole = mix(hole, 1.0 - smoothstep(-seenFoot, 0.5 * seenFoot, a / uSig[i]), sharp);
+            // (Relief is the surface's own, in its shadow.)
+            if (gSkin) ink = mix(ink, base * 0.55, sharp);
+          }
+          base = mix(base, ink, hole * wgt * mix(0.8, 1.0, uInlay));
+        }
+      }
+      if (occlusion) {
+        ao += wt * clamp(m / h, 0.0, 1.0);
+        h *= 4.7;
+        wt *= 0.7;
+      }
+    }
+
+    // Marching: the camera's ray, or the sun's (does a ray from the surface
+    // toward the sun get out into the sky?): from o along dir, as if set out
+    // t0 before it, at most so far in so many steps.
+    vec3 o, dir;
+    float t0, far;
+    int most;
+    if (ph == 0) {
+      if (fogDown) maxT = max(maxT, down + (4.0 - down / uFogLen) * fogIn);
+      gWideT = fogIn > uFogLen ? down : 1e30;
+      gWideFog = fogIn;
+      for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
+      gHitSkin = false;
+      o = vec3(0.0); dir = rd; t0 = 0.0; far = maxT; most = STEPS;
+    } else {
+      ao = clamp(ao / 0.96, 0.0, 1.0);
+      if (!sunTried) break;
+      for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
+      o = p + n * foot; dir = uSun; t0 = t; far = 1e30; most = SUN_STEPS;
+    }
+    bool rh, ro;
+    int rs = slot, rst = 0;
+    vec3 rn = n;
 #if EXACT
-  t = march(vec3(0.0), rd, 0.0, pix, maxT, STEPS, true, hit, open, slot, n, steps);
+    float rt = march(o, dir, t0, pix, far, most, ph == 0, rh, ro, rs, rn, rst);
 #else
-  for (int i = 0; i < STEPS; i++) {
-    float foot = max(t * pix, 1e-12);
-    d = map(rd * t, foot, t, uDebug != 2, slot);
-    steps++;
-    if (d < 0.5 * foot) { hit = true; break; }
-    t += d * 0.9;
-    if (t > maxT) break;
-  }
-  if (t <= maxT) hit = true;
+    // (The older way, kept to check against, steps the camera's ray by the
+    // safe distance, and finds the surface's facing from how that changes.)
+    float rt = 0.0;
+    if (ph == 0) {
+      rh = false;
+      ro = false;
+      for (int i = 0; i < STEPS; i++) {
+        float ft = max(rt * pix, 1e-12);
+        d = map(rd * rt, ft, rt, uDebug != 2, rs);
+        rst++;
+        if (d < 0.5 * ft) { rh = true; break; }
+        rt += d * 0.9;
+        if (rt > maxT) break;
+      }
+      if (rt <= maxT) rh = true;
+    } else rt = march(o, dir, t0, pix, far, most, false, rh, ro, rs, rn, rst);
 #endif
-  bool skin = gHitSkin; // (before the normal's map calls below)
+    if (ph == 1) {
+      sunlit = ro ? 1.0 : 0.0;
+      break;
+    }
+    t = rt;
+    hit = rh;
+    open = ro;
+    slot = rs;
+    n = rn;
+    steps = rst;
+    skin = gHitSkin; // (before the normal's map calls below; the detail starts from it)
+    if (!hit || uDebug == 1 || uDebug == 3 || uDebug == 4 || uDebug == 5) break;
+    p = rd * t;
+    foot = max(t * pix, 1e-5 * uScale);
+#if !EXACT
+    if (d > -1e19) {
+      float e = 0.6 * foot;
+      int s2;
+      vec3 g = vec3(map(p + vec3(e, 0.0, 0.0), foot, t + e, false, s2),
+                    map(p + vec3(0.0, e, 0.0), foot, t + e, false, s2),
+                    map(p + vec3(0.0, 0.0, e), foot, t + e, false, s2)) - d;
+      if (dot(g, g) > 0.0) n = normalize(g);
+    }
+#endif
+    seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
+    base = surfaceColour(slot, n);
+    inkSkin = skin;
+    // (The sun's ray is not tried from too far below the ground for any to
+    // come in: further than the space lets sunlight reach, and further than
+    // we see from here. Going by how far we see alone, where the space is
+    // open well under the ground, shadows came and went as that changed.)
+    float key = max(dot(n, uSun), 0.0), below = -(p.y + uSkyH);
+    sunTried = uSunK > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach);
+    phases = 2;
+  }
+
   if (uDebug == 5) {
     outColor = vec4(hit ? t : -1.0, 0.0, 0.0, 1.0);
     return;
@@ -728,25 +819,7 @@ void main() {
     return;
   }
   vec3 col = beyond(rd, open);
-  if (hit) {
-    vec3 p = rd * t;
-
-#if !EXACT
-    if (d > -1e19) {
-      float foot = max(t * pix, 1e-5 * uScale);
-      float e = 0.6 * foot;
-      int s2;
-      vec3 g = vec3(map(p + vec3(e, 0.0, 0.0), foot, t + e, false, s2),
-                    map(p + vec3(0.0, e, 0.0), foot, t + e, false, s2),
-                    map(p + vec3(0.0, 0.0, e), foot, t + e, false, s2)) - d;
-      if (dot(g, g) > 0.0) n = normalize(g);
-    }
-#endif
-
-    vec3 lit = shade(p, n, rd, t, slot, skin, pix);
-
-    col = mix(col, lit, exp(-min(t, gWideT) / uFogLen - max(t - gWideT, 0.0) / gWideFog));
-  }
+  if (hit) col = mix(col, litBy(base, n, rd, t, ao, sunlit), exp(-min(t, gWideT) / uFogLen - max(t - gWideT, 0.0) / gWideFog));
 
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
   col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;

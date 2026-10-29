@@ -2643,7 +2643,8 @@ const arcology = {
   cellAir,
   roomRule,
   volume: VOLUME,
-  // What fraction of a surface opens at a level (see detail in shaders.js):
+  // What fraction of a surface opens at a level (see the detail asked after
+  // in main, shaders.js):
   // the halls' where they are; in the building's own cells, its relief (only
   // where the surface is relief) and its openings (only where it is upright,
   // as the faces with them are), in the surface's own shade; elsewhere there,

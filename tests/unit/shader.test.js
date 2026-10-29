@@ -4,13 +4,14 @@ import { viewFrag } from '../../src/shaders.js';
 import { inlined } from './glsl.js';
 
 // The view shader is built from nothing on a first visit, freezing the
-// browser meanwhile (bench/cold.mjs times it: the arcology about 20 s at
-// these sizes). Each place that asks a world's cell() for its geometry gets a
-// whole copy of it, and that is most of the program: these keep it from
-// growing back. (Lower them as the shader shrinks.)
+// browser meanwhile (bench/cold.mjs times it). Each place that asks a world's
+// cell() for its geometry gets a whole copy of it, and that is most of the
+// program; and the time grows steeply past a point: for the arcology, with 2
+// copies (184000 tokens) about 3 s, with 3 (274000) about 11 s, with 5
+// (456000) about 20 s. These keep it under that point.
 const BUDGET = {
-  halls: { cell: 5, tokens: 85000 },
-  arcology: { cell: 5, tokens: 460000 },
+  halls: { cell: 2, tokens: 40000 },
+  arcology: { cell: 2, tokens: 200000 },
 };
 
 for (const [name, most] of Object.entries(BUDGET)) {
