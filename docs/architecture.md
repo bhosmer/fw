@@ -23,7 +23,9 @@ Each world answers, for a point at a level, its distance to that level's air, an
 
 ## Drawing
 
-- `src/renderer.js`: the programs (per world, for comparing), temporal antialiasing and upscaling, the probe, the tour's look.
+- `src/renderer.js`: each world's programs (the view; the older way and the probe, made when asked for) and its tables; the levels and the view given to them; each frame drawn and timed; the probe.
+- `src/frame.js`: what each frame is drawn into, its gathering into the history (temporal antialiasing and upscaling) and its showing, smoothed; with their shaders.
+- `src/look.js`: the tour's look, read back without waiting. `src/gl.js`: programs begun and finished (each finds its uniforms itself; its samplers get their texture units).
 - `src/shaders.js`: the view shader's march and shading, the probe; `src/schemes.js`: colour schemes.
 
 ## The tour

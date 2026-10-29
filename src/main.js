@@ -1,4 +1,5 @@
-import { Renderer, TAA_N } from './renderer.js';
+import { Renderer } from './renderer.js';
+import { TAA_N } from './frame.js';
 import { Controls } from './controls.js';
 import { WORLDS, makeWorld, fromLink, ADDED } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
@@ -155,7 +156,7 @@ let lookAt = null, lookedAt = 0;
 function look(now) {
   const got = renderer.seen();
   if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, whereNow());
-  if (renderer.lookSync || now - lookedAt < 250) return;
+  if (renderer.looking || now - lookedAt < 250) return;
   const stride = Math.max(4, Math.round(canvas.width / 100));
   const { recs, view } = viewNow();
   if (renderer.look(recs, view, stride)) {
@@ -164,13 +165,13 @@ function look(now) {
   }
 }
 
-// Resolution follows frame time, by temporal upscaling (see TAAU_FRAG): the
-// canvas stays at full resolution and only the view is drawn at fewer
-// pixels, `upscale` of them each way, while we move (at rest, all of them);
-// the history, at full resolution, gathers them. What is carved does not
-// follow it (review21): detail is sized by the picture's pixels (lodH, their
-// number down it), so that fewer pixels only sample the same geometry less
-// densely, and coming to rest changes no geometry.
+// Resolution follows frame time, by temporal upscaling (see TAAU_FRAG in
+// frame.js): the canvas stays at full resolution and only the view is drawn
+// at fewer pixels, `upscale` of them each way, while we move (at rest, all
+// of them); the history, at full resolution, gathers them. What is carved
+// does not follow it (review21): detail is sized by the picture's pixels
+// (lodH, their number down it), so that fewer pixels only sample the same
+// geometry less densely, and coming to rest changes no geometry.
 const MIN_UPSCALE = 0.35;
 let upscale = 1, lodH = 1;
 function resize() {

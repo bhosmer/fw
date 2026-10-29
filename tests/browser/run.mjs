@@ -467,7 +467,7 @@ check('two worlds compared flip, and nothing else changes', async () => {
     let n = 0;
     const draw = fw.renderer.draw.bind(fw.renderer);
     fw.renderer.draw = (...a) => (n++, draw(...a));
-    setTimeout(() => { const before = n, kept = fw.renderer.prev !== null; fw.flip(); const prev = fw.renderer.prev; setTimeout(() => ok([before, n, kept, prev]), 600); }, 1500);
+    setTimeout(() => { const before = n, kept = fw.renderer.frame.prev !== null; fw.flip(); const prev = fw.renderer.frame.prev; setTimeout(() => ok([before, n, kept, prev]), 600); }, 1500);
   })`);
   assert(drawn[1] - drawn[0] >= 8, `at rest, a flip drew ${drawn[1] - drawn[0]} frames`);
   assert(drawn[2] && drawn[3] === null, 'the history (there before the flip) was kept across it');
@@ -481,6 +481,46 @@ check('two worlds compared flip, and nothing else changes', async () => {
   const h2 = await page.eval(`({ shown: fw.shown, F: fw.pos.F, frac: fw.pos.frac, pic: __pic(${JSON.stringify(h.s)}) })`);
   assert(h2.shown === 'B' && h2.F === h.s.F && JSON.stringify(h2.frac) === JSON.stringify(h.s.frac) && h2.pic === h.pic, `the halls compared, saved with B shown: ${JSON.stringify({ was: h.s.F, ...h2, pic: h2.pic === h.pic })}`);
   assert(h.sky > -1e29, 'B, flipped to, has no sky: it stands on the other\'s ground');
+});
+
+// Every program sets, as it draws, every uniform it has (as the program
+// itself says: see finish in gl.js), samplers aside (set once, when it is
+// made): drawn as the app draws, the older way, and probed, in each world.
+// (The tour's look is drawn by the view's program.)
+check('every program sets every uniform it has', async () => {
+  for (const world of WORLDS) {
+    await load('start', 'alhambra', false, world);
+    const unset = await page.eval(`(() => {
+      const gl = fw.renderer.gl, set = new Map();
+      let using = null;
+      const use = gl.useProgram.bind(gl);
+      gl.useProgram = (p) => ((using = p), use(p));
+      for (const k of Object.keys(WebGL2RenderingContext.prototype).filter((k) => /^uniform/.test(k))) {
+        const f = gl[k].bind(gl);
+        gl[k] = (loc, ...a) => (set.has(using) || set.set(using, new Set()), set.get(using).add(loc), f(loc, ...a));
+      }
+      fw.renderer.reset();
+      fw.upscale = 0.5;
+      fw.fly(1 / 60, { f: 1 });
+      fw.snap(320, 180, true);
+      fw.upscale = 1;
+      fw.snap(320, 180, true);
+      fw.reference = true;
+      fw.snap(320, 180);
+      fw.reference = false;
+      fw.check(2);
+      fw.checkRays(2);
+      const e = fw.renderer.entry, f = fw.renderer.frame;
+      const out = [];
+      for (let err = gl.getError(); err; err = gl.getError()) out.push('a GL error, ' + err);
+      for (const [name, p] of [['view', e.viewProg], ['older', e.refProg], ['probe', e.probeProg], ['smoothing', f.smooth], ['upscaling', f.taau]]) {
+        const done = set.get(p.prog) ?? new Set();
+        for (const [u, loc] of Object.entries(p.u)) if (!(u in p.units) && !done.has(loc)) out.push(name + ': ' + u);
+      }
+      return out;
+    })()`);
+    assert(!unset.length, `${world}: uniforms never set, or GL errors: ${unset.join(', ')}`);
+  }
 });
 
 // From up above each world too, the exact way sees nothing the older one
@@ -545,7 +585,7 @@ check('views look as they did', async () => {
 // antialiased over the frames before, while moving forward (drawn at half
 // the pixels each way, gathered into the full picture, for half a second:
 // long enough for the history to hold as much as it keeps moving, see
-// TAA_KEEP in renderer.js), then come to rest (all of them, until it has
+// TAA_KEEP in frame.js), then come to rest (all of them, until it has
 // every sample: see TAA_N).
 // (Nothing here depends on the time: the same frames each run.)
 const LIVE = [['court', 'alhambra'], ['front', 'alhambra']];

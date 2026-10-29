@@ -1,56 +1,13 @@
-import { VERT, SMOOTH_FRAG, TAAU_FRAG, PROBE_POINTS, probeFrag, viewFrag, slantCount4 } from './shaders.js';
+import { PROBE_POINTS, probeFrag, viewFrag, slantCount4 } from './shaders.js';
 import { levelSeed } from './util.js';
+import { begin, finish, link, bindSampler } from './gl.js';
+import { Frame } from './frame.js';
+import { Look } from './look.js';
 
-// A program is built in two halves: begun (compiled and linked, without
-// asking how that went, which would wait for it), then finished (its status
-// checked, its uniforms found). Between them the GPU works on it while the
-// page goes on (KHR_parallel_shader_compile: see Renderer.ready).
-function begin(gl, frag) {
-  const prog = gl.createProgram();
-  for (const [type, src] of [[gl.VERTEX_SHADER, VERT], [gl.FRAGMENT_SHADER, frag]]) {
-    const sh = gl.createShader(type);
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    gl.attachShader(prog, sh);
-  }
-  gl.linkProgram(prog);
-  return prog;
-}
-
-function finish(gl, prog, names) {
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-    for (const sh of gl.getAttachedShaders(prog))
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error('shader compile failed:\n' + gl.getShaderInfoLog(sh));
-    throw new Error('program link failed:\n' + gl.getProgramInfoLog(prog));
-  }
-  const u = {};
-  for (const n of names) u[n] = gl.getUniformLocation(prog, n);
-  return { prog, u };
-}
-
-const link = (gl, frag, names) => finish(gl, begin(gl, frag), names);
-
-const LEVEL_UNIFORMS = ['uL', 'uFr', 'uId', 'uPid', 'uVolume', 'uSeed', 'uLevel', 'uSig', 'uLp', 'uFp', 'uLm', 'uFm', 'uLs', 'uFs'];
-
-// The texture unit a space's volume is kept on (0 and 1 are the picture's).
-const VOLUME_UNIT = 2;
-// (And the space's other tables', from this one on.)
-const TABLES_UNIT = 3;
-// (And, past the tables, the upscaling history's weights while it is
-// resolved: see resolve.)
-const WEIGHT_UNIT = 7;
-
-// Temporal antialiasing: how much of the history each frame keeps, and where
-// in its pixel each frame's rays go (Halton 2, 3: 16 points, from the middle).
-// (Centred: the points' mean is the pixel's middle.) And the least sig of a
-// level the camera's move may be read from (its lattice's precision).
-const TAA_KEEP = 0.875, TAA_N = 16, TAA_SIG_MIN = 1e-6;
-const halton = (i, b) => { let f = 1, r = 0; for (; i > 0; i = Math.floor(i / b)) (f /= b), (r += f * (i % b)); return r; };
-const HALTON = Array.from({ length: TAA_N }, (_, i) => [halton(i + 1, 2), halton(i + 1, 3)]);
-const MEAN = [0, 1].map((a) => HALTON.reduce((s, p) => s + p[a], 0) / TAA_N);
-const jitter = (n) => HALTON[n % TAA_N].map((x, a) => x - MEAN[a]);
-export { TAA_N };
-
+// The drawing: each space's programs (the view, and the older way of
+// drawing and the probe, made when asked for) and its tables; the levels
+// and the view given to them; each frame drawn (into the frame: see
+// frame.js) and timed; the tour's look (see look.js); and the probe.
 export class Renderer {
   // nProbe: most levels probe() can be asked about. nView: most levels drawn.
   constructor(canvas, space, nProbe, nView) {
@@ -62,29 +19,14 @@ export class Renderer {
     this.nProbe = nProbe;
     this.nView = nView;
 
-    // (The programs, begun here and finished in ready; parallel compiling is
-    // asked for first, to cover them.)
+    // (The programs, begun as they are made (the frame's, and each space's
+    // in addSpace) and finished in ready; parallel compiling is asked for
+    // first, to cover them.)
     this.parallel = gl.getExtension('KHR_parallel_shader_compile');
-    this.viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uInlay', 'uStride', 'uDebug', 'uJitter', 'uLodH', 'uToOut',
-    ];
-    this.pending = [
-      ['smoothProg', SMOOTH_FRAG, ['uTex', 'uRes']],
-      ['taauProg', TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']],
-    ].map(([key, frag, names]) => ({ key, names, prog: begin(gl, frag) }));
-    // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
-    // pictures, drawn into in turn, each with its weights; and what the frame
-    // before was drawn from.
-    this.hist = [null, null];
-    this.histW = [null, null];
-    this.histFbo = [gl.createFramebuffer(), gl.createFramebuffer()];
-    this.histAt = 0;
-    this.prev = null;
-    this.frameNo = 0;
-    this.still = 0;
-    this.viewTex = null;
-    this.viewFbo = gl.createFramebuffer();
-    this.viewSize = [0, 0];
+    // What each frame is drawn into, and gathered and shown from; and the
+    // tour's look.
+    this.frame = new Frame(gl, canvas);
+    this.tourLook = new Look(gl, canvas);
 
     // How long the GPU takes over each frame, where that can be timed: a
     // frame the GPU takes longer over than the display allows is shown late,
@@ -119,45 +61,47 @@ export class Renderer {
     const e = {
       begun: begin(gl, viewFrag(nView, space, true)),
       viewProg: null,
-      makeRef: () => link(gl, viewFrag(nView, space, false), this.viewUniforms),
-      makeProbe: () => link(gl, probeFrag(nProbe, space), [...LEVEL_UNIFORMS, 'uProbeV', 'uProbeDir']),
-      volume: null,
-      tables: [],
+      makeRef: () => link(gl, viewFrag(nView, space, false)),
+      makeProbe: () => link(gl, probeFrag(nProbe, space)),
+      // (Its textures, by the name of the sampler that reads each, with
+      // the kind of texture it is.)
+      textures: {},
     };
     // What a space keeps as a table rather than works out (see volume in
     // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned
-    // integers, on a unit of its own (bound as each frame is drawn).
+    // integers (bound to its program's unit whenever a program that reads it
+    // draws).
     if (space.volume) {
       const { size, data, words } = space.volume;
-      e.volume = gl.createTexture();
-      gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
-      gl.bindTexture(gl.TEXTURE_3D, e.volume);
+      const tex = gl.createTexture();
+      e.textures.uVolume = [gl.TEXTURE_3D, tex];
+      gl.bindTexture(gl.TEXTURE_3D, tex);
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       const [inner, form] = words === 4 ? [gl.RGBA32UI, gl.RGBA_INTEGER] : [gl.RG32UI, gl.RG_INTEGER];
       gl.texImage3D(gl.TEXTURE_3D, 0, inner, size[0], size[1], size[2], 0, form, gl.UNSIGNED_INT, data);
-      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_3D, null);
     }
-    e.tables = (space.tables ?? []).map(({ name, size, data }, i) => {
+    for (const { name, size, data } of space.tables ?? []) {
       const tex = gl.createTexture();
-      gl.activeTexture(gl.TEXTURE0 + TABLES_UNIT + i);
+      e.textures[name] = [gl.TEXTURE_2D, tex];
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32I, size[0], size[1], 0, gl.RGBA_INTEGER, gl.INT, data);
-      gl.activeTexture(gl.TEXTURE0);
-      return { name, tex, unit: TABLES_UNIT + i };
-    });
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
     this.entries.set(space, e);
   }
 
-  // Draw space (added already) from now on: afresh, the history being
-  // another's.
+  // Draw space (added already, and made ready: see ready) from now on:
+  // afresh, the history being another's.
   setSpace(space) {
     const e = this.entries.get(space);
     if (!e) throw new Error('renderer: a space it was not given');
+    if (e.begun && this.entry) throw new Error('renderer: a space whose program is not ready');
     this.space = space;
     this.entry = e;
     this.reset();
@@ -168,11 +112,11 @@ export class Renderer {
   // here.)
   async ready() {
     const gl = this.gl, par = this.parallel, entries = [...this.entries.values()].filter((e) => e.begun);
-    const progs = [...this.pending.map(({ prog }) => prog), ...entries.map((e) => e.begun)];
+    const progs = [...Object.values(this.frame.begun ?? {}), ...entries.map((e) => e.begun)];
     while (par && !progs.every((prog) => gl.getProgramParameter(prog, par.COMPLETION_STATUS_KHR))) await new Promise((r) => setTimeout(r, 16));
-    for (const { key, prog, names } of this.pending) this[key] = finish(gl, prog, names);
-    for (const e of entries) (e.viewProg = finish(gl, e.begun, this.viewUniforms)), (e.begun = null);
-    this.pending = [];
+    if (this.frame.begun) this.frame.ready();
+    // (Each once, should two wait at once.)
+    for (const e of entries) if (e.begun) (e.viewProg = finish(gl, e.begun)), (e.begun = null);
   }
 
   setLevels(p, recs, n) {
@@ -203,20 +147,13 @@ export class Renderer {
     gl.uniform3fv(p.u.uFr, fr);
     gl.uniform3iv(p.u.uId, id);
     gl.uniform3iv(p.u.uPid, pid);
-    const { volume, tables } = this.entry;
-    if (volume) {
-      gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
-      gl.bindTexture(gl.TEXTURE_3D, volume);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.uniform1i(p.u.uVolume, VOLUME_UNIT);
+    // (Every sampler the program has, its space's texture: none left to read
+    // whatever else is bound.)
+    for (const name of Object.keys(p.units)) {
+      const t = this.entry.textures[name];
+      if (!t) throw new Error(`renderer: the program samples ${name}, which its space has no texture for`);
+      bindSampler(gl, p, name, t[1], t[0]);
     }
-    p.tables ??= tables.map((t) => gl.getUniformLocation(p.prog, t.name));
-    tables.forEach((t, i) => {
-      gl.activeTexture(gl.TEXTURE0 + t.unit);
-      gl.bindTexture(gl.TEXTURE_2D, t.tex);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.uniform1i(p.tables[i], t.unit);
-    });
     gl.uniform1uiv(p.u.uSeed, seed);
     gl.uniform1iv(p.u.uLevel, level);
     gl.uniform1fv(p.u.uSig, sig);
@@ -260,52 +197,6 @@ export class Renderer {
     );
   }
 
-  // A picture: colour, and in alpha the log of the distance to what each pixel saw.
-  picture(w, h) {
-    const gl = this.gl, t = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, t);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    return t;
-  }
-
-  // The picture is drawn into a texture the size of the canvas (into its
-  // corner, at fewer pixels, while upscaling), then (see drawFrame) gathered
-  // into the history and anti-aliased onto the canvas.
-  viewTarget() {
-    const gl = this.gl;
-    const w = this.canvas.width, h = this.canvas.height;
-    if (this.viewSize[0] !== w || this.viewSize[1] !== h) {
-      const drop = (t) => t && gl.deleteTexture(t);
-      drop(this.viewTex);
-      this.viewTex = this.picture(w, h);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.viewTex, 0);
-      for (let i = 0; i < 2; i++) {
-        drop(this.hist[i]);
-        this.hist[i] = this.picture(w, h);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[i]);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.hist[i], 0);
-        drop(this.histW[i]);
-        this.histW[i] = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, this.histW[i]);
-        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R16F, w, h);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.histW[i], 0);
-      }
-      this.prev = null;
-      this.viewSize = [w, h];
-    }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
-  }
-
   draw(recs, view) {
     const gl = this.gl;
     const timed = this.timer && !this.timingPaused && !view.debug && this.timing.length < 8;
@@ -333,7 +224,7 @@ export class Renderer {
   }
 
   drawFrame(recs, view) {
-    const gl = this.gl;
+    const gl = this.gl, frame = this.frame;
     // (Temporal upscaling: the view drawn at fewer pixels, `render` of them,
     // into the picture-sized textures' corner.)
     const W = this.canvas.width, H = this.canvas.height;
@@ -346,158 +237,33 @@ export class Renderer {
     // (Distances for comparison are data, not a picture: no smoothing.)
     const raw = view.debug === 4;
     if (raw) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    else this.viewTarget();
+    else frame.target();
     gl.viewport(0, 0, ...render);
     const p = this.setView(recs, view, 1);
     gl.uniform2f(p.u.uToOut, ...toOut);
     const taa = !!view.taa && !raw && !view.debug;
-    const jit = taa ? jitter(this.frameNo++) : [0, 0];
+    const jit = taa ? frame.jitter() : [0, 0];
     gl.uniform2f(p.u.uJitter, ...jit);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    if (raw) return;
-
-    let shown = this.viewTex;
-    if (taa) shown = this.resolve(recs, view, jit, render);
-    else this.prev = null;
-    const q = this.smoothProg;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, W, H);
-    gl.useProgram(q.prog);
-    gl.bindTexture(gl.TEXTURE_2D, shown);
-    gl.uniform1i(q.u.uTex, 0);
-    gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (!raw) frame.present(recs, view, taa, jit, render);
   }
 
   // Forgets the history (after a jump to somewhere else).
   reset() {
-    this.prev = null;
+    this.frame.reset();
   }
 
-  // Gathers the frame just drawn (at render pixels) into the history, with
-  // its weights (see TAAU_FRAG): into the next history picture, which it
-  // returns.
-  resolve(recs, view, jit, render) {
-    const gl = this.gl, q = this.taauProg;
-    const now = { cam: view.cam, levels: new Map(recs.map((r) => [r.level, { id: [...r.id, ...r.pid].join(), at: r.L.map((x, a) => x + r.f[a]), sig: r.sig }])) };
-    // How far the camera has moved since, in view units: by the finest level
-    // drawn both times whose cell (and its parent's, so as not to be fooled
-    // by a cell id repeating further on) is the same; and not by a level so
-    // coarse that its lattice cannot say. And how the view's units have
-    // changed with the level we are at (log2 of their ratio).
-    let D = null;
-    if (this.prev)
-      for (const [lv, n] of now.levels) {
-        const o = this.prev.levels.get(lv);
-        if (o && o.id === n.id && n.sig > TAA_SIG_MIN && (D === null || n.sig > D.sig)) D = { sig: n.sig, d: n.at.map((x, a) => (x - o.at[a]) / n.sig), log: Math.log2(n.sig / o.sig) };
-      }
-    // (Still: nothing about the view has changed, so the frames are samples
-    // of one picture, to be averaged; else history is checked and clamped.)
-    const still = D && D.d.every((x) => x === 0) && D.log === 0 && view.cam.every((x, i) => x === this.prev.cam[i]);
-    // (Still, but drawn at another size than the frame before: the still
-    // average starts over, counting what was before as one frame.)
-    const resized = !this.lastRender || render[0] !== this.lastRender[0] || render[1] !== this.lastRender[1];
-    this.lastRender = render;
-    this.still = still ? (resized ? 1 : Math.min(this.still + 1, TAA_N - 1)) : 0;
-    const out = 1 - this.histAt;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo[out]);
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.useProgram(q.prog);
-    // (Units 0, 1 and WEIGHT_UNIT: the history drawn into is none of them.)
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
-    gl.uniform1i(q.u.uCur, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.hist[this.histAt]);
-    gl.uniform1i(q.u.uHist, 1);
-    gl.activeTexture(gl.TEXTURE0 + WEIGHT_UNIT);
-    gl.bindTexture(gl.TEXTURE_2D, this.histW[this.histAt]);
-    gl.uniform1i(q.u.uHistW, WEIGHT_UNIT);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.uniform2f(q.u.uRes, this.canvas.width, this.canvas.height);
-    gl.uniform2f(q.u.uRender, ...render);
-    gl.uniform2f(q.u.uJit, ...jit);
-    gl.uniformMatrix3fv(q.u.uCam, false, view.cam);
-    gl.uniformMatrix3fv(q.u.uPrev, false, this.prev ? this.prev.cam : view.cam);
-    gl.uniform3f(q.u.uD, ...(D ? D.d : [0, 0, 0]));
-    gl.uniform1f(q.u.uTan, view.tan);
-    gl.uniform1f(q.u.uLog, D ? D.log : 0);
-    // (At most KEEP's worth of frames' weight moving (a blend of 1 - KEEP of
-    // each frame), TAA_N - 1 still; the first still frame counts what was
-    // before as one.)
-    gl.uniform1f(q.u.uCap, still ? TAA_N - 1 : TAA_KEEP / (1 - TAA_KEEP));
-    gl.uniform1i(q.u.uHave, D ? 1 : 0);
-    gl.uniform1i(q.u.uStill, still ? 1 : 0);
-    gl.uniform1i(q.u.uRestart, still && this.still === 1 ? 1 : 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
-    gl.activeTexture(gl.TEXTURE0 + WEIGHT_UNIT);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.activeTexture(gl.TEXTURE0);
-    this.histAt = out;
-    this.prev = now;
-    this.lastD = D;
-    return this.hist[out];
-  }
-
-  // What the view sees, sparsely: for every stride-th pixel of the canvas
-  // (each drawn in as much detail as on screen), the distance to what it hits,
-  // or -1 for nothing. It is read back without waiting for the GPU; seen()
-  // hands it over once it has arrived. One at a time. (Drawn in the view's
-  // own format, so that the GPU need build nothing new for it: as the log of
-  // the distance, its whole part and the rest in two channels.)
+  // What the view sees, sparsely, for the tour (see Look.look), drawn with
+  // the view's program; once it has arrived, handed over (seen); and
+  // whether one is on its way.
   look(recs, view, stride) {
-    const gl = this.gl;
-    if (this.lookSync) return false;
-    // (What the tour sees is sized by the canvas as it is, not as shown.)
-    view = { ...view, lodH: this.canvas.height };
-    const w = Math.ceil(this.canvas.width / stride), h = Math.ceil(this.canvas.height / stride);
-    if (!this.lookTex || this.lookSize[0] !== w || this.lookSize[1] !== h) {
-      if (this.lookTex) gl.deleteTexture(this.lookTex);
-      this.lookTex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, this.lookTex);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
-      this.lookFbo ??= gl.createFramebuffer();
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.lookFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.lookTex, 0);
-      this.lookPbo ??= gl.createBuffer();
-      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
-      // (Not STREAM_READ, though it is read back: for a buffer said to be for
-      // reading, Chrome copies it aside at every fence, for a way of reading
-      // that WebGL never takes, and warns each time that the copy was wasted.)
-      gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 16, gl.STREAM_COPY);
-      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-      this.lookSize = [w, h];
-    }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.lookFbo);
-    gl.viewport(0, 0, w, h);
-    this.setView(recs, { ...view, debug: 5, reference: false }, stride);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, 0);
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.lookSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-    gl.flush();
-    return true;
+    return this.tourLook.look((v, st) => (this.setView(recs, v, st), this.gl.drawArrays(this.gl.TRIANGLES, 0, 3)), view, stride);
   }
-
   seen() {
-    const gl = this.gl;
-    if (!this.lookSync) return null;
-    const s = gl.clientWaitSync(this.lookSync, 0, 0);
-    if (s !== gl.ALREADY_SIGNALED && s !== gl.CONDITION_SATISFIED) return null;
-    const [w, h] = this.lookSize;
-    const px = new Float32Array(w * h * 4);
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.lookPbo);
-    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-    gl.deleteSync(this.lookSync);
-    this.lookSync = null;
-    const dist = new Float32Array(w * h);
-    for (let i = 0; i < w * h; i++) dist[i] = px[i * 4] < -500 ? -1 : 2 ** (px[i * 4] + px[i * 4 + 1]);
-    return { w, h, dist };
+    return this.tourLook.seen();
+  }
+  get looking() {
+    return this.tourLook.looking;
   }
 
   // Everything the view program needs to draw recs as view describes.
@@ -547,12 +313,12 @@ export class Renderer {
     gl.uniform1f(p.u.uInlay, sc.inlay);
     const d = Math.hypot(...sc.sunDir);
     gl.uniform3fv(p.u.uSun, sc.sunDir.map((x) => x / d));
-    if (view.outer) {
-      const c = colours(view.outer.level);
-      gl.uniform4f(p.u.uOuter, ...view.outer.normal, view.outer.dist);
-      gl.uniform3fv(p.u.uOuterWall, c.wall);
-      gl.uniform3fv(p.u.uOuterFloor, c.floor);
-    } else gl.uniform4f(p.u.uOuter, 0, 0, 0, -1);
+    // (The outer plane, if any, and its colours; with none, off, and no
+    // colours left from a frame before.)
+    const outer = view.outer ? colours(view.outer.level) : { wall: [0, 0, 0], floor: [0, 0, 0] };
+    gl.uniform4f(p.u.uOuter, ...(view.outer ? [...view.outer.normal, view.outer.dist] : [0, 0, 0, -1]));
+    gl.uniform3fv(p.u.uOuterWall, outer.wall);
+    gl.uniform3fv(p.u.uOuterFloor, outer.floor);
     gl.uniform1i(p.u.uDebug, view.debug | 0);
     gl.uniform1f(p.u.uStride, stride);
     gl.uniform2f(p.u.uJitter, 0, 0);
@@ -563,7 +329,7 @@ export class Renderer {
   // GPU milliseconds taken by whatever fn draws (null if it cannot be timed).
   async time(fn) {
     const gl = this.gl;
-    const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    const ext = this.timer;
     if (!ext) return null;
     const q = gl.createQuery();
     this.timingPaused = true; // (only one timing at a time)
