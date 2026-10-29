@@ -89,6 +89,15 @@ uint hashCell(ivec3 p, uint s) {
 // on GPUs, and these integers are small enough to be exact.)
 ivec3 wrapId(ivec3 a) { return a - P * ivec3(floor((vec3(a) + 0.5) * (1.0 / float(P)))); }
 
+// What every world's cells share: the middle of a cell; the axes; a hash's
+// top bits as a number in [0, 1); and whether x + f is on the upper side of
+// c (L alone is rounded, and can put a point half a unit on the wrong side).
+// (The JavaScript's are in pieces.js.)
+const int C = R / 2;
+const vec3 EX = vec3(1.0, 0.0, 0.0), EY = vec3(0.0, 1.0, 0.0), EZ = vec3(0.0, 0.0, 1.0);
+float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
+bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
+
 // What a space uses to answer for a ray (see spaces/halls.js). Lengths are in
 // the level's lattice units. With distance, a level's air is shrunk back from
 // its surfaces by gO, which grows by gA for each unit the ray travels, so the

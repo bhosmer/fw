@@ -555,7 +555,7 @@ function pieces(js, levels, salt) {
   const next = (d) => (js ? `wrapId([${d.map((x, a) => (x === 0 ? `id[${a}]` : `id[${a}] + (${x})`)).join(', ')}])` : `wrapId(id + ivec3(${d.join(', ')}))`);
   const most = (f, xs) => xs.reduce((a, x) => `${f}(${a}, ${x})`);
   const half = (x) => (js ? `div(${x}, 2)` : twin.HELPERS.div.glsl([x, '2']));
-  const through = (d, ask) => (js ? [`through(ray, ${d}, () => ${ask});`] : [`if (ray && ${d} + gO <= 0.0) {`, '  gRay = true;', `  ${ask};`, '  gRay = false;', '  if (gX > reach) { reach = gX; nrm = gN; }', '}']);
+  const through = (d, ask) => twin.reask(js, d, ask);
   const wall = (x) => (x
     ? `wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, ${js ? '0, 2' : 'EX, EZ'}, level)`
     : `wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, ${js ? '2, 0' : 'EZ, EX'}, level)`);
@@ -673,21 +673,12 @@ const int M = ${M};
 const int HLO = ${HLO};
 const int FAR = ${FAR};
 const int HHI = R - 2 * M;
-const int C = R / 2;
-const vec3 EX = vec3(1.0, 0.0, 0.0), EY = vec3(0.0, 1.0, 0.0), EZ = vec3(0.0, 0.0, 1.0);
-
-float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
-
 // Does this cell have a room in it? Some are left solid, so that a surface
 // which cuts through cells (any diagonal) is not all cut-open rooms.
 // (And only where the space allows a room: spaceRoom, which each space
 // defines; the halls everywhere.)
 bool spaceRoom(ivec3 id, uint seed);
 bool built(ivec3 id, uint seed, int level) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= (${[...Object.entries(spec.byLevel).filter(([, s]) => s.solid !== spec.solid).map(([l, s]) => `level == ${l} ? ${glf(threshold(s.solid))} : `), glf(threshold(spec.solid))].join('')}); }
-
-// Is the point x + f on the upper side of c? (L alone is rounded, and can
-// put a point half a unit on the wrong side.)
-bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 
 ${pieces(false, levels, salt)}
 

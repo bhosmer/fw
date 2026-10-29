@@ -23,6 +23,7 @@
 // Deeper in, the cells are halls; cells the other solids cross are solid.
 
 import * as P from '../pieces.js';
+import * as twin from '../twin.js';
 import { makeHalls, HALLS, R, M } from './halls.js';
 import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
 import { hexahedron, HEXAHEDRON, GROUND } from './hexahedron.js';
@@ -124,6 +125,8 @@ function check(def) {
 // it is another call of this. Gives the space, its definition, and for the
 // checks its table and its parts (_V2).
 export function makeArcology(set) {
+  // (What every world's cells share: see pieces.js.)
+  const { NONE, beyond, h01 } = P;
   const def = check(frozen(define(ARCOLOGY, set)));
   const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf } = makeHalls(def.halls);
   // The building, its solids' planes moved to the city's lattice: from the
@@ -467,7 +470,6 @@ export function makeArcology(set) {
   const rectBare = (F, u0, u1, y0, y1) => F.bare.some(([a, b, c, d]) => u0 < b && u1 > a && y0 < d && y1 > c);
   const fdiv = (a, b) => Math.floor(a / b);
   const cdiv = (a, b) => Math.ceil(a / b);
-  const h01 = (h) => (h >>> 8) / 16777216;
   // The ridges are tiled too, by height only (relief-v5.md, v6): rows of the
   // city's (its rows of two cells, some halved) and, one level finer, rows
   // within each cell (split as the faces' rectangles are, at whole quanta and
@@ -2041,18 +2043,7 @@ float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) 
   gRay = false;
   float w = id.y == ${ROW_ID} ? well(L, f, id, seed) : 1e9;
   float p = plaza(L, f, id);
-  if (ray && p + gO <= 0.0) {
-    gRay = true;
-    plaza(L, f, id);
-    gRay = false;
-    if (gX > reach) { reach = gX; nrm = gN; }
-  }
-  if (ray && w + gO <= 0.0) {
-    gRay = true;
-    well(L, f, id, seed);
-    gRay = false;
-    if (gX > reach) { reach = gX; nrm = gN; }
-  }
+${[...twin.reask(false, 'p', 'plaza(L, f, id)'), ...twin.reask(false, 'w', 'well(L, f, id, seed)')].map((l) => '  ' + l).join('\n')}
   gRay = ray;
   // (Its pockets: see cell.)
   gCarve = 0;
@@ -2135,8 +2126,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // same form (the two agree as the parity checks show, not by
   // construction: see .claude/design/t10-review.md).
   let dLs, dFs;
-  const NONE = 1e9;
-  const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 
   const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
 

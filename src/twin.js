@@ -302,3 +302,10 @@ export function check(lang, e, names, where) {
   if (i < tokens.length) bad(`${tokens.slice(i).join(' ')} left over`);
   return out;
 }
+
+// For a ray, a piece the point is in asked again (d: its distance as first
+// asked; ask: asking it), and the furthest way out kept: in JavaScript by
+// pieces.through; in GLSL as the cell functions have it, the ray's flag
+// clear but while asked, and the way out in reach and nrm.
+export const reask = (js, d, ask) =>
+  js ? [`through(ray, ${d}, () => ${ask});`] : [`if (ray && ${d} + gO <= 0.0) {`, '  gRay = true;', `  ${ask};`, '  gRay = false;', '  if (gX > reach) { reach = gX; nrm = gN; }', '}'];
