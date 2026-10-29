@@ -19,10 +19,11 @@ export const DOWN = 3;
 // held at such a surface, the room can end up further up than FAR: then it
 // is the room we know we are in (see room) that is still asked.
 const FAR = 60;
-// How far up to look for a room, when we are somewhere with none in sight.
-// (Much further, and how big a level is in level-F cells is too small a
-// number for a double.)
-const SEARCH = 200;
+// The furthest up from F that a level is asked anything, the room we are in
+// included: further, and how big a level is in level-F cells is more than a
+// number holds (R^223 is about the most). Somewhere with no air in sight the
+// room is looked for up to here.
+const DEEPEST = 200;
 // How many levels coarser than the room we are in to look for a way out.
 const OUT = 4;
 
@@ -40,6 +41,11 @@ const SKY_LOOK = 2;
 const SKY_SEE = 150; // how far we see out in the open, in heights above the ground
 
 const TRAIL_MAX = 200000;
+
+// x moved the fraction w of the way toward y, on a log scale. (In logs, so
+// that deep down two numbers far apart do not overflow their ratio; and from
+// nothing, or less than a number can say, there is no easing: straight to y.)
+const toward = (x, y, w) => (x > 0 ? Math.exp(Math.log(x) + (Math.log(y) - Math.log(x)) * w) : y);
 
 export class Flight {
   // controls: which way we face (yaw, pitch), and how much faster than usual
@@ -116,15 +122,22 @@ export class Flight {
   // Our height and the plane's are compared digit by digit from the coarsest
   // level at which we have ever been anywhere but the default, so that close
   // to the plane what is left is a small whole number plus our offset in the
-  // cell. under: count from this far under the plane instead (level-F cells).
+  // cell. under: count from this far under the plane instead (level-0 cells,
+  // added at level 0 so that it stays whole where it is).
   skyHeight(under = 0) {
     const { pos, space, R } = this;
     const plane = space.skyPlane ?? ((j) => (j < 0 ? space.ancestorDigit(j)[1] : j === 0 ? space.ground : 0));
     let acc = 0;
-    for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) acc = acc * R + pos.digit(j)[1] - plane(j);
+    for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) {
+      acc = acc * R + pos.digit(j)[1] - plane(j) + (j === 0 ? under : 0);
+      // (So far from the plane, finer digits cannot take us across it; and
+      // deep down the height in level-F cells would soon be more than a number
+      // holds: stop while it is still one.)
+      if (Math.abs(acc) > 1e30) return acc > 0 ? 1e30 : -1e30;
+    }
     // (Working coarser than level 0, the plane is part of the way up our cell.)
-    for (let j = pos.F + 1; j <= 0; j++) acc -= plane(j) * Math.pow(R, pos.F - j);
-    return Math.max(acc + pos.frac[1] + under, -1e30);
+    for (let j = pos.F + 1; j <= 0; j++) acc -= (plane(j) - (j === 0 ? under : 0)) * Math.pow(R, pos.F - j);
+    return Math.max(acc + pos.frac[1], -1e30);
   }
 
   // How far the way is open in direction dir, in level-F cells. Each stride
@@ -165,10 +178,10 @@ export class Flight {
   }
 
   // The levels around us, from the coarsest that matters: FAR above those we
-  // draw, or the room we are in if that is further.
+  // draw, or the room we are in if that is further (but not past DEEPEST).
   around() {
     const { pos } = this;
-    return pos.levels(Math.min(pos.F - UP - FAR, this.room ?? Infinity), pos.F + DOWN);
+    return pos.levels(Math.max(Math.min(pos.F - UP - FAR, this.room ?? Infinity), pos.F - DEEPEST), pos.F + DOWN);
   }
 
   // Find our clearance, and move the working level to suit it.
@@ -180,7 +193,7 @@ export class Flight {
       this.sensed = this.here.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig }));
       // (Over the sky plane, nothing is nearer than what stands highest under
       // it: clearance goes by that, not by the plane.)
-      this.sky = this.skyHeight((this.space.skyClear ?? 0) * Math.pow(R, pos.F));
+      this.sky = this.skyHeight(this.space.skyClear ?? 0);
       // Somewhere with no air in sight at all (a place we were sent to):
       // look further up for the room we are in.
       if (!(this.sky > 0) && !this.sensed.some((s) => s.air < 0)) {
@@ -193,6 +206,9 @@ export class Flight {
       let most = 0;
       for (const s of this.sensed) if (-s.air / s.sig > most) (most = -s.air / s.sig), (this.room = s.level);
       this.clearance = Math.max(this.sky, ...this.sensed.map((s) => -s.air / s.sig));
+      // (In a room too far up to ask, there is more room than we can say:
+      // enough to work our way up toward it.)
+      if (!(this.clearance > 0) && this.room !== null && this.room < pos.F - DEEPEST) this.clearance = R * COARSEN_ABOVE;
       let k = 1;
       if (this.clearance > 0 && this.clearance < REFINE_BELOW / R) {
         pos.refine();
@@ -217,12 +233,12 @@ export class Flight {
     if (see > 0) this.fogTarget = see;
   }
 
-  // The finest level coarser than lo (and not more than SEARCH coarser) whose
+  // The finest level coarser than lo (and not past DEEPEST) whose
   // air we are in, if any, as a list. (Somewhere none nearer has air, that
   // is the room we are in.)
   search(lo) {
     // (levels() works out from F, so it is asked for everything up to there.)
-    const recs = this.pos.levels(lo - SEARCH, this.pos.F);
+    const recs = this.pos.levels(this.pos.F - DEEPEST, this.pos.F);
     for (let i = recs.length - 1; i >= 0; i--) if (recs[i].level < lo && this.airAt(recs[i]) < 0) return [recs[i]];
     return [];
   }
@@ -253,15 +269,20 @@ export class Flight {
       pos.digits.clear();
       pos.frac = this.space.start.slice();
     };
-    for (let tries = 0; tries < 10; tries++) {
+    // (Somewhere with room as it is, each try, working no coarser than the
+    // digits picked: walking on from somewhere without, as begin(true) does,
+    // or working at a scale they no longer tell apart, would bring many tries
+    // to the same place.)
+    const picked = [-1, 0];
+    for (let tries = 0; tries < 40; tries++) {
       reset();
-      for (const j of [-1, 0]) {
+      for (const j of picked) {
         const d = pos.digit(j);
         d[0] = Math.floor(rand() * R);
         d[2] = Math.floor(rand() * R);
       }
-      this.begin(true);
-      if (this.clearance >= 0.08) return this.faceOpen();
+      this.begin();
+      if (pos.F >= picked[0] && this.clearance >= 0.08) return this.faceOpen();
     }
     // (Failing that, where a first visit always began.)
     reset();
@@ -285,8 +306,8 @@ export class Flight {
   // see. (Until we have been somewhere with air in sight, there is no telling
   // how far we should see, and so nothing to ease toward.)
   settle(dt) {
-    this.scale *= Math.pow(Math.max(this.clearance, 1e-6) / this.scale, 1 - Math.exp(-dt / 0.3));
-    if (this.fogTarget > 0) this.fog = this.fog > 0 ? this.fog * Math.pow(this.fogTarget / this.fog, 1 - Math.exp(-dt / 1.0)) : this.fogTarget;
+    this.scale = toward(this.scale, Math.max(this.clearance, 1e-6), 1 - Math.exp(-dt / 0.3));
+    if (this.fogTarget > 0) this.fog = toward(this.fog, this.fogTarget, 1 - Math.exp(-dt / 1.0));
   }
   settled() {
     const { clearance, scale, fog, fogTarget } = this;
@@ -312,7 +333,7 @@ export class Flight {
     // (Slowing down is immediate; only speeding up is eased, over about a
     // second, and always from the speed we are actually going.)
     const open = (this.opened = this.clearance > 0 ? this.ahead(aim.map((x) => x / size)) : 0);
-    this.pace *= Math.pow(Math.max(open, 1e-6) / this.pace, 1 - Math.exp(-dt / 1.0));
+    this.pace = toward(this.pace, Math.max(open, 1e-6), 1 - Math.exp(-dt / 1.0));
     this.pace = Math.min(this.pace, Math.max(open, 0.05 * this.scale));
     const want = size * this.pace;
     const len = this.clearance > 0 ? Math.min(want, 0.5 * open) : want;

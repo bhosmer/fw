@@ -40,8 +40,10 @@ export class Position {
     return d;
   }
 
-  // Move by a displacement given in level-F cell units.
+  // Move by a displacement given in level-F cell units. (One that is no
+  // number would carry for ever: better to fail.)
   move(delta) {
+    if (!delta.every(Number.isFinite)) throw new Error(`no such move: ${delta}`);
     for (let a = 0; a < 3; a++) {
       let x = this.frac[a] + delta[a];
       const n = Math.floor(x);

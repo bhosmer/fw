@@ -109,15 +109,17 @@ test('held at a surface for ever, we still know where the air is', () => {
     f.sense();
     assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}`);
     deepest = Math.max(deepest, f.pos.F - f.room);
-  }, 3, 0.1, 8);
-  // (Past where it used to be lost: UP + FAR = 72 levels up.)
+  }, 10, 0.1, 8);
+  // (Past where it used to be lost: UP + FAR = 72 levels up. Which wander
+  // gets there depends on how the halls are laid out, and on every digit of
+  // the flight's arithmetic: seed 10 at SOLID 0.65.)
   assert.ok(deepest > 72, `the room was never more than ${deepest} levels up`);
 });
 
 test('sent somewhere deep, we find the room we are in', () => {
   const flight = new Flight(halls, controls());
   flight.begin(true);
-  wander(flight, 1261, null, 3, 0.1, 8); // (to where the room is 73 levels up)
+  wander(flight, 480, null, 10, 0.1, 8); // (to where the room is 81 levels up)
   const { F, frac } = flight.pos;
   const digits = new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()]));
   // (As a link would: nothing known but where.)
@@ -125,6 +127,21 @@ test('sent somewhere deep, we find the room we are in', () => {
   Object.assign(there.pos, { F, frac: frac.slice(), digits });
   there.begin();
   assert.ok(there.clearance > 0 && there.room < F - 72, `clearance ${there.clearance}, room ${there.room} at ${F}`);
+});
+
+// (Past about 223 levels down, a level-0 cell is more level-F cells than a
+// number holds, and the room we were in, at level 0, is too far up to ask.)
+test('however deep, where the sky is stays a number', () => {
+  const flight = new Flight(halls, controls());
+  flight.begin(true);
+  for (let i = 0; i < 300; i++) flight.pos.refine();
+  assert.ok(Number.isFinite(flight.skyHeight()) && Number.isFinite(flight.skyHeight(1)), `sky ${flight.skyHeight()}, ${flight.skyHeight(1)}`);
+  flight.sense();
+  assert.ok(Number.isFinite(flight.sky) && Number.isFinite(flight.clearance), `sky ${flight.sky}, clearance ${flight.clearance}`);
+  // (The room we were in, too far up to ask, is worked back up to.)
+  for (let i = 0; i < 60; i++) flight.step(1 / 60, [0, 0, -1]);
+  assert.ok(Number.isFinite(flight.clearance) && flight.clearance > 0 && Number.isFinite(flight.scale), `clearance ${flight.clearance}, scale ${flight.scale}`);
+  assert.ok(flight.pos.F < 100, `still working at level ${flight.pos.F}`);
 });
 
 test('a first visit begins somewhere different each time, with room ahead', () => {

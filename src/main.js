@@ -91,7 +91,8 @@ function viewNow() {
     scheme: SCHEMES[scheme],
     outer: flight.outerAir(all),
     sky: flight.skyHeight(),
-    sunReach: (space.sunReach ?? 0) * Math.pow(R, pos.F),
+    // (Deep down R^F is Infinity, and none times that no number at all.)
+    sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
     thread: controls.thread ? flight.thread(50 * maxT, N_THREAD) : null,
   };
   return { recs, view };
@@ -275,7 +276,18 @@ let snapping = false;
 let last = performance.now();
 let slow = 0, quick = 0, fps = 0, levelsDrawn = 0, unsaved = 0;
 const pacing = new Pacing(last);
+// (Should a frame fail, say so rather than stop without a word.)
 function frame(now) {
+  try {
+    tick(now);
+  } catch (err) {
+    help.textContent = err.message;
+    help.classList.add('error');
+    help.classList.remove('hidden');
+    throw err;
+  }
+}
+function tick(now) {
   if (!pacing.refresh(now, renderer.timed())) {
     requestAnimationFrame(frame);
     return;

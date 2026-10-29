@@ -84,7 +84,7 @@ export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
 export const M = 3; // half the wall thickness between two rooms
 const HLO = 12; // ceiling height of a low room; a tall room fills the cell (18)
-const SOLID = 0.5; // share of cells that are left solid, with no room in them
+const SOLID = 0.65; // share of cells that are left solid, with no room in them
 const BUILT_SALT = 0x3c6ef372;
 
 // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
@@ -513,7 +513,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   maxInterior: 0.375,
   longestWay: 1.4,
   close: 0.3,
-  openArea: 0.1,
+  openArea: 0.07,
 
   // Standing height in the middle of a room.
   start: [0.5, (M + 4.5) / R, 0.5],
