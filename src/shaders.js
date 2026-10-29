@@ -258,16 +258,36 @@ float levelAir(int i, vec3 v, float o, float s) {
 // Points a probe can be asked about at once (see probeFrag).
 export const PROBE_POINTS = 64;
 
-// One pixel per level and point: that level's air distance at the point (a
-// row each, camera-relative), to check the JavaScript twin against.
+// Two pixels per level and point (a row each, camera-relative), to check the
+// JavaScript twin against: that level's air distance at the point; or, if
+// uProbeDir is not nothing, what it says of a ray from there along it, as
+// the world is (not shrunk with distance): the distance and how far the ray
+// goes in its air (less than 0, none), and in the next pixel the surface
+// it meets there.
 export function probeFrag(nlev, space) {
   return (
     common(nlev, space) +
     /* glsl */ `
 uniform vec3 uProbeV[${PROBE_POINTS}];
+uniform vec3 uProbeDir;
 out vec4 outColor;
 void main() {
-  outColor = vec4(levelAir(int(gl_FragCoord.x), uProbeV[int(gl_FragCoord.y)], 0.0, 0.0), 0.0, 0.0, 1.0);
+  int i = int(gl_FragCoord.x) / 2;
+  vec3 v = uProbeV[int(gl_FragCoord.y)];
+  if (uProbeDir == vec3(0.0)) {
+    outColor = vec4(levelAir(i, v, 0.0, 0.0), 0.0, 0.0, 1.0);
+    return;
+  }
+  gRay = true;
+  gDir = uProbeDir;
+  gO = 0.0;
+  gA = 0.0;
+  gScale = 0.0;
+  gScaleRate = 0.0;
+  float reach;
+  vec3 nrm;
+  float a = levelRay(i, v, reach, nrm);
+  outColor = int(gl_FragCoord.x) % 2 == 0 ? vec4(a, reach, 0.0, 1.0) : vec4(nrm, 1.0);
 }`
   );
 }

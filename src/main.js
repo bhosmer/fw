@@ -498,6 +498,60 @@ window.fw = {
     }
     return { ...worst, compared };
   },
+  // The same for rays, where the JavaScript answers them (see hallsAir in
+  // spaces/halls.js): along random directions, the axes and diagonals, from
+  // the camera and points round it, how far each level says a ray goes in
+  // its air and the surface it meets. The worst disagreement in reach, as a
+  // multiple of what single precision can tell there (more along a ray
+  // that grazes the surface); how many disagree about whether the point is
+  // in air at all, or about the surface; and how many were compared.
+  // (Not on a surface, nor where the answer changes within that precision:
+  // there the two may rightly choose differently.)
+  checkRays(n = 150, round = 15) {
+    let seed = 7;
+    const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const AXES = [[1, 0, 0], [0, -1, 0], [0, 0, 1], [Math.SQRT1_2, Math.SQRT1_2, 0], [0, -Math.SQRT1_2, -Math.SQRT1_2]];
+    let worst = { ratio: 0 }, inAir = 0, facing = 0, compared = 0;
+    for (let i = 0; i < n; i++) {
+      if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
+      this.fly(0.05 + rnd() * 0.4, { f: 1 });
+      const recs = pos.levels(pos.F - UP, pos.F + DOWN);
+      const e = i % 3 === 0 ? AXES[(i / 3) % AXES.length] : [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
+      const dir = e.map((x) => x / Math.hypot(...e));
+      const points = [[0, 0, 0]];
+      for (let k = 0; k < round; k++) {
+        const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], r = Math.pow(10, -3 + 4 * rnd()) / Math.hypot(...d);
+        points.push(d.map((x) => x * r));
+      }
+      renderer.probe(recs, points, dir).forEach((gpus, k) => recs.forEach((r, j) => {
+        const far = Math.max(...points[k].map(Math.abs)) * r.sig;
+        if (far > CHECK_REACH) return;
+        const tol = Math.max(1e-5, 1e-6 * (far + R));
+        const ray = { dir };
+        const a = flight.airAt(r, points[k], ray), gpu = gpus[j];
+        if (!ray.known || Math.abs(a) < tol) return;
+        // (Where nudging the point by what single precision cannot tell
+        // changes the answer, either is right.)
+        const nudge = (s) => {
+          const q = { dir };
+          flight.airAt(r, points[k].map((x) => x + (s * tol) / r.sig), q);
+          return q.reach;
+        };
+        const slant = Math.max(Math.abs(dir[0] * ray.nx + dir[1] * ray.ny + dir[2] * ray.nz), 1e-3);
+        if ([nudge(1), nudge(-1)].some((x) => Math.abs(x - ray.reach) * slant > tol)) return;
+        compared++;
+        if (ray.reach >= 0 !== gpu.reach >= 0) {
+          inAir++;
+          return;
+        }
+        if (ray.reach < 0) return;
+        const ratio = (Math.abs(ray.reach - gpu.reach) * slant) / tol;
+        if (ratio > worst.ratio) worst = { ratio, level: r.level, F: pos.F, v: points[k], dir, cpu: ray.reach, gpu: gpu.reach };
+        if (ratio < 1 && Math.hypot(ray.nx - gpu.n[0], ray.ny - gpu.n[1], ray.nz - gpu.n[2]) > 1e-3) facing++;
+      }));
+    }
+    return { ...worst, inAir, facing, compared };
+  },
   // (Testing upscaling: the fraction of pixels drawn, as the frame time would set it.)
   set upscale(v) { upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
   get upscale() { return upscale; },

@@ -79,7 +79,7 @@ export class Renderer {
     this.makeRef = () => link(gl, viewFrag(nView, space, false), viewUniforms);
     // And the probe, which checks the JavaScript twin against the shader
     // (see probe): made when first asked for too.
-    this.makeProbe = () => link(gl, probeFrag(nProbe, space), [...LEVEL_UNIFORMS, 'uProbeV']);
+    this.makeProbe = () => link(gl, probeFrag(nProbe, space), [...LEVEL_UNIFORMS, 'uProbeV', 'uProbeDir']);
 
     // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
     // pictures, drawn into in turn, each with its weights; and what the frame
@@ -104,12 +104,12 @@ export class Renderer {
 
     this.probeTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.probeTex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, nProbe, PROBE_POINTS);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 2 * nProbe, PROBE_POINTS);
     this.probeFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.probeTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.probeBuf = new Float32Array(nProbe * PROBE_POINTS * 4);
+    this.probeBuf = new Float32Array(2 * nProbe * PROBE_POINTS * 4);
 
     // What a space keeps as a table rather than works out (see volume in
     // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned integers, on a
@@ -212,20 +212,26 @@ export class Renderer {
 
   // Each level's air distance, in that level's lattice units, at each of the
   // points (camera-relative, level-F cells; at most PROBE_POINTS): a list
-  // per point of one per level.
-  probe(recs, points = [[0, 0, 0]]) {
+  // per point of one per level. With dir, for a ray from each along it: of
+  // each, { a: the distance, reach: how far it goes in that level's air
+  // (lattice units; less than 0, none), n: the surface it meets there }.
+  probe(recs, points = [[0, 0, 0]], dir = null) {
     const gl = this.gl;
     const p = (this.probeProg ??= this.makeProbe());
-    const n = this.nProbe;
+    const n = this.nProbe, b = this.probeBuf;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
-    gl.viewport(0, 0, n, points.length);
+    gl.viewport(0, 0, 2 * n, points.length);
     gl.useProgram(p.prog);
     this.setLevels(p, recs, n);
     gl.uniform3fv(p.u.uProbeV, new Float32Array(points.flat()));
+    gl.uniform3fv(p.u.uProbeDir, dir ?? [0, 0, 0]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.readPixels(0, 0, n, points.length, gl.RGBA, gl.FLOAT, this.probeBuf);
+    gl.readPixels(0, 0, 2 * n, points.length, gl.RGBA, gl.FLOAT, b);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return points.map((_, k) => recs.map((_, i) => this.probeBuf[(k * n + i) * 4]));
+    const px = (k, i) => (k * 2 * n + i) * 4;
+    return points.map((_, k) =>
+      recs.map((_, i) => (dir ? { a: b[px(k, 2 * i)], reach: b[px(k, 2 * i) + 1], n: [...b.subarray(px(k, 2 * i + 1), px(k, 2 * i + 1) + 3)] } : b[px(k, 2 * i)])),
+    );
   }
 
   // A picture: colour, and in alpha the log of the distance to what each pixel saw.

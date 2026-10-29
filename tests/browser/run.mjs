@@ -113,6 +113,17 @@ check('the shader and the JavaScript agree about each world', async () => {
   }
 });
 
+// And about rays, where the JavaScript answers them: how far a ray goes in a
+// level's air, and the surface it meets (fw.checkRays).
+check('the shader and the JavaScript agree about rays', async () => {
+  for (const world of WORLDS) {
+    await load('start', 'alhambra', false, world);
+    const r = await page.eval('fw.checkRays(150)');
+    assert(r.ratio < 1 && r.inAir === 0 && r.facing === 0, `${world}: they differ: ${JSON.stringify(r)}`);
+    assert(r.compared > 10000, `${world}: only ${r.compared} rays compared`);
+  }
+});
+
 // In the arcology's skin, where the buildings' relief is (fw.check flies
 // from the start and seldom gets there): at points in and around the skin
 // cells, the camera put there, every level asked about.
