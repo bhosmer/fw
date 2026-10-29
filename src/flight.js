@@ -41,6 +41,7 @@ const SKY_LOOK = 2;
 const SKY_SEE = 150; // how far we see out in the open, in heights above the ground
 
 const TRAIL_MAX = 200000;
+const RAY_STEPS = 4; // the most of a ray's steps in one look ahead (see ahead)
 
 // x moved the fraction w of the way toward y, on a log scale. (In logs, so
 // that deep down two numbers far apart do not overflow their ratio; and from
@@ -159,10 +160,17 @@ export class Flight {
     const ray = { dir };
     let t = 0, open = 0, width = 0;
     const far = () => Math.max(LOOK * width, SKY_LOOK * this.sky);
-    for (let i = 0; i < 10 && t < far() + 1e-30; i++) {
+    // (At most 10 strides, and as many again as RAY_STEPS of a ray's: a slant
+    // approach can take all ten strides to come up to a seam, and then two of
+    // a ray's, onto it and on past it.)
+    for (let i = 0, rays = 0; i < 10 + rays && t < far() + 1e-30; i++) {
       const v = at(t);
       const built = clear(v), c = Math.max(this.sky + v[1], built);
-      if (c > 0.02 * t) {
+      // (The levels are asked about a ray where the strides would stop, and
+      // where they would run out: coming up to a face at a slant, they
+      // shrink toward it, but a ray goes straight to it.)
+      const stop = !(c > 0.02 * t);
+      if (!stop && i < 9 + rays) {
         width = Math.max(width, built);
         open = t += c;
         continue;
@@ -171,22 +179,33 @@ export class Flight {
       // has a clear run to the ground. A level's ray, where it says how
       // far it goes: no less than its distance.)
       const high = this.sky + v[1];
-      let e = high > 0 ? (dir[1] >= 0 ? Infinity : high / -dir[1]) : -1;
-      for (const r of this.here) {
-        const a = this.airAt(r, v, ray);
-        if (ray.known && ray.reach >= 0) e = Math.max(e, Math.max(ray.reach, -a) / r.sig);
+      let e = high > 0 ? (dir[1] >= 0 ? Infinity : high / -dir[1]) : -1, unit = 0;
+      if (rays < RAY_STEPS) {
+        for (const r of this.here) {
+          const a = this.airAt(r, v, ray), x = Math.max(ray.reach, -a) / r.sig;
+          if (ray.known && ray.reach >= 0 && x > e) (e = x), (unit = 1 / r.sig);
+        }
       }
-      if (!(e > c)) break;
-      if (e === Infinity) return far();
-      // (How wide the way is within the stretch so passed: the clearance at
-      // its middle, no more than half of it.)
-      width = Math.max(width, built, Math.min(clear(at(t + e / 2)), e / 2));
-      open = t += e;
-      // (Just past where that piece of air ends, to be in the next: a point
-      // on the face two pieces share is in both, so this is only for the
-      // rounding; nothing that stands there is anywhere near this thin. It
-      // is not counted in what is open unless a stride goes on from it.)
-      t += 1e-12 * Math.max(t, this.scale);
+      if (e > c && rays < RAY_STEPS) {
+        if (e === Infinity) return far();
+        rays++;
+        // (How wide the way is within the stretch so passed: the clearance
+        // at its middle, no more than half of it.)
+        width = Math.max(width, built, Math.min(clear(at(t + e / 2)), e / 2));
+        open = t += e;
+        // (Just past where that piece of air ends, to be in the next: a point
+        // on the face two pieces share is in both, but each level says which
+        // piece it is in by its own numbers, so the step must show in them
+        // (a hundred times their rounding) and in ours; and nothing that
+        // stands there is anywhere near as thin (a billionth of the way
+        // looked, at most). It is not counted in what is open unless a
+        // stride goes on from it.)
+        t += Math.min(Math.max(1e-12 * Math.max(t, this.scale), 1e-14 * unit), 1e-9 * Math.max(t, this.scale));
+        continue;
+      }
+      if (stop) break;
+      width = Math.max(width, built);
+      open = t += c;
     }
     return Math.min(open, far());
   }

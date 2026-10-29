@@ -79,7 +79,7 @@
 //     description of it must agree
 
 import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
-import { S, at, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } from '../pieces.js';
+import { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } from '../pieces.js';
 
 export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
@@ -441,17 +441,6 @@ function roomAir(L, f, H, h, under, over) {
   return Math.max(box, -furniture(L, f, h, under, over));
 }
 
-// Of a piece the point is in (its distance d, as first asked), asked again
-// for a ray (ask: the same piece with the ray set): the ray stays in air to
-// the end of whichever it is in for longest.
-function further(ray, d, ask) {
-  if (!ray || d > 0) return;
-  S.ray = true;
-  ask();
-  S.ray = false;
-  if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);
-}
-
 const ancestors = new Map(); // level -> where its cell sits in its parent
 // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
 export const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= HALLS.solid;
@@ -504,10 +493,7 @@ export function hallsOpenings(id, seed, rule) {
 // the cell answers that (here, always).
 export function hallsAir(L, f, id, seed, dg, rule, ray) {
   at(L, f, dg);
-  if (ray) {
-    (ray.known = true), (ray.reach = -1), (ray.nx = ray.ny = ray.nz = 0);
-    (S.dx = ray.dir[0]), (S.dy = ray.dir[1]), (S.dz = ray.dir[2]);
-  }
+  if (ray) aim(ray);
   const here = built(id, seed, rule);
   const H = here && h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
   let room = NONE;
@@ -516,7 +502,7 @@ export function hallsAir(L, f, id, seed, dg, rule, ray) {
   const hf = hashCell(id, seed ^ salt.furniture);
   if (here) {
     room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
-    further(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
+    through(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
   }
   // Openings reach only one unit into the room; deeper in, they change nothing.
   if (room < -1) return room;
@@ -537,9 +523,9 @@ export function hallsAir(L, f, id, seed, dg, rule, ray) {
   const wz = () => wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz, 2, 0);
   const wy = () => slabOpening(L, f, hy, H, hwy);
   const ax = wx(), az = wz(), ay = wy();
-  further(ray, ax, wx);
-  further(ray, az, wz);
-  further(ray, ay, wy);
+  through(ray, ax, wx);
+  through(ray, az, wz);
+  through(ray, ay, wy);
 
   // From inside the slab over a low room, the nearest air may be the room
   // above. This cell says nothing else about its neighbours' rooms.

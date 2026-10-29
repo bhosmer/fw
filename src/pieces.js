@@ -101,6 +101,25 @@ export function solidSpan(x, f, x0, x1, a) {
 export const diag = (p, sa, sb, ca, cb, k) =>
   sa === sb ? sa * (S.Lp[p] - ca - cb) - k + sa * S.Fp[p] : sa * (S.Lm[p] - ca + cb) - k + sa * S.Fm[p];
 
+// For a ray (an object { dir } to be told how far it goes: see hallsAir in
+// spaces/halls.js), of a piece the point is in (d, its distance, as first
+// asked; ask: the same piece again): asked again with the ray, it stays in
+// air to the end of whichever piece it is in for longest.
+export function through(ray, d, ask) {
+  if (!ray || d > 0) return;
+  S.ray = true;
+  ask();
+  S.ray = false;
+  if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);
+}
+
+// Set the ray's direction, and say it is known (yet in no air).
+export function aim(ray) {
+  S.ray = false;
+  (S.dx = ray.dir[0]), (S.dy = ray.dir[1]), (S.dz = ray.dir[2]);
+  (ray.known = true), (ray.reach = -1), (ray.nx = ray.ny = ray.nz = 0);
+}
+
 // What every world's cells share: a hash's top bits as a number in [0, 1);
 // is x + f on the upper side of c (L alone is rounded, and can put a point
 // half a unit on the wrong side); and the distance for nothing at all.

@@ -2295,32 +2295,53 @@ function terrace(F, S, y0, y1, t) {
 // nothing between them but that plane: a sheet.)
 const inBand = (w, y0, y1) => (w.up ? y1 >= w.yb : y0 <= w.yb);
 // The planes of a cut's back: behind the face (dn, in n . X), or a terrace's
-// wall and its floor or ceiling.
-function cutBack(F, p, Y, cut) {
-  if (cut.dn !== undefined) return plane((F.K * p.S - cut.dn - p.ni - p.nf) / F.nl);
+// wall and its floor or ceiling. (As pieces: see pieces.js; with the
+// shader's normals.)
+// (Each plane as the shader forms it: the whole numbers first, then the
+// rest, so that where two cuts meet, their planes meet exactly.)
+function cutBack(F, p, cut) {
+  if (cut.dn !== undefined) return P.airPlane((F.K * p.S - cut.dn - p.ni - p.nf) / F.nl, -F.n[0] / F.nl, -F.n[1] / F.nl, -F.n[2] / F.nl);
   const nh = Math.hypot(F.n[0], F.n[2]), ny = F.n[1];
-  plane(cut.up ? cut.yb - Y : Y - cut.yb);
-  plane((F.K * p.S - ny * cut.yin - cut.back * nh - (p.ni + p.nf - ny * Y)) / nh);
+  P.airPlane(cut.up ? cut.yb - p.Yi - p.Yf : p.Yi + p.Yf - cut.yb, 0, cut.up ? -1 : 1, 0);
+  P.airPlane((F.K * p.S - p.ni + ny * (p.Yi - cut.yin + p.Yf) - cut.back * nh - p.nf) / nh, -F.n[0] / nh, 0, -F.n[2] / nh);
 }
+// A unit past face F (p from faceAt): where a cut's air ends outward.
+const pastFace = (F, p) => P.airPlane((p.ni - F.K * p.S - Math.ceil(F.nl) + p.nf) / F.nl, F.n[0] / F.nl, F.n[1] / F.nl, F.n[2] / F.nl);
+// Rows y0 to y1 (true heights).
+function rows(p, y0, y1) {
+  P.airPlane(y0 - p.Yi - p.Yf, 0, -1, 0);
+  P.airPlane(p.Yi - y1 + p.Yf, 0, 1, 0);
+}
+// The true heights lo to hi, and one level finer, the cell or a cell past
+// each side in cellOpen (see runOn).
+function within(lv, L, f, lo, hi) {
+  P.airSpan(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi, 1);
+  if (lv === 1) P.airSpan(L[0], f[0], openLo(0), openHi(0), 0), P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
+}
+// One of a cut's pieces (box: its planes, as distance) united over the pieces
+// it is (see eachPiece), and for a ray, how far it goes in them.
+const cutAir = (lv, box, ray) => eachPiece(lv, () => {
+  const d = box();
+  P.through(ray, d, box);
+  return d;
+});
 
 // The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
 // cut as cut says (see cutBack), to a unit past the face, within true
 // heights lo to hi (level units) and, one level finer, within the cell or
 // a cell past each side in cellOpen (see runOn).
-function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, cut, lo, hi) {
-  const Y = p.Yi + p.Yf, ys = F.gm * F.mlen;
-  return eachPiece(lv, () => {
-    piece();
-    plane((u0 - p.u - p.fu) / F.len);
-    plane((p.u - u1 + p.fu) / F.len);
-    plane((y0 * F.p - Y) / ys);
-    plane((Y - y1 * F.p) / ys);
-    cutBack(F, p, Y, cut);
-    plane((p.ni + p.nf - F.K * p.S - Math.ceil(F.nl)) / F.nl);
-    span(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi);
-    if (lv === 1) span(L[0], f[0], openLo(0), openHi(0)), span(L[2], f[2], openLo(2), openHi(2));
-    return gD;
-  });
+function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, cut, lo, hi, ray) {
+  const [tx, ty, tz] = F.tv.map((x) => x / F.len);
+  return cutAir(lv, () => {
+    P.airPiece();
+    P.airPlane(-(p.u - u0 + p.fu) / F.len, -tx, -ty, -tz);
+    P.airPlane((p.u - u1 + p.fu) / F.len, tx, ty, tz);
+    rows(p, y0, y1);
+    cutBack(F, p, cut);
+    pastFace(F, p);
+    within(lv, L, f, lo, hi);
+    return P.S.d;
+  }, ray);
 }
 // The back of a cut of level lv t twelfths deep over rows y0 to y1, on a
 // city cut fl deep whose rows are cy0 to cy1 (level units): a terrace at the
@@ -2340,9 +2361,11 @@ function cutOf(F, lv, S, y0, y1, t, fl, cy0, cy1) {
 // The notch at F's e-th ridge where the point is (p from faceAt at level
 // lv; lo, hi its true heights), united with d; and where the point is not in
 // it, how far off its row's ends and its edge are at least (see ridgeRow).
-function notchAir(F, e, lv, p, L, f, base, lo, hi, d) {
+function notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray) {
   const E = F.edges[e], G = E.G, S = p.S, Y = p.Yi + p.Yf;
-  const edgeAt = (t) => (zone(E, p.u + p.fu, Y, S) - E.Wt[lv][t] * Math.abs(E.dl)) / (Math.abs(E.dl) * E.gl);
+  // (As zone, in the shader's order: the whole numbers first.)
+  const sd = E.sg * Math.sign(E.dl), Z = sd * (p.u * E.dl - E.al * p.Yi - S * E.be), z = sd * (p.fu * E.dl - E.al * p.Yf);
+  const edgeAt = (t) => (Z - E.Wt[lv][t] * Math.abs(E.dl) + z) / (Math.abs(E.dl) * E.gl);
   // (Past the widest a notch can be, only how far past it the point is; and
   // within it no more than how far back from it, so that the distance runs
   // on unbroken across it.)
@@ -2361,25 +2384,23 @@ function notchAir(F, e, lv, p, L, f, base, lo, hi, d) {
   cap = Math.min(cap, -edge);
   const pG = faceAt(G, lv, base), cut = cutOf(F, lv, S, w.y0, w.y1, w.t, w.tc === w.t ? 0 : w.tc, w.cy0, w.cy1);
   // (From past the ridge (a unit past G's face) to its edge, within the row.)
-  d = Math.min(d, eachPiece(lv, () => {
-    piece();
-    plane(edge);
-    plane(w.y0 - Y);
-    plane(Y - w.y1);
-    cutBack(F, p, Y, cut);
-    plane((p.ni + p.nf - F.K * S - Math.ceil(F.nl)) / F.nl);
-    plane((pG.ni + pG.nf - G.K * S - Math.ceil(G.nl)) / G.nl);
-    span(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi);
-    if (lv === 1) span(L[0], f[0], openLo(0), openHi(0)), span(L[2], f[2], openLo(2), openHi(2));
-    return gD;
-  }));
+  d = Math.min(d, cutAir(lv, () => {
+    P.airPiece();
+    P.airPlane(edge, ...E.gn);
+    rows(p, w.y0, w.y1);
+    cutBack(F, p, cut);
+    pastFace(F, p);
+    pastFace(G, pG);
+    within(lv, L, f, lo, hi);
+    return P.S.d;
+  }, ray));
   return Math.min(d, Math.max(cap, 0));
 }
 
 // Face k's cuts where the point is, at level lv, united with d: its
 // rectangle's pocket and its ridges' notches; and where it is in none, how
 // far off their edges are at least.
-function facePocket(lv, k, L, f, base, d) {
+function facePocket(lv, k, L, f, base, d, ray) {
   const F = FACES[k], p = faceAt(F, lv, base), S = p.S;
   // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
   const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
@@ -2397,15 +2418,15 @@ function facePocket(lv, k, L, f, base, d) {
   const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1], Y = p.Yi + p.Yf;
   const cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
   // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
-  if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, r.u0, r.u1, r.y0, r.y1, cutOf(F, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), lo, hi));
-  for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, lo, hi, d);
+  if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, r.u0, r.u1, r.y0, r.y1, cutOf(F, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), lo, hi, ray));
+  for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray);
   return Math.min(d, Math.max(cap, 0));
 }
 
-function pockets(L, f, faces, d) {
+function pockets(L, f, faces, d, ray) {
   const base = cellB.map((x) => x * R);
   FACES.forEach((F, k) => {
-    if (faces & (1 << k)) d = facePocket(1, k, L, f, base, d);
+    if (faces & (1 << k)) d = facePocket(1, k, L, f, base, d, ray);
   });
   return d;
 }
@@ -2530,7 +2551,11 @@ function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
   cellOpen = (m >>> OPEN_AT) & 63;
   cellCross = !!((clip >>> CROSS_AT) & 1);
   const t = kind === PLAIN && (m >>> TOWN_AT) & 1 ? townAir(L, f, m) : NONE;
-  return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE) : NONE, Math.max(e, 0));
+  // (A ray only where the cell's air is all pockets so far: skin, with no
+  // openings.)
+  if (ray && kind === SKIN && !wins) P.aim(ray);
+  else ray = null;
+  return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
 }
 
 // See townAir in the shader.
