@@ -85,15 +85,19 @@ export const GROUND = 1; // the ground, over the lower's apex
 // Basil chose among the candidates (a variant of the building changes some
 // of them: see define in util.js).
 export const HEXAHEDRON = {
-  // Heights, in cells over the lower's apex.
-  heights: { apexLo: 0, roofLo: 16.25, roofHi: 17, plateLo: 18.5, plateHi: 19.25, apexHi: 34.25 },
-  // Plan: the upper's corners (the lower's turned 60 degrees: the same,
-  // mirrored). (26/15 is within 0.04 degrees of root 3: the triangles are
-  // equilateral to that.)
-  up: [[-15, -26 / 3], [15, -26 / 3], [0, 52 / 3]],
-  // The star's inner hexagon, where the two triangles' edges cross: the
-  // pillars; and half a pillar's side.
-  hex: [[10, 0], [5, 26 / 3], [-5, 26 / 3], [-10, 0], [-5, -26 / 3], [5, -26 / 3]],
+  // The building's shape, from which its heights and plan follow (see
+  // shape): the radius of the star's inner hexagon, where the pillars stand
+  // (cells, in steps of 5/4: so that every corner is in whole 24ths); each
+  // mass's slope, [k, m]: its faces rise 30k for every m they go in,
+  // square to their base edges (small whole numbers keep every plane's
+  // numbers small, as the shader's whole-number tests need: the upper's
+  // 90/52, about 60 degrees; the lower's 30/16); and the bands' thicknesses,
+  // up from the lower's base: the roof band, the open storey, the plate
+  // (cells, in 24ths).
+  ring: 10,
+  slopes: { upper: [3, 52], lower: [1, 16] },
+  bands: { roof: 0.75, storey: 1.5, plate: 0.75 },
+  // Half a pillar's side.
   pillar: 1.75 / 2,
   // How the pillars meet the plate and the roof band (fringe.md; Basil chose
   // it from several, 2026-10-26): each pillar rises to the plate's top, its
@@ -139,22 +143,85 @@ export const HEXAHEDRON = {
   ],
 };
 
-function prism(corners, y0, y1) {
-  const mid = tw([0, (y0 + y1) / 2, 0]);
-  const planes = corners.map(([x, z], i) => {
-    const [x2, z2] = corners[(i + 1) % 3];
-    return through(tw([x, y0, z]), tw([x2, y0, z2]), tw([x, y1, z]), mid);
-  });
-  return [...planes, offset([0, -1, 0], [0, y0, 0], 0), offset([0, 1, 0], [0, y1, 0], 0)];
+// A fraction kept as [numerator, denominator], least, the denominator over
+// 0 (the heights and the plan come exactly from thirds, quarters and the
+// slopes' numbers).
+const frac = (n, d = 1) => {
+  const g = gcd(n, d) * Math.sign(d);
+  return [n / g, d / g];
+};
+const fadd = (a, b) => frac(a[0] * b[1] + b[0] * a[1], a[1] * b[1]);
+const fmul = (a, b) => frac(a[0] * b[0], a[1] * b[1]);
+const fval = (a) => a[0] / a[1];
+
+// The plan's directions: each triangle's sides face out along these (whole
+// numbers of nearly the same length, 30 and 30.017: 26/15 is within 0.04
+// degrees of root 3, so the triangles are equilateral to that), in the
+// order of its corners' sides; the lower's, the upper's turned 60 degrees.
+const OUT_UP = [[0, -30], [26, 15], [-26, 15]], OUT_DOWN = OUT_UP.map(([x, z]) => [x, -z]);
+
+// The building's heights and plan, from its definition (see HEXAHEDRON):
+// heights in cells over the lower's apex (its own, apexLo, 0), each as a
+// fraction (f) and a number; the triangles' inradius d; the upper's and the
+// lower's corners; and the pillars, where the triangles' sides cross.
+export function shape(def = HEXAHEDRON) {
+  const bad = (what) => {
+    throw new Error(`hexahedron: ${what}`);
+  };
+  const whole = (x) => Number.isInteger(x);
+  if (!(whole((def.ring * 4) / 5) && def.ring > 0)) bad(`ring ${def.ring}: a multiple of 5/4 over 0`);
+  for (const [mass, km] of Object.entries(def.slopes)) if (!(km.length === 2 && km.every((x) => whole(x) && x > 0))) bad(`slopes.${mass}: [k, m], whole numbers over 0`);
+  for (const [band, t] of Object.entries(def.bands)) if (!(whole(t * T) && t > 0)) bad(`bands.${band}: ${t}, a whole number of 24ths over 0`);
+  // (ring = 5b/4, so d = 13 ring / 15 = 13b/12, and the corners and pillars
+  // are whole 24ths.)
+  const b = (def.ring * 4) / 5, d = frac(13 * b, 12);
+  const rise = ([k, m]) => fmul(d, frac(30 * k, m));
+  const f = { apexLo: frac(0) };
+  f.roofLo = rise(def.slopes.lower);
+  f.roofHi = fadd(f.roofLo, frac(def.bands.roof * T, T));
+  f.plateLo = fadd(f.roofHi, frac(def.bands.storey * T, T));
+  f.plateHi = fadd(f.plateLo, frac(def.bands.plate * T, T));
+  f.apexHi = fadd(f.plateHi, rise(def.slopes.upper));
+  const heights = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, fval(v)]));
+  // What the arcology needs of the heights (see arcology.js), each refused
+  // naming what would do: the lower's base in whole quarters (the relief's
+  // table has heights so; the bands are whole 24ths, so the rest follow);
+  // the roof band's top a whole cell (the town stands on it); the plate's
+  // top in whole quarters (the upper's relief starts there), but not a whole
+  // cell (the pillars rise to it, and no face may lie on a cell's side);
+  // and the lower out of the ground.
+  const near = (pass) => {
+    const km = [];
+    for (let k = 1; k <= 3; k++) for (let m = 4; m <= 120; m++) if (gcd(k, m) === 1 && pass([k, m])) km.push([k, m]);
+    const [k0, m0] = def.slopes.lower;
+    return km.sort((p, q) => Math.abs(p[0] / p[1] - k0 / m0) - Math.abs(q[0] / q[1] - k0 / m0)).slice(0, 3).map((x) => JSON.stringify(x)).join(', ');
+  };
+  if (!whole(heights.roofLo * 4)) bad(`the lower's slope ${JSON.stringify(def.slopes.lower)} puts its base at ${heights.roofLo}, not a whole quarter (slopes that would, at ring ${def.ring}: ${near((km) => whole(fval(rise(km)) * 4))})`);
+  if (!whole(heights.roofHi)) bad(`the roof band's top at ${heights.roofHi}, not a whole cell, as the town needs (bands.roof ${fval(frac(Math.ceil(heights.roofLo + 0.25) * T - heights.roofLo * T, T))} would)`);
+  if (!whole(heights.plateHi * 4) || whole(heights.plateHi)) bad(`the plate's top at ${heights.plateHi}: it must be a whole quarter, not a whole cell (the pillars rise to it): another bands.plate or bands.storey`);
+  if (!(heights.roofLo > GROUND)) bad(`the lower's base at ${heights.roofLo}, not over the ground (${GROUND})`);
+  const D = fval(d);
+  const hex = [[def.ring, 0], [def.ring / 2, D], [-def.ring / 2, D], [-def.ring, 0], [-def.ring / 2, -D], [def.ring / 2, -D]];
+  return { heights, f, d, hex };
 }
-function pyramid(corners, yb, apex) {
-  const tip = tw([0, apex, 0]), mid = tw([0, (yb + apex) / 2, 0]);
-  const faces = corners.map(([x, z], i) => {
-    const [x2, z2] = corners[(i + 1) % 3];
-    return through(tw([x, yb, z]), tw([x2, yb, z2]), tip, mid);
-  });
-  const base = apex > yb ? offset([0, -1, 0], [0, yb, 0], 0) : offset([0, 1, 0], [0, yb, 0], 0);
-  return { faces, base };
+// The plane n . X = K (X in cells) with rational K, as whole numbers, least.
+function plane(n, K) {
+  const N = n.map((x) => x * K[1]), k = K[0], g = [...N, k].reduce(gcd);
+  return { n: N.map((x) => x / g), K: k / g };
+}
+// A triangle's faces, out along each of its directions h: through its
+// sides, the inradius d from the axis (h . (x, z) = 30 d), at height yb (a
+// fraction), rising v for every k h they go out (n = (k h, v): upright,
+// for v = 0).
+const faces = (OUT, d, k, v, yb = frac(0)) => OUT.map(([x, z]) => plane([k * x, v, k * z], fadd(fmul(frac(30 * k), d), fmul(frac(v), yb))));
+function prism(OUT, d, y0, y1) {
+  return [...faces(OUT, d, 1, 0), offset([0, -1, 0], [0, y0, 0], 0), offset([0, 1, 0], [0, y1, 0], 0)];
+}
+// A mass: its faces from its base edges at height yb, rising (up) or falling
+// at its slope [k, m]; and its base.
+function pyramid(OUT, d, [k, m], yb, up) {
+  const base = up ? offset([0, -1, 0], [0, fval(yb), 0], 0) : offset([0, 1, 0], [0, fval(yb), 0], 0);
+  return { faces: faces(OUT, d, k, up ? m : -m, yb), base };
 }
 
 // The solids: each a list of planes, inside where n . X < K for all of them
@@ -170,22 +237,23 @@ function pyramid(corners, yb, apex) {
 // changes into it.)
 export function hexahedron(def = HEXAHEDRON) {
   if (!Object.hasOwn(def.edges, def.edge)) throw new Error(`hexahedron: no edge ${def.edge} (there are ${Object.keys(def.edges).join(', ')})`);
-  const { apexLo: APEX_LO, roofLo: ROOF_LO, roofHi: ROOF_HI, plateLo: PLATE_LO, plateHi: PLATE_HI, apexHi: APEX_HI } = def.heights;
-  const UP = def.up, DOWN = UP.map(([x, z]) => [x, -z]), HEX = def.hex, PILLAR = def.pillar, BEARING = def.bearing, TAPER = def.taper;
+  const { heights, f, d, hex: HEX } = shape(def);
+  const { roofLo: ROOF_LO, roofHi: ROOF_HI, plateLo: PLATE_LO, plateHi: PLATE_HI, apexHi: APEX_HI } = heights;
+  const PILLAR = def.pillar, BEARING = def.bearing, TAPER = def.taper;
   const TOWN_H = def.townH, CORE = def.core;
   // (y: the heights a pillar wears a band's at; a band's own are its own.)
   const edge = (which) => def.edges[def.edge][which] ?? def.edges[def.edge];
   const CORE_FACE = def.coreFace.map((f) => (f.kind === 'rings' && f.from === undefined ? { ...f, from: (((ROOF_HI + PLATE_LO) / 2 - GROUND) * T - f.up / 2) % f.pitch } : f));
   const solids = [];
-  const upper = pyramid(UP, PLATE_HI, APEX_HI), lower = pyramid(DOWN, ROOF_LO, APEX_LO);
-  solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: APEX_HI });
+  const upper = pyramid(OUT_UP, d, def.slopes.upper, f.plateHi, true), lower = pyramid(OUT_DOWN, d, def.slopes.lower, f.roofLo, false);
+  solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: Math.ceil(APEX_HI * 4) / 4 });
   // (The lower fills the central column's openings where it meets them; the
   // pillars' run on through it.)
   solids.push({ name: 'lower', planes: [...lower.faces, lower.base], relief: [0, 1, 2], ylo: GROUND, yhi: ROOF_LO, yields: ['pillar'] });
-  solids.push({ name: 'plate', planes: prism(UP, PLATE_LO, PLATE_HI), rim: true, windows: edge('plate') });
+  solids.push({ name: 'plate', planes: prism(OUT_UP, d, PLATE_LO, PLATE_HI), rim: true, windows: edge('plate') });
   // (Its top raised TOWN_H over the open storey's floor, a slab the town is
   // carved from: see town in arcology.js.)
-  solids.push({ name: 'roof', planes: prism(DOWN, ROOF_LO, ROOF_HI + TOWN_H), rim: true, yields: ['pillar'], windows: edge('roof'), town: { floor: ROOF_HI } });
+  solids.push({ name: 'roof', planes: prism(OUT_DOWN, d, ROOF_LO, ROOF_HI + TOWN_H), rim: true, yields: ['pillar'], windows: edge('roof'), town: { floor: ROOF_HI } });
   // Pillars: squares facing the centre, from the ground (and a cell under
   // it) to the plate's top, a buttress at the plate (see BEARING). Their
   // radial direction, as whole numbers.
@@ -207,5 +275,8 @@ export function hexahedron(def = HEXAHEDRON) {
     solids.push({ name: 'pillar', planes: [...sides.map((n) => offset(n, c, PILLAR)), ...sides.map(slope), offset([0, -1, 0], [0, GROUND - 1, 0], 0), offset([0, 1, 0], [0, PLATE_HI, 0], 0)], windows: 'bays', keep: BEARING });
   }
   solids.push({ name: 'core', planes: box([-CORE, GROUND - 1, -CORE], [CORE, PLATE_HI, CORE]), windows: CORE_FACE });
+  // (The column within the star's inner hexagon, a cell's room between its
+  // corners and the pillars'.)
+  if (!(CORE * Math.SQRT2 + 1 < Math.min(...HEX.map(([x, z]) => Math.hypot(x, z))) - PILLAR * Math.SQRT2)) throw new Error(`hexahedron: the column (${CORE} each side) does not clear the pillars at ring ${def.ring}`);
   return solids;
 }

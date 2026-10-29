@@ -172,19 +172,43 @@ export function makeArcology(set) {
   const cellIn = (s, c) => corners(c).every((q) => planesOf(s).every((p) => side(p, q) <= 0));
   const cellOut = (s, c) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= 0));
 
-  // Each solid's bounds in the lattice (the cells it may touch).
+  // (The point where three planes n . X = b meet.)
+  const solve3 = (M, b) => {
+    const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+    const D = det(M);
+    return [0, 1, 2].map((c) => det(M.map((row, i) => row.map((x, j) => (j === c ? b[i] : x)))) / D);
+  };
+  // Each solid's bounds in the lattice (the cells it may touch: those no
+  // one of its planes leaves wholly outside: see cellOut). A cell c is such
+  // just when n . c < K + (the sum of n's parts below 0) for each plane,
+  // the solid with its planes moved out by a cell's reach: so they lie
+  // within that one's corners (where three of its planes meet, inside the
+  // rest), looked through once. (Its planes are in the lattice's measure:
+  // see PLANES.)
   for (const s of SOLIDS) {
+    const ps = planesOf(s).map((p) => ({ n: p.n, K: p.K + p.n.reduce((t, x) => t + Math.max(0, -x), 0) })), at = [];
+    for (let i = 0; i < ps.length; i++)
+      for (let j = i + 1; j < ps.length; j++)
+        for (let k = j + 1; k < ps.length; k++) {
+          const X = solve3([ps[i].n, ps[j].n, ps[k].n], [ps[i].K, ps[j].K, ps[k].K]);
+          if (X.every(Number.isFinite) && ps.every((p) => dot(p.n, X) <= p.K + 1e-6 * Math.hypot(...p.n))) at.push(X);
+        }
+    if (!at.length) throw new Error(`arcology: ${s.name} has no corners: its planes bound nothing`);
+    const wlo = [0, 1, 2].map((a) => Math.floor(Math.min(...at.map((X) => X[a]))));
+    const whi = [0, 1, 2].map((a) => Math.ceil(Math.max(...at.map((X) => X[a]))) + 1);
     s.lo = [Infinity, Infinity, Infinity];
     s.hi = [-Infinity, -Infinity, -Infinity];
-    for (let x = ORIGIN[0] - 40; x < ORIGIN[0] + 40; x++)
-      for (let y = ORIGIN[1] - 2; y < ORIGIN[1] + 40; y++)
-        for (let z = ORIGIN[2] - 40; z < ORIGIN[2] + 40; z++) {
+    for (let x = wlo[0]; x < whi[0]; x++)
+      for (let y = wlo[1]; y < whi[1]; y++)
+        for (let z = wlo[2]; z < whi[2]; z++) {
           const c = [x, y, z];
           if (cellOut(s, c)) continue;
           for (let a = 0; a < 3; a++) (s.lo[a] = Math.min(s.lo[a], c[a])), (s.hi[a] = Math.max(s.hi[a], c[a] + 1));
         }
   }
   const TOP = Math.max(...SOLIDS.map((s) => s.hi[1]));
+  // (Under the sky: the city's rows over the plaza hold it.)
+  if (!(TOP < ROWS * R)) throw new Error(`arcology: the building's top (${TOP - ORIGIN[1]} cells over its lower's apex) is over the sky (${ROWS * R - ORIGIN[1]})`);
 
   // The city cells, across from the middle one, that the building stands in:
   // no light well opens in those (it would come up into it).
@@ -294,11 +318,6 @@ export function makeArcology(set) {
   const TILE_SALT = 0x6c8e9cf5;
   // How much nearer its own face than any other a cut of a face keeps (cells).
   const MARGIN = 0.1;
-  const solve3 = (M, b) => {
-    const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
-    const D = det(M);
-    return [0, 1, 2].map((c) => det(M.map((row, i) => row.map((x, j) => (j === c ? b[i] : x)))) / D);
-  };
   for (const F of FACES) {
     F.nn = dot2(F.n);
     F.nl = Math.sqrt(F.nn);
@@ -375,7 +394,7 @@ export function makeArcology(set) {
     const um = Math.max(...corners.map((X) => Math.abs(dot(F.tv, X)))) + (LEVELS[0].sb / LEVELS[0].quant) * F.q2[0];
     const yb = Math.max(...corners.map((X) => Math.abs(X[1])));
     for (const E of F.edges)
-      if (R * (Math.abs(E.al) * yb + Math.abs(E.be) + (E.W + um) * Math.abs(E.dl)) >= 2 ** 30) throw new Error('arcology: zone tests overflow');
+      if (R * (Math.abs(E.al) * yb + Math.abs(E.be) + (E.W + um) * Math.abs(E.dl)) >= 2 ** 30) throw new Error(`arcology: the faces of ${F.solid.name} are too fine for the relief's whole numbers (zone tests): another slope (see slopes in hexahedron.js)`);
   }
   function dot(a, b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -401,7 +420,7 @@ export function makeArcology(set) {
     return m;
   };
   for (const F of FACES) F.dn = [1, R].map((S) => Array.from({ length: NDQ * NDQ }, (_, i) => depthN(F.nn, (3 * Math.floor(i / NDQ) + (i % NDQ)) * S)));
-  if (Math.max(...FACES.map((F) => (3 * (NDQ - 1) + NDQ - 1) ** 2 * R * R * F.nn)) >= 2 ** 31) throw new Error('arcology: depths overflow');
+  if (Math.max(...FACES.map((F) => (3 * (NDQ - 1) + NDQ - 1) ** 2 * R * R * F.nn)) >= 2 ** 31) throw new Error(`arcology: a face too fine for the relief's whole numbers (depths): another slope (see slopes in hexahedron.js)`);
   const quarters = (x) => Math.round(x * 4), twelfths = (x) => Math.round(x * 12);
   // The notches one level finer keep clear of the cells that the solids
   // without relief (pillars, the column) touch (they are cut in skin cells only,
@@ -553,8 +572,13 @@ export function makeArcology(set) {
   // out (each takes several hashes and caps; review21): for each ridge and
   // level, from RR_FROM[lv] (level units) for RR_N[lv] heights, ridgeRow's
   // y0, y1, t and tc, as a texture's rows (2 r + lv). Wide enough for every
-  // height the cell table can ask after (it spans cells 1 to 37 here; checked).
-  const RR_FROM = [-4, -4 * R], RR_N = [48, 48 * R];
+  // height the cell table can ask after, its cells' and a cell or two
+  // more each way (the shader holds a height outside to the table's last
+  // row, where the JavaScript would work it out: so the table must cover
+  // them all; at least -4 to 43, as it has been).
+  const cellsLo = Math.min(...SOLIDS.map((s) => s.lo[1])) - ORIGIN[1], cellsHi = Math.max(...SOLIDS.map((s) => s.hi[1])) - ORIGIN[1];
+  const RR0 = Math.min(-4, cellsLo - 4), RR1 = Math.max(44, cellsHi + 7);
+  const RR_FROM = [RR0, RR0 * R], RR_N = [RR1 - RR0, (RR1 - RR0) * R];
   const RIDGE_ROWS = (() => {
     const w = Math.max(...RR_N), data = new Int32Array(4 * w * 2 * RIDGES.length);
     for (const r of RIDGES)
@@ -650,7 +674,7 @@ export function makeArcology(set) {
   // and the caps hold t up to 16; a pair's two floors, each rounded in to its
   // face's measure, differ by less than MARGIN: see relief-v4.md.)
   if (3 * quarters(LEVELS[0].depths.at(-1)) + twelfths(LEVELS[1].depths.at(-1) / R) > 16) throw new Error('arcology: cuts deeper than the tables');
-  if (!(MARGIN > Math.max(...FACES.map((F) => 1 / F.nl)))) throw new Error('arcology: MARGIN under a face measure');
+  if (!(MARGIN > Math.max(...FACES.map((F) => 1 / F.nl)))) throw new Error('arcology: a face too coarse for the relief\'s measure (MARGIN): another slope (see slopes in hexahedron.js)');
   if (FACES.some((F) => [1, 2, 3].some((t) => !(F.dn[1][Math.floor(t / 3) * NDQ + (t % 3)] > 0)))) throw new Error('arcology: a cut too shallow for its face');
   // (A notch's edge's normal is its value's gradient: checked numerically.)
   for (const F of FACES)

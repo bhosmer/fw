@@ -106,7 +106,7 @@ test('the arcology\'s rooms are the halls\' where it lets them be', () => {
 // What a definition does not have, or of another kind, is refused; and a
 // definition made cannot be changed after.
 test('a variant must be one the definition has', () => {
-  assert.throws(() => makeArcology({ building: { roof: 3 } }), /there is no building\.roof \(there are building\.heights/);
+  assert.throws(() => makeArcology({ building: { roof: 3 } }), /there is no building\.roof \(there are building\.ring/);
   assert.throws(() => makeArcology({ halls: { walls: { door: { share: '0.6' } } } }), /halls\.walls\.door\.share is a number/);
   // (The halls' kinds: shares no more than all; the last takes the rest.)
   assert.throws(() => makeHalls({ walls: { none: { share: 0.5 }, door: { share: 0.6 } } }), /halls: walls: shares adding up to 1\.42, more than all/);
@@ -122,9 +122,9 @@ test('a variant must be one the definition has', () => {
   assert.throws(() => makeHalls({ furniture: { benches: { upTo: { under: 'well', over: 'well' } } } }), /benches: it stands over an opening it may have there \(well\)/);
   assert.throws(() => makeHalls({ byLevel: { 2: { furniture: { piers: { upTo: { under: 'oculus', over: 'well' } } } } } }), /piers: it stands under an opening it may have there \(well\)/);
   assert.throws(() => makeHalls({ furniture: 0.5 }), /furniture is a set of parts/);
-  const up = ARCOLOGY.building.up.map((p) => p.slice()), v = makeArcology({ building: { up } });
+  const up = ARCOLOGY.building.slopes.upper.slice(), v = makeArcology({ building: { slopes: { upper: up } } });
   assert.throws(() => { v.def.halls.solid = 0.1; }, TypeError);
-  assert.throws(() => { v.def.building.up[0][0] = 3; }, TypeError, 'a variant\'s own parts are frozen');
+  assert.throws(() => { v.def.building.slopes.upper[0] = 3; }, TypeError, 'a variant\'s own parts are frozen');
   assert.ok(!Object.isFrozen(up), 'what was given is not');
   assert.throws(() => makeArcology({ halls: { byLevel: { '-3': { solid: 0.5 } } } }), /arcology: halls\.byLevel\.-3: there are no halls coarser than the city's level/);
   assert.equal(makeArcology({ halls: { solid: 0.5, byLevel: { '-1': { rooms: { low: { share: 0.3 } } } } } }).def.halls.byLevel['-1'].solid, 0.5, 'a level\'s halls start from the arcology\'s');

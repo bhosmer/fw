@@ -159,13 +159,14 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
 // the cells at the bands' heights.
 check('the shader and the JavaScript agree at the edges, whichever edge', async () => {
   const { VARIANTS } = await import(join(ROOT, 'src', 'worlds.js')), { makeArcology } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const { shape } = await import(join(ROOT, 'src', 'spaces', 'hexahedron.js'));
   const off = [];
   for (const [name, set] of [['arcology', undefined], ...Object.entries(VARIANTS).map(([v, { set }]) => [v, set])]) {
-    const made = makeArcology(set), { heights } = made.def.building, y0 = made._V2.ORIGIN[1];
+    const made = makeArcology(set), { heights } = shape(made.def.building), y0 = made._V2.ORIGIN[1];
     const band = (y) => y - y0 >= Math.floor(heights.roofLo) - 1 && y - y0 <= Math.ceil(heights.plateHi);
     off.push(...(await agreeInSkin(name, made, { skin: 200, openings: 300, overlaps: 300, inAir: 20 }, band)));
   }
-  known(!off.length, off.join('\n'), 'B23: the shader meets the building\'s faces at the relief\'s level a little off (the faces\' large whole numbers in single precision): to go with B22');
+  known(!off.length, off.join('\n'), 'B23: the shader meets the building\'s faces at the relief\'s level a little off (the faces\' whole numbers in single precision: already their least; see the ledger)');
 });
 
 // The shader and the JavaScript compared in the world named (made: its table
@@ -367,7 +368,7 @@ void main() {
 // JavaScript agree in it too (round the camera, and about rays), and a link
 // to a part of its definition there is not, or a world there is not, says so.
 check('a variant in a link is made, and the shader and the JavaScript agree in it', async () => {
-  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&rooms.low.share=0.3', 'halls&byLevel.0.solid=0.4&byLevel.0.walls.none.share=0.05&byLevel.1.furniture.none.share=0.05&byLevel.1.slabs.solid.share=0.3', 'arcology&halls.byLevel.-1.solid=0.8&halls.byLevel.-1.furniture.none.share=0.1&halls.byLevel.0.walls.door.share=0.4', 'halls&solid=0.4&walls.none.share=0.1&walls.door.share=0.42&slabs.solid.share=0.4&slabs.oculus.share=0.48&furniture.none.share=0.1&furniture.piers.share=0.52']) {
+  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&rooms.low.share=0.3', 'arcology&building.slopes.upper=[3,80]', 'arcology&building.bands.storey=2.5', 'halls&byLevel.0.solid=0.4&byLevel.0.walls.none.share=0.05&byLevel.1.furniture.none.share=0.05&byLevel.1.slabs.solid.share=0.3', 'arcology&halls.byLevel.-1.solid=0.8&halls.byLevel.-1.furniture.none.share=0.1&halls.byLevel.0.walls.door.share=0.4', 'halls&solid=0.4&walls.none.share=0.1&walls.door.share=0.42&slabs.solid.share=0.4&slabs.oculus.share=0.48&furniture.none.share=0.1&furniture.piers.share=0.52']) {
     await load('start', 'alhambra', false, variant);
     const shown = await page.eval(`document.querySelector('.world')?.textContent ?? ''`);
     assert(shown.startsWith(variant.split('&')[0]), `the legend says ${shown}`);
