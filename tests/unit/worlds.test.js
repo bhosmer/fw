@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WORLDS } from '../../src/worlds.js';
+import { WORLDS, makeWorld } from '../../src/worlds.js';
 import { Flight } from '../../src/flight.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
@@ -32,7 +32,7 @@ function places(space, seed, n = 8) {
   return out;
 }
 
-for (const space of WORLDS) {
+for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))) {
   // A distance that never overstates mostly changes no faster than the
   // point moves: an exact one cannot, and were it to here, one of the two
   // values would likely be more than the true distance. But a distance may

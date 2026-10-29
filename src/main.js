@@ -1,28 +1,49 @@
 import { Renderer, TAA_N } from './renderer.js';
 import { Controls } from './controls.js';
-import { WORLDS } from './worlds.js';
+import { WORLDS, makeWorld, fromLink, ADDED } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot } from './pilot.js';
 import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { Pacing } from './pacing.js';
 
-// The world we are in: the one a link is in (one from before there were
-// others is in the halls), or else the one last visited.
+const help = document.getElementById('help');
+// (Where the app cannot start, it says why, in place of the legend.)
+function cannot(err) {
+  help.textContent = err.message;
+  help.classList.add('error');
+  help.classList.remove('hidden');
+  document.getElementById('loading')?.remove();
+  throw err;
+}
+
+// The world we are in: the one a link names (?variant&part=value: see
+// fromLink in worlds.js), or that the place in a link is in (one from
+// before there were others is in the halls), or else the one last visited;
+// made from its definition with the link's changes.
 const WORLD_KEY = 'fw.world';
-const space = (() => {
-  let name;
+let world;
+try {
+  const link = fromLink(location.search);
+  let name = link.name;
   try {
-    if (location.hash.length > 1) name = JSON.parse(atob(location.hash.slice(1))).world ?? 'halls';
+    if (!name && location.hash.length > 1) name = JSON.parse(atob(location.hash.slice(1))).world ?? 'halls';
   } catch {}
   try {
     name ??= localStorage.getItem(WORLD_KEY);
   } catch {}
-  return WORLDS.find((w) => w.name === name) ?? WORLDS[0];
-})();
+  if (!name || (!link.name && !WORLDS.includes(name))) name = WORLDS[0];
+  world = await makeWorld(name, link.changes);
+} catch (err) {
+  cannot(err);
+}
+const space = world.space;
+// (A variant is the link's: what is remembered is the world it is of.)
 try {
-  localStorage.setItem(WORLD_KEY, space.name);
+  localStorage.setItem(WORLD_KEY, world.base);
 } catch {}
+// What the world is called, with the changes its link makes.
+const worldLabel = [world.name, ...location.search.slice(1).split('&').map(decodeURIComponent).filter((x) => x.includes('=') && !ADDED.test(x.split('=')[0]))].join(' ');
 const R = space.R;
 
 // Of the levels around us, the most that are drawn.
@@ -36,7 +57,6 @@ const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
 
 const canvas = document.getElementById('view');
 const hud = document.getElementById('hud');
-const help = document.getElementById('help');
 // Whether the legend is hidden is remembered (H shows and hides it).
 const HELP_KEY = 'fw.help';
 try {
@@ -54,10 +74,7 @@ try {
   renderer = new Renderer(canvas, space, UP + DOWN + 1, N_VIEW);
   await renderer.ready();
 } catch (err) {
-  help.textContent = err.message;
-  help.classList.add('error');
-  document.getElementById('loading')?.remove();
-  throw err;
+  cannot(err);
 }
 const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN));
 const flight = new Flight(space, controls);
@@ -167,6 +184,8 @@ function saveLocation() {
 function loadLocation() {
   try {
     const here = JSON.parse(atob(location.hash.slice(1)));
+    // (A place in another world than this one is no place here.)
+    if ((here.world ?? 'halls') !== world.base) return false;
     pos.F = here.F;
     pos.frac = here.frac;
     pos.digits = new Map(here.digits);
@@ -182,11 +201,12 @@ function loadLocation() {
 // goes somewhere new, shift-N to the next world; H hides and shows the
 // legend. (The old way of stepping rays, to compare by eye: fw.reference.)
 
-// Off to the next world, somewhere in it as on a first visit.
+// Off to the next world, somewhere in it as on a first visit (as it is: a
+// variant is left behind with its link).
 function nextWorld() {
   try {
-    localStorage.setItem(WORLD_KEY, WORLDS[(WORLDS.indexOf(space) + 1) % WORLDS.length].name);
-    history.replaceState(null, '', location.pathname + location.search);
+    localStorage.setItem(WORLD_KEY, WORLDS[(WORLDS.indexOf(world.base) + 1) % WORLDS.length]);
+    history.replaceState(null, '', location.pathname);
   } catch {}
   location.reload();
 }
@@ -213,7 +233,7 @@ function nextScheme(by) {
 }
 function showScheme() {
   for (const el of document.querySelectorAll('.scheme')) el.textContent = SCHEMES[scheme].name;
-  for (const el of document.querySelectorAll('.world')) el.textContent = space.name;
+  for (const el of document.querySelectorAll('.world')) el.textContent = worldLabel;
 }
 showScheme();
 addEventListener('keydown', (e) => {
@@ -338,7 +358,7 @@ function tick(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${space.name}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${worldLabel}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

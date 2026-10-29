@@ -72,7 +72,9 @@ let page, base, loads = 0;
 async function load(place, scheme = 'alhambra', live = false, world = 'halls') {
   // (A query that differs every time, so that each load is a whole new page:
   // a change of hash alone would not even reload it.)
-  await page.goto(`${base}index.html?${++loads}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live, world));
+  // (A variant goes in the link's query, as a link names one: see fromLink.)
+  const variant = /[/=]/.test(world) ? world : null;
+  await page.goto(`${base}index.html?${++loads}${variant ? '&' + variant : ''}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live, variant ? 'halls' : world));
   await page.eval(PAGE_HELPERS);
   const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
   if (error) throw new Error('the page failed to start:\n' + error);
@@ -305,6 +307,49 @@ void main() {
     if (JSON.stringify(gpu) !== JSON.stringify(js)) (differ++), (first ??= { h, h2, r, dens, k, js, gpu });
   });
   assert(differ === 0, `${differ} of ${cases.length} boxes differ, as ${JSON.stringify(first)}`);
+});
+
+// A variant, named in a link, made as the link says: the shader and the
+// JavaScript agree in it too (round the camera, and about rays), and a link
+// to a part of its definition there is not, or a world there is not, says so.
+check('a variant in a link is made, and the shader and the JavaScript agree in it', async () => {
+  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&low=0.3']) {
+    await load('start', 'alhambra', false, variant);
+    const shown = await page.eval(`document.querySelector('.world')?.textContent ?? ''`);
+    assert(shown.startsWith(variant.split('&')[0]), `the legend says ${shown}`);
+    const worst = await page.eval('fw.check(150)');
+    assert(worst.diff < 1e-3 && worst.more.diff < 1e-3 && worst.compared > 5000, `${variant}: they differ by ${JSON.stringify({ ...worst, more: worst.more })}`);
+    const r = await page.eval('fw.checkRays(80)');
+    assert(r.ratio < 1 && r.apart === 0 && r.facing === 0 && r.compared > 3000, `${variant}: about rays they differ: ${JSON.stringify(r)}`);
+  }
+  // (The query names the world, though the place in the link is another's,
+  // which is then no place: it starts as a first visit would.)
+  await page.goto(`${base}index.html?${++loads}&arcology/cornice#${PLACES.court}`, setup('alhambra', false, 'halls'));
+  const there = await page.eval(`({ world: fw.space.name, shown: document.querySelector('.world').textContent, F: fw.pos.F })`);
+  assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F !== 1, `a query and another world's place: ${JSON.stringify(there)}`);
+  // (Reloaded, a variant is the same variant, in the same place.)
+  await page.eval(`(fw.fly(0.4, { f: 1 }), fw.saveLocation())`);
+  const before = await page.eval(`({ href: location.href, F: fw.pos.F, frac: fw.pos.frac })`);
+  // (A link changed only in its hash would not reload the page: its number is made new.)
+  await page.goto(before.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, 'halls'));
+  const after = await page.eval(`({ shown: document.querySelector('.world').textContent, F: fw.pos.F, frac: fw.pos.frac })`);
+  assert(after.shown === 'arcology/cornice' && after.F === before.F && JSON.stringify(after.frac) === JSON.stringify(before.frac), `reloaded: ${JSON.stringify({ before, after })}`);
+  // (The next world leaves the variant behind: the world after the
+  // arcology, as it is, with no query.)
+  await page.eval(`(window.__old = true, setTimeout(() => document.getElementById('world-button').click()), 0)`);
+  for (let i = 0; i < 600; i++) {
+    try {
+      if (await page.eval(`!window.__old && !!window.fw`)) break;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const next = await page.eval(`({ search: location.search, world: fw.space.name, shown: document.querySelector('.world').textContent })`);
+  assert(next.search === '' && next.world === 'halls' && next.shown === 'halls', `the next world: ${JSON.stringify(next)}`);
+  for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['arcology&town.density=[30,60', /not one/]]) {
+    await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra', false, 'halls'));
+    const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
+    assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
+  }
 });
 
 // From up above each world too, the exact way sees nothing the older one

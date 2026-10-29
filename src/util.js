@@ -97,3 +97,12 @@ export function frozen(x) {
   }
   return x;
 }
+// Two sets of changes as one, the second's winning (objects merged part by
+// part, anything else replaced whole): a variant's, and a link's on top.
+export function merge(a, b) {
+  if (b === undefined) return a;
+  if (!plain(a) || !plain(b)) return b;
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = merge(a[k], v);
+  return out;
+}
