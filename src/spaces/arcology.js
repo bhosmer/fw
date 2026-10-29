@@ -813,7 +813,10 @@ const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_
 const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 // (For the checks in .claude/verify.)
-export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
+// (For the checks: how many rays the solids without relief have stopped
+// in the city's pockets: see cityPockets.)
+const SEEN = { clipped: 0 };
+export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
 export const VOLUME = (() => {
   const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
   const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -2131,15 +2134,11 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
 }
 `;
 
-// The same, in JavaScript, piece for piece (as in halls.js: a plane is only
-// its distance).
+// The same, in JavaScript, piece for piece, on the shared pieces (see
+// src/pieces.js).
 let dLp, dFp, dLm, dFm, dLs, dFs;
 const diag = (p, sa, sb, ca, cb, k) =>
   sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];
-let gD;
-const piece = () => (gD = -Infinity);
-const plane = (s) => (gD = Math.max(gD, s));
-const span = (x, f, x0, x1) => (plane(x0 - x - f), plane(x - x1 + f));
 const NONE = 1e9;
 const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 
@@ -2165,45 +2164,56 @@ function setPoint(L, f, dg) {
   }
 }
 
-function well(L, f, id, seed) {
+// See well in the shader: whether there is one (its half width and how far
+// in its corners are cut), and its air (a piece: for a ray too).
+function wellOf(id, seed) {
   const below = wrapId([id[0], id[1] - 1, id[2]]);
   const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
-  if (t < HALLS.slab.solid || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return NONE;
-  if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return NONE;
+  if (t < HALLS.slab.solid || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return null;
+  if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
   const oculus = t < HALLS.slab.oculus;
-  const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-  piece();
-  span(L[1], f[1], -M, G + 1);
-  span(L[0] - C, f[0], -w, w);
-  span(L[2] - C, f[2], -w, w);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) plane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2);
-  return gD;
+  return { w: oculus ? 3 : 6, dg: oculus ? 4 : 1000 };
+}
+function wellAir(L, f, { w, dg }) {
+  P.airPiece();
+  P.airSpan(L[1], f[1], -M, G + 1, 1);
+  P.airSpan(L[0] - C, f[0], -w, w, 0);
+  P.airSpan(L[2] - C, f[2], -w, w, 2);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) P.airPlane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
+  return P.S.d;
 }
 
 // One solid, o the cell's corner from the middle cell's (see solidGlsl).
 function solid(s, L, f, o) {
-  piece();
+  P.solidPiece();
   for (const p of planesOf(s)) {
+    const [nx, ny, nz] = p.n.map((x) => x / p.len);
     if (p.dir < 3) {
       const a = p.dir;
-      plane((p.scale * L[a] - (p.K - p.scale * o[a]) + p.scale * f[a]) / p.len);
+      P.solidPlane((p.scale * L[a] - (p.K - p.scale * o[a]) + p.scale * f[a]) / p.len, nx, ny, nz);
     } else {
       const m = p.m, k = p.K - p.scale * (m[0] * o[0] + m[1] * o[1] + m[2] * o[2]);
-      plane((p.scale * dLs[p.dir - 3] - k + p.scale * dFs[p.dir - 3]) / p.len);
+      P.solidPlane((p.scale * dLs[p.dir - 3] - k + p.scale * dFs[p.dir - 3]) / p.len, nx, ny, nz);
     }
   }
-  return gD;
+  return P.solidDone();
 }
 
+// See plaza in the shader (a piece: for a ray too). (Its solids asked as
+// the shader asks them, the same ones passed over: so the distance is the
+// shader's, which may be less than the nearest solid's.)
 function plaza(L, f, id) {
-  piece();
-  span(L[0], f[0], -R, 2 * R);
-  span(L[2], f[2], -R, 2 * R);
-  span(L[1], f[1], id[1] === ROW_ID ? G : -M, R + M);
-  const box = gD;
-  const o = fromMiddle(id);
+  P.airPiece();
+  P.airSpan(L[0], f[0], -R, 2 * R, 0);
+  P.airSpan(L[2], f[2], -R, 2 * R, 2);
+  P.airSpan(L[1], f[1], id[1] === ROW_ID ? G : -M, R + M, 1);
+  const box = P.S.d, o = fromMiddle(id), q = [0, 1, 2].map((a) => L[a] + f[a]);
   let d = NONE;
-  for (const k of NEAR.get(o.map((x) => x / R).join()) ?? []) d = Math.min(d, solid(SOLIDS[k], L, f, o));
+  for (const k of NEAR.get(o.map((x) => x / R).join()) ?? []) {
+    const s = SOLIDS[k], far = Math.max(...[0, 1, 2].map((a) => Math.max(s.lo[a] - o[a] - q[a], q[a] - (s.hi[a] - o[a]))));
+    if (far >= d && (!P.S.ray || far >= P.S.x)) continue;
+    d = Math.min(d, solid(s, L, f, o));
+  }
   return Math.max(box, -d);
 }
 
@@ -2437,26 +2447,48 @@ function pockets(L, f, faces, d, ray) {
   return d;
 }
 
-// The city's own pockets near the point (o its cell's corner
-// from the middle cell's): of each face it is near, from a cell past it to
-// DMAX in; elsewhere, at least that far off.
-function cityPockets(L, f, o) {
+// The city's own pockets near the point (o its cell's corner from the
+// middle cell's): of each face it is near, from a cell past it to DMAX in;
+// elsewhere, at least that far off. United with d, the rest of the cell's
+// air, as cell has them in the shader; and for a ray, the pockets' reach
+// stopped at the solids without relief.
+function cityPockets(L, f, o, d, ray) {
   const base = o.map((x, a) => x - ORIGIN[a]);
-  let d = NONE, dp = NONE;
+  let far = NONE, a = NONE;
   const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
+  const r0 = ray ? ray.reach : -1, n0 = ray && [ray.nx, ray.ny, ray.nz];
   FACES.forEach((F, k) => {
     const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - 2 - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - 2)));
-    if (away > 0) return void (d = Math.min(d, away));
+    if (away > 0) return void (far = Math.min(far, away));
     const m = SLANTS[F.plane.k], sg = F.plane.sign;
     const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / F.nl;
-    if (s < -BAND_IN) d = Math.min(d, -s - BAND_IN);
-    else if (s > BAND_OUT) d = Math.min(d, s - BAND_OUT);
-    else dp = facePocket(0, k, L, f, base, dp);
+    if (s < -BAND_IN) far = Math.min(far, -s - BAND_IN);
+    else if (s > BAND_OUT) far = Math.min(far, s - BAND_OUT);
+    else a = facePocket(0, k, L, f, base, a, ray);
   });
   // (The pockets, and how far off the rest are, stop at the solids without
-  // relief.)
-  return Math.max(Math.min(d, dp), bareIn(q));
+  // relief: inside one they are no air; near one, a ray they take on
+  // strikes it. Asked only where it could matter, as in the shader.)
+  const c = Math.min(far, a), pockets = ray && ray.reach > r0;
+  const bi = (c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR)) ? bareIn(q) : -1e9;
+  if (ray && bi >= 0) (ray.reach = r0), ([ray.nx, ray.ny, ray.nz] = n0);
+  else if (pockets && bi > -BARE_NEAR) {
+    P.S.x = ray.reach;
+    [P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz];
+    P.S.ray = true;
+    for (const pls of BARE_PL) {
+      P.solidPiece();
+      for (const pl of pls) P.solidPlane(pl[0] * q[0] + pl[1] * q[1] + pl[2] * q[2] - pl[3], pl[0], pl[1], pl[2]);
+      P.solidDone();
+    }
+    P.S.ray = false;
+    if (P.S.x < ray.reach) SEEN.clipped++;
+    (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+  }
+  return Math.max(c, bi);
 }
+// See bareNear in the shader.
+const bareNear = (q, r) => BARE_BOX.some(([lo, hi]) => Math.max(...[0, 1, 2].map((a) => Math.max(lo[a] - q[a], q[a] - hi[a]))) < r);
 // See bareIn in the shader.
 function bareIn(q) {
   let d = -1e9;
@@ -2699,8 +2731,7 @@ function groundAir(L, f, own) {
   return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
 }
 
-// (ray: see hallsAir. The halls' cells, the relief's cells, and cells all
-// solid answer it; elsewhere (the city level) it is not known yet.)
+// (ray: see hallsAir. Every cell answers it.)
 function cellAir(L, f, id, seed, dg, level, up, ray) {
   const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
   if (ray) ray.known = false;
@@ -2720,8 +2751,15 @@ function cellAir(L, f, id, seed, dg, level, up, ray) {
   }
   if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
   if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule, ray);
+  // (The city's: its plaza's air and its well's, and for a ray the further
+  // of the pieces the point is in; then its pockets.)
   setPoint(L, f, dg);
-  return Math.min(plaza(L, f, id), id[1] === ROW_ID ? well(L, f, id, seed) : NONE, cityPockets(L, f, fromMiddle(id)));
+  if (ray) P.aim(ray);
+  const wl = id[1] === ROW_ID ? wellOf(id, seed) : null;
+  const w = wl ? wellAir(L, f, wl) : NONE, p = plaza(L, f, id);
+  P.through(ray, p, () => plaza(L, f, id));
+  if (wl) P.through(ray, w, () => wellAir(L, f, wl));
+  return Math.min(p, w, cityPockets(L, f, fromMiddle(id), Math.min(p, w), ray));
 }
 
 // Where a first visit starts, in the middle city cell (lattice units): on

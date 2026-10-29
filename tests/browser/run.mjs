@@ -112,10 +112,7 @@ check('the shader and the JavaScript agree about each world', async () => {
     assert(worst.more.diff < 1e-3, `${world}: the JavaScript says there is more air: ${JSON.stringify(worst.more)}`);
     // (And not only at the camera: the points round it were compared too.)
     assert(worst.compared > 10000, `${world}: only ${worst.compared} comparisons away from the camera`);
-    const say = `${world}: they differ by ${JSON.stringify({ ...worst, more: undefined })}`;
-    // (Known: in the arcology's city level, the JavaScript sees less air.)
-    if (world === 'arcology' && worst.level === -2) known(worst.diff < 1e-3, say, 'in front of the faces, the shader\'s city pockets say there is more air than the JavaScript\'s (ledger B16); to go with phase 5');
-    else assert(worst.diff < 1e-3, say);
+    assert(worst.diff < 1e-3, `${world}: they differ by ${JSON.stringify({ ...worst, more: undefined })}`);
   }
 });
 
@@ -186,6 +183,63 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
     // (Rays in the relief's own air, one level finer than the city, not
     // only where all is solid.)
     assert((rays.inAir[-1] ?? 0) > 100, `${name}: only ${rays.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(rays.inAir)}`);
+  }
+});
+
+// At the city's level (fw.check seldom flies there): in the plaza's air
+// round the buildings, in the city's pockets in their faces, near the solids
+// without relief, in the light wells, and at the top of the city's rows:
+// the distances and rays of every level, the camera put there.
+check('the shader and the JavaScript agree at the city\'s level', async () => {
+  const { VOLUME, _V2, ROW_ID } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const { levelSeed } = await import(join(ROOT, 'src', 'util.js'));
+  const { lo, size, kind, at: cellAt } = VOLUME, R = 24;
+  let seed = 11;
+  const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+  const skin = [];
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
+    if (kind[cellAt([x, y, z])] === 2) skin.push([x + lo[0], y + lo[1], z + lo[2]]);
+  const middle = lo.map((x, a) => x + size[a] / 2), near = [..._V2.NEAR.keys()].map((k) => k.split(',').map(Number));
+  const many = (n, at) => Array.from({ length: n }, at);
+  // (Lattice units of the city's level over the middle city cell's corner;
+  // and a direction to ask rays along, or a random one.)
+  const sets = {
+    plaza: many(600, () => near[Math.floor(rnd() * near.length)].map((c) => (c + rnd()) * R)).map((x) => [x, middle.map((m, i) => m - x[i])]),
+    pockets: many(600, () => skin[Math.floor(rnd() * skin.length)].map((v) => v + 0.5 + (2 * rnd() - 1) * 6)).map((x) => [x, null]),
+    bare: many(400, () => {
+      const [l, h] = _V2.BARE_BOX[Math.floor(rnd() * _V2.BARE_BOX.length)].map((b) => b.map((x, a) => x + _V2.ORIGIN[a]));
+      return [[0, 1, 2].map((a) => (a === 1 ? l[a] + rnd() * (h[a] - l[a]) : l[a] - 6 + rnd() * (h[a] - l[a] + 12))), [0, 1, 2].map((a) => (l[a] + h[a]) / 2)];
+    }).map(([x, m]) => [x, m.map((v, i) => v - x[i])]),
+    wells: [],
+    // (Rays the pockets take that the solids without relief stop: few, found
+    // among many in the JavaScript.)
+    stopped: (await import(join(ROOT, 'tests', 'unit', 'clipped.js'))).clippedRays(rnd, 6000),
+    sky: many(200, () => [middle[0] + (2 * rnd() - 1) * 2 * R, (2 - rnd() * 0.5) * R, middle[2] + (2 * rnd() - 1) * 2 * R]).map((x) => [x, [rnd() - 0.5, 1, rnd() - 0.5]]),
+  };
+  for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) {
+    const w = _V2.wellOf([_V2.MID + a, ROW_ID, _V2.MID + c], levelSeed(-2));
+    if (w) for (let k = 0; k < 40; k++) sets.wells.push([[(a + 0.5) * R + (2 * rnd() - 1) * (w.w - 0.5), rnd() * 4, (c + 0.5) * R + (2 * rnd() - 1) * (w.w - 0.5)], [rnd() - 0.5, k % 2 ? 1 : -1, rnd() - 0.5]]);
+  }
+  await load('start', 'alhambra', false, 'arcology');
+  for (const [name, at] of Object.entries(sets)) {
+    const r = await page.eval(`(() => {
+      const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
+      let worst = { diff: 0 }, k = 0;
+      for (const [x, e] of ${JSON.stringify(at)}) {
+        fw.pos.F = -3; fw.pos.frac = x.map((v) => (12 + v / 24) / 24); fw.pos.digits = new Map();
+        const recs = fw.pos.levels(-3, 0), [gpu] = fw.renderer.probe(recs);
+        recs.forEach((r, j) => {
+          const cpu = fw.flight.airAt(r), diff = Math.abs(cpu - gpu[j]) / Math.max(1, Math.abs(cpu));
+          if (diff > worst.diff) worst = { diff, level: r.level, x, cpu, gpu: gpu[j] };
+        });
+        const a = (k++ * 2.399963) % 6.283, z = ((k * 0.618034) % 1) * 2 - 1, c = Math.sqrt(1 - z * z);
+        for (const d of [e, [c * Math.cos(a), z, c * Math.sin(a)]]) if (d) fw.compareRays(recs, [[0, 0, 0]], d.map((u) => u / Math.hypot(...d)), sum);
+      }
+      return { worst, sum };
+    })()`);
+    assert(r.worst.diff < 1e-3, `${name}: they differ by ${JSON.stringify(r.worst)}`);
+    assert(r.sum.ratio < 1 && r.sum.apart === 0 && r.sum.facing === 0, `${name}: about rays they differ: ${JSON.stringify(r.sum)}`);
+    assert((r.sum.inAir[-2] ?? 0) > (name === 'stopped' ? 10 : 50), `${name}: only ${r.sum.inAir[-2] ?? 0} rays compared in the city's air: ${JSON.stringify(r.sum.inAir)}`);
   }
 });
 
