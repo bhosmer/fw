@@ -80,7 +80,10 @@
 //     description of it must agree
 
 import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
-import { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } from '../pieces.js';
+import * as P from '../pieces.js';
+import * as twin from '../twin.js';
+
+const { S, at, aim, through, h01, beyond, NONE } = P;
 
 export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
@@ -103,12 +106,220 @@ export const HALLS = {
   // In a room: below none, nothing; then piers, benches; above, a kiosk.
   furniture: { none: 0.4, piers: 0.62, benches: 0.82 },
 };
+// What each kind of opening and furniture is, as rows: the halls' pieces,
+// in both languages, are written from them (see pieces below). (How often
+// each comes is HALLS's.) Numbers are lattice units; a value may be an
+// expression (see twin.js) in C, M, R, HLO and, where a kind is chosen by
+// a cell's hash, bit(h, n) and field(h, n, m).
+const KINDS = {
+  // An opening through a wall, as a tunnel from room to room (see TUNNEL):
+  // its middle along the wall (at), or a row of so many, one to each equal
+  // bay of the wall, the one in the bay the point is across from; its half
+  // width; its sill over the floor; how far its sides rise before a
+  // 45-degree gable closes it; and a flat top over the sill (or none).
+  walls: {
+    // A door, in one of three places along the wall.
+    door: { at: 'C + (div(field(h, 0, 256) * 3, 256) - 1) * 5', half: 2, rise: 5 },
+    windows: { row: 3, half: 1, sill: 4, rise: 3 },
+    // An arcade of three arches.
+    arcade: { row: 3, half: 2, rise: 6 },
+    // No wall at all: the two rooms run together.
+    open: { at: 'C', half: 'C - M', top: 'HLO' },
+  },
+  // An opening through a slab (see HOLE): a square, its half width, its
+  // corners cut at 45 degrees so far from its middle (or not).
+  slabs: {
+    oculus: { half: 3, cut: 4 },
+    well: { half: 6 },
+  },
+  // What stands in a room: boxes ([x0, x1], [z0, z1], [y0, y1]) or
+  // diamonds (their half width), one in the middle of the room, or one in
+  // each quarter (at: where along x and along z, [low quarter, high]; a
+  // box's sides then from there), turned a quarter round where the bit turn
+  // of the cell's hash says. needs: the openings it must not stand over or under, as
+  // the most open kind of slab it may (no light well near piers; nothing over
+  // any hole in the floor).
+  furniture: {
+    // Four diamond piers, floor to ceiling.
+    piers: { needs: { under: 'oculus', over: 'oculus' }, diamond: 2, at: [[7, 17], [7, 17]] },
+    // Two rows of benches, running along x or z.
+    benches: { needs: { under: 'solid' }, box: [[0, 5], [0, 1], ['M - 1', 'M + 1']], at: [[6, 13], [8, 15]], turn: 5 },
+    // A kiosk in the middle of the floor.
+    kiosk: { needs: { under: 'solid' }, box: [['C - 2', 'C + 2'], ['C - 2', 'C + 2'], ['M - 1', 'M + 3']] },
+  },
+};
+
+// The words KINDS is written in (see twin.js).
+const LANG = { name: 'halls', hashes: ['h'], hashed: ['bit', 'field'], helpers: { bit: twin.HELPERS.bit, field: twin.HELPERS.field, div: twin.HELPERS.div, min: twin.HELPERS.min, max: twin.HELPERS.max } };
+const NAMES = new Set(['C', 'M', 'R', 'HLO']);
+
+// The pieces the halls are made of, as planes (see planes in twin.js), in
+// the names their functions give them (below). A wall's opening: a tunnel
+// along a (the wall's normal, ea), x across the wall (eu) from the
+// opening's middle and yy up from its sill, which reaches one unit into our
+// own room and stops at the neighbour's; p is the pair of axes (u, y), for
+// diag().
+const TUNNEL = [
+  { span: ['a', 'fa', 'high ? R - M - 1 : -M', 'high ? R + M : M + 1', 'ea'] },
+  { span: ['x', 'fu', '-hw', 'hw', 'eu'] },
+  { span: ['yy', 'fy', '0', 'top', 1] },
+  { diag: ['p', 1, 1, 'cu', 'M + y0', 'sp + hw'], axes: ['eu', 1] },
+  { diag: ['p', -1, 1, 'cu', 'M + y0', 'sp + hw'], axes: ['eu', 1] },
+];
+// A slab's opening, from y0 to y1 (see slabOpening), w its half width, its
+// corners cut dg from its middle.
+const HOLE = [
+  { span: ['L.y', 'f.y', 'y0', 'y1', 1] },
+  { span: ['L.x - C', 'f.x', '-w', 'w', 0] },
+  { span: ['L.z - C', 'f.z', '-w', 'w', 2] },
+  { corners: [2, 'C', 'C', 'dg'], axes: [0, 2] },
+];
+// The room: a box H high (less whatever stands in it).
+const ROOM = [
+  { span: ['L.x', 'f.x', 'M', 'R - M', 0] },
+  { span: ['L.z', 'f.z', 'M', 'R - M', 2] },
+  { span: ['L.y', 'f.y', 'M', 'M + H', 1] },
+];
+
 // The halls, made from HALLS with what set changes (see define in util.js):
 // their space, and the parts other spaces build on (see the end), so that a
 // variant of them is another call of this.
 export function makeHalls(set) {
   const spec = frozen(define(HALLS, set));
   const { salt, wall, slab, furniture: stands } = spec;
+
+  // The halls' pieces in either language (js: true, or GLSL), from KINDS:
+  // wallShape (which opening a wall has: its middle, half width, sill, rise
+  // and top), wallOpening, slabOpening, furniture and roomAir (see hallsCell).
+  function pieces(js) {
+    const e = (x, where) => {
+      const w = twin.words(LANG, String(x), NAMES, where);
+      return js ? w : twin.glsl(LANG, w);
+    };
+    // (In JavaScript, a point's coordinates are arrays.)
+    const lang = (lines) => lines.map((l) => (js ? l.replace(/\b([Lf])\.([xyz])\b/g, (_, v, a) => `${v}[${'xyz'.indexOf(a)}]`) : l));
+    const num = (x) => (js ? String(x) : glf(x));
+    const out = [];
+    // (Each kind in order, the first being none, and its threshold (HALLS's):
+    // below it, that kind or one before it; the last has none.)
+    const kinds = (family, names) => names.map((name, i) => ({ name, to: i < names.length - 1 ? family[name] : null }));
+    const walls = kinds(wall, ['none', ...Object.keys(KINDS.walls)]);
+    const slabs = kinds(slab, ['solid', ...Object.keys(KINDS.slabs)]);
+    const stand = kinds(stands, ['none', ...Object.keys(KINDS.furniture)]);
+    const below = (list, name) => list.find((k) => k.name === name).to;
+
+    // Which of n equal bays across the wall holds u (integer division is
+    // slow), for each n a row has.
+    const rows = [...new Set(Object.values(KINDS.walls).filter((k) => k.row).map((k) => k.row))];
+    for (const n of rows) {
+      const pitch = (R - 2 * M) / n;
+      if (!Number.isInteger(pitch / 2)) throw new Error(`halls: a row of ${n} has no whole middles`);
+      out.push(js
+        ? `const bay${n} = (u, fu) => Math.min(${n - 1}, Math.max(0, Math.floor((u - M + fu) / ${pitch})));`
+        : `int bay${n}(int u, float fu) { return int(clamp(floor((float(u - M) + fu) * (1.0 / ${num(pitch)})), 0.0, ${num(n - 1)})); }`);
+    }
+
+    // The opening, if any, through the wall on one horizontal side of the
+    // cell. Faces are shared, so the two cells either side hash the same
+    // owner (h) and agree on what is there.
+    out.push(js ? 'function wallShape(h, u, fu) {' : 'bool wallShape(uint h, int u, float fu, out int cu, out int hw, out int y0, out int sp, out int top) {');
+    out.push(js ? '  const t = h01(h);' : '  float t = h01(h);');
+    out.push(`  if (t < ${num(walls[0].to)}) return ${js ? 'null' : 'false'};`);
+    for (const k of walls.slice(1)) {
+      const r = KINDS.walls[k.name], where = `the wall's ${k.name}`;
+      const v = [r.row ? `M + ${(R - 2 * M) / r.row / 2} + ${(R - 2 * M) / r.row} * bay${r.row}(u, fu)` : e(r.at, where), e(r.half, where), e(r.sill ?? 0, where), e(r.rise ?? 1000, where), e(r.top ?? 1000, where)];
+      const give = js ? `return { cu: ${v[0]}, hw: ${v[1]}, y0: ${v[2]}, sp: ${v[3]}, top: ${v[4]} };` : `cu = ${v[0]}; hw = ${v[1]}; y0 = ${v[2]}; sp = ${v[3]}; top = ${v[4]}; return true;`;
+      out.push(k.to === null ? `  ${give}` : `  if (t < ${num(k.to)}) { ${give} }`);
+    }
+    out.push('}');
+
+    // That opening as a piece of air (see TUNNEL).
+    out.push(js ? 'function wallOpening(p, a, fa, u, fu, y, fy, high, h, ea, eu) {' : 'float wallOpening(int p, int a, float fa, int u, float fu, int y, float fy, bool high, uint h, vec3 ea, vec3 eu) {');
+    out.push(...(js
+      ? ['  const s = wallShape(h, u, fu);', '  if (!s) return NONE;', '  const { cu, hw, y0, sp, top } = s;', '  const x = u - cu, yy = y - M - y0;']
+      : ['  int cu, hw, y0, sp, top;', '  if (!wallShape(h, u, fu, cu, hw, y0, sp, top)) return 1e9;', '  int x = u - cu, yy = y - M - y0;']));
+    out.push('  airPiece();', ...twin.planes(js, 'air', TUNNEL).map((l) => '  ' + l), js ? '  return S.d;' : '  return gD;', '}');
+
+    // An opening through the slab above (up) or below the room (see HOLE).
+    out.push(js ? 'function slabOpening(L, f, up, H, h) {' : 'float slabOpening(ivec3 L, vec3 f, bool up, int H, uint h) {');
+    out.push(js ? '  const t = h01(h);' : '  float t = h01(h);');
+    out.push(`  if (t < ${num(slabs[0].to)}) return ${js ? 'NONE' : '1e9'};`);
+    out.push(js ? '  let w, dg;' : '  int w, dg;');
+    slabs.slice(1).forEach((k, i) => {
+      const r = KINDS.slabs[k.name], where = `the slab's ${k.name}`, give = `{ w = ${e(r.half, where)}; dg = ${e(r.cut ?? 1000, where)}; }`;
+      out.push(`  ${i ? 'else ' : ''}${k.to === null ? '' : `if (t < ${num(k.to)}) `}${give}`);
+    });
+    out.push(js ? '  const y0 = up ? M + H - 1 : -M, y1 = up ? R + M : M + 1;' : '  int y0 = up ? M + H - 1 : -M, y1 = up ? R + M : M + 1;');
+    out.push('  airPiece();', ...lang(twin.planes(js, 'air', HOLE)).map((l) => '  ' + l), js ? '  return S.d;' : '  return gD;', '}');
+
+    // Solid things standing in the room: the distance to the nearest
+    // (negative inside it). under and over are what picks the openings in
+    // the floor and the ceiling (see needs in KINDS). (An opening reaches a
+    // unit into the room so that the two join cleanly; furniture in the way
+    // would leave a skin where they meet.) A ray may strike any of a set of
+    // them, so then all are asked; otherwise the one in our quarter of the
+    // room is the nearest.
+    out.push(js ? 'function furniture(L, f, h, under, over) {' : 'float furniture(ivec3 L, vec3 f, uint h, float under, float over) {');
+    out.push(js ? '  const t = h01(h);' : '  float t = h01(h);');
+    out.push(`  if (t < ${num(stand[0].to)}) return ${js ? 'NONE' : '1e9'};`);
+    const none = js ? 'NONE' : '1e9';
+    for (const k of stand.slice(1)) {
+      const r = KINDS.furniture[k.name], where = `the ${k.name}`;
+      const body = [];
+      const needs = Object.entries(r.needs ?? {}).map(([side, most]) => `${side} >= ${num(below(slabs, most))}`);
+      if (needs.length) body.push(`if (${needs.join(' || ')}) return ${none};`);
+      // (A box, from the place it stands at (p and q along the floor, which
+      // may be turned), or from the room's corner.)
+      const from = (a, x) => (!a ? e(x, where) : x === 0 ? a : `${a} + ${e(x, where)}`);
+      const box = (p, fp, ep, q, fq, eq, ap, aq) => [
+        { span: [p, fp, from(ap, r.box[0][0]), from(ap, r.box[0][1]), ep] },
+        { span: [q, fq, from(aq, r.box[1][0]), from(aq, r.box[1][1]), eq] },
+        { span: ['L.y', 'f.y', e(r.box[2][0], where), e(r.box[2][1], where), 1] },
+      ];
+      if (!r.at) {
+        body.push('solidPiece();', ...lang(twin.planes(js, 'solid', box('L.x', 'f.x', 0, 'L.z', 'f.z', 2))), 'return solidDone();');
+      } else {
+        if (r.diamond && r.turn !== undefined) throw new Error(`halls: ${k.name}: a diamond has no turning`);
+        // (Only the one in our quarter is asked for a distance: each must
+        // keep to its own side of the middle.)
+        const [ax, az] = r.at, reach = (a) => (r.diamond ? [-r.diamond, r.diamond] : r.box[a]);
+        if (!(ax[0] + reach(0)[1] <= C && ax[1] + reach(0)[0] >= C && az[0] + reach(1)[1] <= C && az[1] + reach(1)[0] >= C)) throw new Error(`halls: ${k.name}: not one to a quarter`);
+        if (r.turn !== undefined) {
+          body.push(...lang(js
+            ? [`const turn = bit(h, ${r.turn}) === 1;`, 'const p = turn ? L.z : L.x, q = turn ? L.x : L.z;', 'const fp = turn ? f.z : f.x, fq = turn ? f.x : f.z;', 'const ep = turn ? 2 : 0, eq = turn ? 0 : 2;']
+            : [`bool turn = ${twin.glsl(LANG, `bit(h, ${r.turn})`)} == 1;`, 'int p = turn ? L.z : L.x, q = turn ? L.x : L.z;', 'float fp = turn ? f.z : f.x, fq = turn ? f.x : f.z;', 'vec3 ep = turn ? EZ : EX, eq = turn ? EX : EZ;']));
+        } else body.push(...lang(js ? ['const p = L.x, q = L.z, fp = f.x, fq = f.z;'] : ['int p = L.x, q = L.z;', 'float fp = f.x, fq = f.z;']));
+        body.push(js ? 'let d = NONE;' : 'float d = 1e9;');
+        body.push(js ? 'const np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;' : 'int np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;');
+        body.push(js ? 'for (let k = 0; k < 4; k++) {' : 'for (int k = 0; k < 4; k++) {');
+        body.push(js ? '  const kp = k & 1, kq = k >> 1;' : '  int kp = k & 1, kq = k >> 1;');
+        body.push(js ? '  if (!S.ray && (kp !== np || kq !== nq)) continue;' : '  if (!gRay && (kp != np || kq != nq)) continue;');
+        body.push(js ? `  const cp = kp === 1 ? ${ax[1]} : ${ax[0]}, cq = kq === 1 ? ${az[1]} : ${az[0]};` : `  int cp = kp == 1 ? ${ax[1]} : ${ax[0]}, cq = kq == 1 ? ${az[1]} : ${az[0]};`);
+        body.push('  solidPiece();');
+        const turns = r.turn !== undefined;
+        const shape = r.diamond ? [{ corners: [2, 'cp', 'cq', e(r.diamond, where)], axes: [0, 2] }] : box('p', 'fp', turns ? 'ep' : 0, 'q', 'fq', turns ? 'eq' : 2, 'cp', 'cq');
+        body.push(...lang(twin.planes(js, 'solid', shape)).map((l) => '  ' + l));
+        body.push(js ? '  d = Math.min(d, solidDone());' : '  d = min(d, solidDone());', '}', 'return d;');
+      }
+      if (k.to === null) out.push(...body.map((l) => '  ' + l));
+      else out.push(`  if (t < ${num(k.to)}) {`, ...body.map((l) => '    ' + l), '  }');
+    }
+    out.push('}');
+
+    // The room: a box, less whatever stands in it.
+    out.push(js ? 'function roomAir(L, f, H, h, under, over) {' : 'float roomAir(ivec3 L, vec3 f, int H, uint h, float under, float over) {');
+    out.push('  airPiece();', ...lang(twin.planes(js, 'air', ROOM)).map((l) => '  ' + l));
+    out.push(js ? '  return Math.max(S.d, -furniture(L, f, h, under, over));' : '  float box = gD;\n  return max(box, -furniture(L, f, h, under, over));', '}');
+    return out.join('\n');
+  }
+  const C = R / 2;
+  const HHI = R - 2 * M;
+  const H2 = Math.SQRT1_2;
+  // (The JavaScript's, made into functions.)
+  const { wallShape, wallOpening, slabOpening, furniture, roomAir } = new Function(
+    'P', 'C', 'M', 'R', 'HLO', 'H2',
+    `const { S, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\n${twin.jsHelpers(LANG)}\n${pieces(true)}\nreturn { wallShape, wallOpening, slabOpening, furniture, roomAir };\n//# sourceURL=hallsPieces.gen.js`,
+  )(P, C, M, R, HLO, H2);
 
   // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
   // cell, whatever its level.)
@@ -128,132 +339,11 @@ float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 bool spaceRoom(ivec3 id, uint seed);
 bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(spec.solid)}; }
 
-// Which of three bays, each six units wide, holds u (integer division is slow).
-int bay(int u, float fu) { return int(clamp(floor((float(u - M) + fu) * (1.0 / 6.0)), 0.0, 2.0)); }
-
 // Is the point x + f on the upper side of c? (L alone is rounded, and can
 // put a point half a unit on the wrong side.)
 bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 
-// The opening, if any, through the wall on one horizontal side of the cell.
-// One shape covers every kind: centred at cu along the wall, half width hw,
-// its sill y0 above the floor, its sides rising sp before a 45-degree gable,
-// and a flat top (each out of the way where a kind has none). Faces are
-// shared, so the two cells either side hash the same owner (h) and agree on
-// what is there.
-bool wallShape(uint h, int u, float fu, out int cu, out int hw, out int y0, out int sp, out int top) {
-  float t = h01(h);
-  if (t < ${glf(wall.none)}) return false;
-  // No wall at all: the two rooms run together.
-  cu = C; hw = C - M; y0 = 0; sp = 1000; top = HLO;
-  // A door, in one of three positions.
-  if (t < ${glf(wall.door)}) { cu = C + (int(float(h & 255u) * (3.0 / 256.0)) - 1) * 5; hw = 2; sp = 5; top = 1000; }
-  // A row of three windows.
-  else if (t < ${glf(wall.windows)}) { cu = M + 3 + 6 * bay(u, fu); hw = 1; y0 = 4; sp = 3; top = 1000; }
-  // An arcade of three arches.
-  else if (t < ${glf(wall.arcade)}) { cu = M + 3 + 6 * bay(u, fu); hw = 2; sp = 6; top = 1000; }
-  return true;
-}
-
-// That opening as a piece of air: a tunnel along a (the wall's normal, ea),
-// u across the wall (eu) and y up, which reaches one unit into our own room
-// and stops at the neighbour's. p is the pair of axes (u, y), for diag().
-float wallOpening(int p, int a, float fa, int u, float fu, int y, float fy, bool high, uint h, vec3 ea, vec3 eu) {
-  int cu, hw, y0, sp, top;
-  if (!wallShape(h, u, fu, cu, hw, y0, sp, top)) return 1e9;
-  int x = u - cu, yy = y - M - y0;
-  airPiece();
-  airSpan(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1, ea);
-  airSpan(x, fu, -hw, hw, eu);
-  airSpan(yy, fy, 0, top, EY);
-  airPlane(diag(p, 1, 1, cu, M + y0, sp + hw) * 0.70710678, (eu + EY) * 0.70710678);
-  airPlane(diag(p, -1, 1, cu, M + y0, sp + hw) * 0.70710678, (EY - eu) * 0.70710678);
-  return gD;
-}
-
-// An opening through the slab above (up) or below the room: an octagonal
-// oculus, or a square light well (the oculus's diagonals out of its way).
-float slabOpening(ivec3 L, vec3 f, bool up, int H, uint h) {
-  float t = h01(h);
-  if (t < ${glf(slab.solid)}) return 1e9;
-  bool oculus = t < ${glf(slab.oculus)};
-  int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-  airPiece();
-  airSpan(L.y, f.y, up ? M + H - 1 : -M, up ? R + M : M + 1, EY);
-  airSpan(L.x - C, f.x, -w, w, EX);
-  airSpan(L.z - C, f.z, -w, w, EZ);
-  for (int j = 0; j < 4; j++) {
-    int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
-    airPlane(diag(2, sx, sz, C, C, dg) * 0.70710678, vec3(float(sx), 0.0, float(sz)) * 0.70710678);
-  }
-  return gD;
-}
-
-// Solid things standing in the room: the distance to the nearest (negative
-// inside it). under and over are what picks the openings in the floor and
-// the ceiling: nothing stands over a hole in the floor, and a pier keeps
-// clear of a light well at either end. (An opening reaches a unit into the
-// room so that the two join cleanly; furniture in the way would leave a skin
-// where they meet.) A ray may strike any of a set of them, so then all are
-// asked; otherwise the one in our quarter of the room is the nearest.
-float furniture(ivec3 L, vec3 f, uint h, float under, float over) {
-  float t = h01(h);
-  if (t < ${glf(stands.none)}) return 1e9;
-  float d = 1e9;
-  if (t < ${glf(stands.piers)}) {
-    if (max(under, over) >= ${glf(slab.oculus)}) return 1e9;
-    // Four diamond piers, floor to ceiling.
-    int nx = beyond(L.x, f.x, C) ? 1 : 0, nz = beyond(L.z, f.z, C) ? 1 : 0;
-    for (int k = 0; k < 4; k++) {
-      int kx = k & 1, kz = k >> 1;
-      if (!gRay && (kx != nx || kz != nz)) continue;
-      int cx = kx == 1 ? 17 : 7, cz = kz == 1 ? 17 : 7;
-      solidPiece();
-      for (int j = 0; j < 4; j++) {
-        int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
-        solidPlane(diag(2, sx, sz, cx, cz, 2) * 0.70710678, vec3(float(sx), 0.0, float(sz)) * 0.70710678);
-      }
-      d = min(d, solidDone());
-    }
-    return d;
-  }
-  if (under >= ${glf(slab.solid)}) return 1e9;
-  if (t < ${glf(stands.benches)}) {
-    // Two rows of benches, running along x or z (p, across q).
-    bool turn = ((h >> 5) & 1u) == 1u;
-    int p = turn ? L.z : L.x, q = turn ? L.x : L.z;
-    float fp = turn ? f.z : f.x, fq = turn ? f.x : f.z;
-    vec3 ep = turn ? EZ : EX, eq = turn ? EX : EZ;
-    int np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;
-    for (int k = 0; k < 4; k++) {
-      int kp = k & 1, kq = k >> 1;
-      if (!gRay && (kp != np || kq != nq)) continue;
-      int p0 = kp == 1 ? 13 : 6, q0 = kq == 1 ? 15 : 8;
-      solidPiece();
-      solidSpan(p, fp, p0, p0 + 5, ep);
-      solidSpan(q, fq, q0, q0 + 1, eq);
-      solidSpan(L.y, f.y, M - 1, M + 1, EY);
-      d = min(d, solidDone());
-    }
-    return d;
-  }
-  // A kiosk in the middle of the floor.
-  solidPiece();
-  solidSpan(L.x, f.x, C - 2, C + 2, EX);
-  solidSpan(L.z, f.z, C - 2, C + 2, EZ);
-  solidSpan(L.y, f.y, M - 1, M + 3, EY);
-  return solidDone();
-}
-
-// The room: a box, less whatever stands in it.
-float roomAir(ivec3 L, vec3 f, int H, uint h, float under, float over) {
-  airPiece();
-  airSpan(L.x, f.x, M, R - M, EX);
-  airSpan(L.z, f.z, M, R - M, EZ);
-  airSpan(L.y, f.y, M, M + H, EY);
-  float box = gD;
-  return max(box, -furniture(L, f, h, under, over));
-}
+${pieces(false)}
 
 float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
   reach = -1.0;
@@ -340,112 +430,10 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
 }
 `;
 
-  // The same cell, in JavaScript, piece for piece (see pieces.js). The flight
-  // asks this every frame (asking the GPU would mean waiting for it), so it
-  // must agree with the GLSL above: the tests compare the two.
-  const C = R / 2;
-  const HHI = R - 2 * M;
-  const bay = (u, fu) => Math.min(2, Math.max(0, Math.floor((u - M + fu) / 6)));
-  const H2 = Math.SQRT1_2;
-
-  function wallShape(h, u, fu) {
-    const t = h01(h);
-    if (t < wall.none) return null;
-    if (t < wall.door) return { cu: C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5, hw: 2, y0: 0, sp: 5, top: 1000 };
-    if (t < wall.windows) return { cu: M + 3 + 6 * bay(u, fu), hw: 1, y0: 4, sp: 3, top: 1000 };
-    if (t < wall.arcade) return { cu: M + 3 + 6 * bay(u, fu), hw: 2, y0: 0, sp: 6, top: 1000 };
-    return { cu: C, hw: C - M, y0: 0, sp: 1000, top: HLO };
-  }
-
-  // (ea and eu: the axes, 0 to 2, of the wall's normal and across the wall.)
-  function wallOpening(p, a, fa, u, fu, y, fy, high, h, ea, eu) {
-    const s = wallShape(h, u, fu);
-    if (!s) return NONE;
-    const { cu, hw, y0, sp, top } = s;
-    const x = u - cu, yy = y - M - y0;
-    const ux = eu === 0 ? H2 : 0, uz = eu === 2 ? H2 : 0;
-    airPiece();
-    airSpan(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1, ea);
-    airSpan(x, fu, -hw, hw, eu);
-    airSpan(yy, fy, 0, top, 1);
-    airPlane(diag(p, 1, 1, cu, M + y0, sp + hw) * H2, ux, H2, uz);
-    airPlane(diag(p, -1, 1, cu, M + y0, sp + hw) * H2, -ux, H2, -uz);
-    return S.d;
-  }
-
-  function slabOpening(L, f, up, H, h) {
-    const t = h01(h);
-    if (t < slab.solid) return NONE;
-    const oculus = t < slab.oculus;
-    const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-    airPiece();
-    airSpan(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1, 1);
-    airSpan(L[0] - C, f[0], -w, w, 0);
-    airSpan(L[2] - C, f[2], -w, w, 2);
-    for (let j = 0; j < 4; j++) {
-      const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
-      airPlane(diag(2, sx, sz, C, C, dg) * H2, sx * H2, 0, sz * H2);
-    }
-    return S.d;
-  }
-
-  // Solid things standing in the room, as in the GLSL: for a distance, the
-  // one in our quarter of the room is the nearest; a ray may strike any of a
-  // set, so then all are asked.
-  function furniture(L, f, h, under, over) {
-    const t = h01(h);
-    if (t < stands.none) return NONE;
-    let d = NONE;
-    if (t < stands.piers) {
-      if (Math.max(under, over) >= slab.oculus) return NONE;
-      const nx = beyond(L[0], f[0], C) ? 1 : 0, nz = beyond(L[2], f[2], C) ? 1 : 0;
-      for (let k = 0; k < 4; k++) {
-        const kx = k & 1, kz = k >> 1;
-        if (!S.ray && (kx !== nx || kz !== nz)) continue;
-        const cx = kx === 1 ? 17 : 7, cz = kz === 1 ? 17 : 7;
-        solidPiece();
-        for (let j = 0; j < 4; j++) {
-          const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
-          solidPlane(diag(2, sx, sz, cx, cz, 2) * H2, sx * H2, 0, sz * H2);
-        }
-        d = Math.min(d, solidDone());
-      }
-      return d;
-    }
-    if (under >= slab.solid) return NONE;
-    if (t < stands.benches) {
-      const turn = ((h >>> 5) & 1) === 1;
-      const p = turn ? L[2] : L[0], q = turn ? L[0] : L[2];
-      const fp = turn ? f[2] : f[0], fq = turn ? f[0] : f[2];
-      const ep = turn ? 2 : 0, eq = turn ? 0 : 2;
-      const np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;
-      for (let k = 0; k < 4; k++) {
-        const kp = k & 1, kq = k >> 1;
-        if (!S.ray && (kp !== np || kq !== nq)) continue;
-        const p0 = kp === 1 ? 13 : 6, q0 = kq === 1 ? 15 : 8;
-        solidPiece();
-        solidSpan(p, fp, p0, p0 + 5, ep);
-        solidSpan(q, fq, q0, q0 + 1, eq);
-        solidSpan(L[1], f[1], M - 1, M + 1, 1);
-        d = Math.min(d, solidDone());
-      }
-      return d;
-    }
-    solidPiece();
-    solidSpan(L[0], f[0], C - 2, C + 2, 0);
-    solidSpan(L[2], f[2], C - 2, C + 2, 2);
-    solidSpan(L[1], f[1], M - 1, M + 3, 1);
-    return solidDone();
-  }
-
-  function roomAir(L, f, H, h, under, over) {
-    airPiece();
-    airSpan(L[0], f[0], M, R - M, 0);
-    airSpan(L[2], f[2], M, R - M, 2);
-    airSpan(L[1], f[1], M, M + H, 1);
-    const box = S.d;
-    return Math.max(box, -furniture(L, f, h, under, over));
-  }
+  // The same cell, in JavaScript (its pieces written above from the same
+  // rows). The flight asks this every frame (asking the GPU would mean
+  // waiting for it), so it must agree with the GLSL above: the tests compare
+  // the two.
 
   const ancestors = new Map(); // level -> where its cell sits in its parent
   // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)

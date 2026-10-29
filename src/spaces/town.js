@@ -54,21 +54,19 @@ export const TOWN_TYPES = [
     box: ['along ? u0 : ix0', '0', 'along ? iz0 : u0', 'along ? u1 : ix1', 'hk', 'along ? iz1 : u1'] },
 ];
 
-// The words a catalogue of buildings is written in (see twin.js): its
-// helpers, and how GLSL writes each. (lit: a whole number as a uint
-// literal, anything else converted.)
-const lit = (x) => (/^\d+$/.test(x) ? `${x}u` : `uint(${x})`);
+// The words a catalogue of buildings is written in (see twin.js): the
+// shared helpers, and top.
 const LANG = {
   name: 'town',
   hashes: ['h', 'h2'],
   hashed: ['bit', 'field'],
   helpers: {
-    bit: { n: 2, glsl: ([h, n]) => `int((${h} >> ${lit(n)}) & 1u)` },
-    field: { n: 3, glsl: ([h, n, m]) => `int((${h} >> ${lit(n)}) % ${lit(m)})` },
-    top: { n: 1, glsl: ([y]) => `min(TOWN_H, ${y})` },
-    div: { n: 2, glsl: ([a, b]) => `((${a}) / (${b}))` },
-    min: { n: 2, glsl: ([a, b]) => `min(${a}, ${b})` },
-    max: { n: 2, glsl: ([a, b]) => `max(${a}, ${b})` },
+    bit: twin.HELPERS.bit,
+    field: twin.HELPERS.field,
+    top: { n: 1, glsl: ([y]) => `min(TOWN_H, ${y})`, js: '(y) => Math.min(TOWN_H, y)' },
+    div: twin.HELPERS.div,
+    min: twin.HELPERS.min,
+    max: twin.HELPERS.max,
   },
 };
 const words = (e, names, where) => twin.words(LANG, e, names, where);
@@ -105,10 +103,9 @@ function demotion(types) {
 // What each name a type declares holds, number or true or false, found by
 // working it out (for GLSL's declarations): on a lot as big as a cell, any
 // hashes, its first box.
-const JS_HELPERS = 'const bit = (x, n) => (x >>> n) & 1, field = (x, n, m) => (x >>> n) % m, top = (y) => Math.min(24, y), div = (a, b) => Math.floor(a / b), min = Math.min, max = Math.max;';
 function kinds(types) {
   const lot = `const h = 0x9e3779b9, h2 = 0x7f4a7c15, x0 = 0, z0 = 0, x1 = 24, z1 = 24, k = 0;\n${Object.entries(PREAMBLE).map(([v, e]) => `const ${v} = ${e};`).join('\n')}`;
-  return types.map((t) => twin.kinds(`${JS_HELPERS}\n${lot}`, Object.entries({ ...t.vars, ...t.each })));
+  return types.map((t) => twin.kinds(`const TOWN_H = 24;\n${twin.jsHelpers(LANG)}\n${lot}`, Object.entries({ ...t.vars, ...t.each })));
 }
 
 // The most boxes a building of a catalogue has (by default, TOWN_TYPES).
@@ -156,11 +153,7 @@ function write(js, types) {
 // helpers throw where their numbers are out of their range (for the tests).
 // types: the catalogue (by default, TOWN_TYPES); likewise for the GLSL.
 export function townShapeJs(H, checked = false, types = TOWN_TYPES) {
-  const helpers = checked
-    ? `const bit = (x, n) => (x >>> n) & 1, top = (y) => Math.min(${H}, y), min = Math.min, max = Math.max;
-const field = (x, n, m) => { if (!(m > 0 && n >= 0 && n < 32)) throw new Error('town: field(' + n + ', ' + m + ')'); return (x >>> n) % m; };
-const div = (a, b) => { if (!(b > 0 && a >= 0)) throw new Error('town: div(' + a + ', ' + b + ')'); return Math.floor(a / b); };`
-    : JS_HELPERS.replace('Math.min(24, y)', `Math.min(${H}, y)`);
+  const helpers = `const TOWN_H = ${H};\n${twin.jsHelpers(LANG, checked)}`;
   const body = `${helpers}
 return function townShape(h, h2, [x0, z0, x1, z1], dens, k) {
 if (h2 % 100 >= dens) return null;
