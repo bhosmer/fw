@@ -243,6 +243,70 @@ check('the shader and the JavaScript agree at the city\'s level', async () => {
   }
 });
 
+// The shader's town and the JavaScript's, both made from one catalogue
+// (TOWN_TYPES, src/spaces/town.js): townShape alone, drawn for many hashes,
+// every plan's lots and lots of every size, both densities and every box,
+// into a texture of whole numbers, and compared. (The pictures show few
+// lots; and a GLSL compiler has been seen to get such numbers wrong: ledger
+// B20.)
+check('the shader\'s town is the JavaScript\'s', async () => {
+  const T = await import(join(ROOT, 'src', 'spaces', 'town.js')), { _V2 } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const { townShape, TOWN, TOWN_PLANS } = _V2;
+  const lots = TOWN_PLANS.flat();
+  for (let W = 0; W <= 26; W += 2) for (let D = 0; D <= 26; D += 3) lots.push([0, 0, W + 2, D + 2]);
+  let seed = 3;
+  const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+  const cases = [];
+  for (let it = 0; it < 80; it++) {
+    const h = it < 2 ? [0, 0xffffffff][it] : Math.floor(rnd() * 2 ** 32), h2 = it < 2 ? [0, 0xffffffff][it] : Math.floor(rnd() * 2 ** 32);
+    for (const r of lots) for (const dens of [15, 45, 80, 100]) for (let k = 0; k < T.TOWN_SHAPES; k++) cases.push([h, h2, r, dens, k]);
+  }
+  const fs = `#version 300 es
+precision highp float; precision highp int;
+const int TOWN_H = ${TOWN.H};
+${T.townShapeGlsl()}
+uniform highp usampler2D uIn;
+uniform int uW;
+out ivec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy), q = ivec2(p.x / 2 * 2, p.y);
+  uvec4 a = texelFetch(uIn, q, 0), b = texelFetch(uIn, q + ivec2(1, 0), 0);
+  vec3 lo, hi;
+  bool ok = townShape(a.x, a.y, ivec4(b), a.z, int(a.w), lo, hi);
+  o = p.x % 2 == 0 ? ivec4(ok ? 1 : 0, ivec3(lo)) : ivec4(ivec3(hi), 0);
+}`;
+  const W = 256, H = Math.ceil(cases.length / W), input = new Uint32Array(2 * W * H * 4);
+  cases.forEach(([h, h2, r, dens, k], i) => input.set([h, h2, dens, k, ...r], 8 * i));
+  await load('start', 'alhambra');
+  const got = await page.eval(`(() => {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, '#version 300 es\\nvoid main() { gl_Position = vec4(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0, 0.0, 1.0); }'));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, ${JSON.stringify(fs)}));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    const tex = (f, data) => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texStorage2D(gl.TEXTURE_2D, 1, f, ${2 * W}, ${H}); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); if (data) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, ${2 * W}, ${H}, gl.RGBA_INTEGER, gl.UNSIGNED_INT, data); return t; };
+    const tin = tex(gl.RGBA32UI, new Uint32Array(${JSON.stringify([...input])})), tout = tex(gl.RGBA32I);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gl.createFramebuffer());
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tout, 0);
+    gl.viewport(0, 0, ${2 * W}, ${H});
+    gl.useProgram(p);
+    gl.bindTexture(gl.TEXTURE_2D, tin);
+    gl.uniform1i(gl.getUniformLocation(p, 'uIn'), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const out = new Int32Array(${2 * W * H * 4});
+    gl.readPixels(0, 0, ${2 * W}, ${H}, gl.RGBA_INTEGER, gl.INT, out);
+    return Array.from(out);
+  })()`);
+  let differ = 0, first = null;
+  cases.forEach(([h, h2, r, dens, k], i) => {
+    const g = got.slice(8 * i, 8 * i + 8), gpu = g[0] ? [g[1], g[2], g[3], g[4], g[5], g[6]] : null, js = townShape(h, h2, r, dens, k);
+    if (JSON.stringify(gpu) !== JSON.stringify(js)) (differ++), (first ??= { h, h2, r, dens, k, js, gpu });
+  });
+  assert(differ === 0, `${differ} of ${cases.length} boxes differ, as ${JSON.stringify(first)}`);
+});
+
 // From up above each world too, the exact way sees nothing the older one
 // does not. (In the arcology it once saw the city as a plain: the cells
 // over it claimed to be solid further down than the city's air begins.)

@@ -26,6 +26,7 @@ import * as P from '../pieces.js';
 import halls, { HALLS, hallsGlsl, hallsAir, hallsRoom, hallsOpenings, built, R, M } from './halls.js';
 import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
 import { hexahedron, GROUND } from './hexahedron.js';
+import { townShapeJs, townShapeGlsl, TOWN_SHAPES } from './town.js';
 
 const wrapId = (id) => wrapIdR(id, R);
 const C = R / 2;
@@ -737,7 +738,7 @@ if (SOLIDS.length >= 1 << SOLID_BITS) throw new Error(`arcology: ${SOLIDS.length
 // -+, --). Each cell is laid out in lots by one of TOWN_PLANS, and each lot
 // holds up to TOWN_SHAPES boxes (a building) standing in it, by its hash,
 // all at least TOWN_MARGIN inside it.
-const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = 1, TOWN_SHAPES = 4;
+const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = 1;
 const TOWN = (() => {
   const s = SOLIDS.find((x) => x.town);
   if (!s) return null;
@@ -758,50 +759,9 @@ const TOWN_PLANS = [
   [[0, 0, 8, 24], ...[0, 1, 2].flatMap((j) => [1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8]))],
 ];
 const TOWN_PICK = [0, 0, 1, 1, 2, 3, 4, 5];
-// Box k of a lot r, by the lot's hashes h, h2 and its cluster's density:
-// [x0, y0, z0, x1, y1, z1] in units over the cell's corner and the floor, or
-// null (see townShape in the GLSL, the same). Buildings: a block; a block
-// with a setback tier; an L; a court (a ring round an open yard); a tower on
-// a podium; a row of attached units along a long lot.
-function townShape(h, h2, r, dens, k) {
-  if (h2 % 100 >= dens) return null;
-  const H = TOWN.H, top = (y) => Math.min(H, y);
-  const ix0 = r[0] + 1, iz0 = r[1] + 1, ix1 = r[2] - 1, iz1 = r[3] - 1, W = ix1 - ix0, D = iz1 - iz0;
-  let t = (h >>> 7) % 6;
-  if (t === 5 && Math.max(W, D) < 14) t = 0;
-  if (t === 3 && (W < 9 || D < 9)) t = 2;
-  if (t === 4 && (W < 6 || D < 6)) t = 1;
-  if (t === 2 && (W < 5 || D < 5)) t = 0;
-  if (t === 1 && (W < 4 || D < 4)) t = 0;
-  const h1 = top(3 + ((h >>> 10) % 10)), hb = top(3 + ((h2 >>> 7) % 10));
-  if (t === 0) return k === 0 ? [ix0 + ((h >>> 14) & 1), 0, iz0 + ((h >>> 15) & 1), ix1 - ((h >>> 16) & 1), h1, iz1 - ((h >>> 17) & 1)] : null;
-  if (t === 1) {
-    if (k === 0) return [ix0, 0, iz0, ix1, h1, iz1];
-    const s = 1 + ((h >>> 14) & 1);
-    return k === 1 ? [ix0 + s, 0, iz0 + s, ix1 - s, top(h1 + 2 + ((h >>> 18) % 4)), iz1 - s] : null;
-  }
-  if (t === 2) {
-    const a = 2 + ((h2 >>> 11) % (W - 3)), b = 2 + ((h2 >>> 15) % (D - 3)), fx = (h >>> 14) & 1, fz = (h >>> 15) & 1;
-    if (k === 0) return [fx ? ix1 - a : ix0, 0, iz0, fx ? ix1 : ix0 + a, h1, iz1];
-    return k === 1 ? [ix0, 0, fz ? iz1 - b : iz0, ix1, hb, fz ? iz1 : iz0 + b] : null;
-  }
-  if (t === 3) {
-    const w = 2 + ((h2 >>> 11) & 1), hh = top(3 + ((h2 >>> 12) % 6));
-    if (k === 0) return [ix0, 0, iz0, ix1, hh, iz0 + w];
-    if (k === 1) return [ix0, 0, iz1 - w, ix1, hh, iz1];
-    if (k === 2) return [ix0, 0, iz0 + w, ix0 + w, hh, iz1 - w];
-    return [ix1 - w, 0, iz0 + w, ix1, top(hh + ((h2 >>> 16) % 3)), iz1 - w];
-  }
-  if (t === 4) {
-    if (k === 0) return [ix0, 0, iz0, ix1, top(2 + ((h2 >>> 11) & 1)), iz1];
-    const s = 2 + ((h2 >>> 12) % 3), ox = ix0 + 1 + ((h2 >>> 14) % (W - s - 1)), oz = iz0 + 1 + ((h2 >>> 18) % (D - s - 1));
-    return k === 1 ? [ox, 0, oz, ox + s, top(8 + ((h2 >>> 22) % 5)), oz + s] : null;
-  }
-  const n = 2 + ((h2 >>> 11) % 3), along = W >= D, a0 = along ? ix0 : iz0, w = along ? W : D;
-  if (k >= n) return null;
-  const u0 = a0 + Math.floor((w * k) / n), u1 = a0 + Math.floor((w * (k + 1)) / n), hk = top(3 + ((h2 >>> (14 + 3 * k)) % 8));
-  return along ? [u0, 0, iz0, u1, hk, iz1] : [ix0, 0, u0, ix1, hk, u1];
-}
+// Box k of a lot r, by the lot's hashes h, h2 and its cluster's density
+// (see TOWN_TYPES in town.js, whence the shader's too).
+const townShape = townShapeJs(TOWN ? TOWN.H : 1);
 // A box's distance at p.
 const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
 // A cell's plan and its density (by its cluster, two cells square), by its hashes.
@@ -1654,6 +1614,8 @@ float windowAir(int j, ivec3 L, vec3 f, float d, bool ray, inout float reach, in
       vw = B - A - 2 * gv.w;
       vd = int(hs % 100u) < gb.z ? 0 : gb.x + int((hs >> 8u) % uint(gb.y - gb.x + 1));
       if (gb.w > 0) {
+        // (J is not known when compiled: were it, (hv >> 16u) % J would meet
+        // ledger B20's compiler fault. Keep it so, or the shift elsewhere.)
         uint hv = hashCell(ivec3(cu, 4 * cy + i, k), SEGMENT_SALT ^ 3u), J = uint(gb.w + 1);
         jb = int(hv % J); jt = int((hv >> 8u) % J);
         int jl = int((hv >> 16u) % J), jr = int((hv >> 24u) % J);
@@ -1787,59 +1749,9 @@ float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3
   return a;
 }
 
-// Box k of a lot r of the town (see townShape in the JS, the same), in units
-// over the cell's corner and the floor.
-bool townShape(uint h, uint h2, ivec4 r, uint dens, int k, out vec3 lo, out vec3 hi) {
-  lo = vec3(0.0); hi = vec3(0.0);
-  if (h2 % 100u >= dens) return false;
-  int ix0 = r.x + 1, iz0 = r.y + 1, ix1 = r.z - 1, iz1 = r.w - 1, W = ix1 - ix0, D = iz1 - iz0;
-  int t = int((h >> 7u) % 6u);
-  if (t == 5 && max(W, D) < 14) t = 0;
-  if (t == 3 && (W < 9 || D < 9)) t = 2;
-  if (t == 4 && (W < 6 || D < 6)) t = 1;
-  if (t == 2 && (W < 5 || D < 5)) t = 0;
-  if (t == 1 && (W < 4 || D < 4)) t = 0;
-  int h1 = min(TOWN_H, 3 + int((h >> 10u) % 10u)), hb = min(TOWN_H, 3 + int((h2 >> 7u) % 10u));
-  ivec3 a, b;
-  if (t == 0) {
-    if (k != 0) return false;
-    a = ivec3(ix0 + int((h >> 14u) & 1u), 0, iz0 + int((h >> 15u) & 1u));
-    b = ivec3(ix1 - int((h >> 16u) & 1u), h1, iz1 - int((h >> 17u) & 1u));
-  } else if (t == 1) {
-    if (k == 0) { a = ivec3(ix0, 0, iz0); b = ivec3(ix1, h1, iz1); }
-    else if (k == 1) {
-      int s = 1 + int((h >> 14u) & 1u);
-      a = ivec3(ix0 + s, 0, iz0 + s); b = ivec3(ix1 - s, min(TOWN_H, h1 + 2 + int((h >> 18u) % 4u)), iz1 - s);
-    } else return false;
-  } else if (t == 2) {
-    int aa = 2 + int((h2 >> 11u) % uint(W - 3)), bb = 2 + int((h2 >> 15u) % uint(D - 3));
-    bool fx = ((h >> 14u) & 1u) != 0u, fz = ((h >> 15u) & 1u) != 0u;
-    if (k == 0) { a = ivec3(fx ? ix1 - aa : ix0, 0, iz0); b = ivec3(fx ? ix1 : ix0 + aa, h1, iz1); }
-    else if (k == 1) { a = ivec3(ix0, 0, fz ? iz1 - bb : iz0); b = ivec3(ix1, hb, fz ? iz1 : iz0 + bb); }
-    else return false;
-  } else if (t == 3) {
-    int ww = 2 + int((h2 >> 11u) & 1u), hh = min(TOWN_H, 3 + int((h2 >> 12u) % 6u));
-    if (k == 0) { a = ivec3(ix0, 0, iz0); b = ivec3(ix1, hh, iz0 + ww); }
-    else if (k == 1) { a = ivec3(ix0, 0, iz1 - ww); b = ivec3(ix1, hh, iz1); }
-    else if (k == 2) { a = ivec3(ix0, 0, iz0 + ww); b = ivec3(ix0 + ww, hh, iz1 - ww); }
-    else { a = ivec3(ix1 - ww, 0, iz0 + ww); b = ivec3(ix1, min(TOWN_H, hh + int((h2 >> 16u) % 3u)), iz1 - ww); }
-  } else if (t == 4) {
-    if (k == 0) { a = ivec3(ix0, 0, iz0); b = ivec3(ix1, min(TOWN_H, 2 + int((h2 >> 11u) & 1u)), iz1); }
-    else if (k == 1) {
-      int s = 2 + int((h2 >> 12u) % 3u), ox = ix0 + 1 + int((h2 >> 14u) % uint(W - s - 1)), oz = iz0 + 1 + int((h2 >> 18u) % uint(D - s - 1));
-      a = ivec3(ox, 0, oz); b = ivec3(ox + s, min(TOWN_H, 8 + int((h2 >> 22u) % 5u)), oz + s);
-    } else return false;
-  } else {
-    int n = 2 + int((h2 >> 11u) % 3u);
-    if (k >= n) return false;
-    bool along = W >= D;
-    int a0 = along ? ix0 : iz0, ww = along ? W : D, u0 = a0 + (ww * k) / n, u1 = a0 + (ww * (k + 1)) / n;
-    int hk = min(TOWN_H, 3 + int((h2 >> uint(14 + 3 * k)) % 8u));
-    if (along) { a = ivec3(u0, 0, iz0); b = ivec3(u1, hk, iz1); } else { a = ivec3(ix0, 0, u0); b = ivec3(ix1, hk, u1); }
-  }
-  lo = vec3(a); hi = vec3(b);
-  return true;
-}
+// Box k of a lot r of the town, in units over the cell's corner and the
+// floor (made from TOWN_TYPES in town.js, as the JS's is).
+${townShapeGlsl()}
 
 // A box of the town as a solid at p (its distance; for a ray, where it strikes).
 float boxSolid(vec3 lo, vec3 hi, vec3 p) {
