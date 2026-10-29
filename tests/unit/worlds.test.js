@@ -96,7 +96,7 @@ for (const space of WORLDS) {
         }
       }
     }
-    if (space.name === 'halls') assert.ok(rays > 1000 && inAir > 300, `${rays} rays, ${inAir} in air: the test reaches what it means to`);
+    assert.ok(rays > 1000 && inAir > 100, `${rays} rays, ${inAir} in air: the test reaches what it means to`);
   });
 
   test(`${space.name}: the world is the same every time`, () => {

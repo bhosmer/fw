@@ -272,17 +272,18 @@ test('the town\'s buildings keep their margin within their lots', () => {
   assert.ok(worst >= 1 - 1e-9, `a box ${worst} from its lot's edge`);
 });
 
-// Rays in the buildings' openings (see openings): from points in each skin
-// or plain cell with openings (but the town's) of the city's own cell, along
-// the axes and diagonals and two others, what a level says of a ray holds
-// (see rayHolds); and many more points where two or more solids' openings
-// are (they may overlap, or one run on through another).
-test('what the openings say of a ray holds', () => {
-  const { TOWN_AT, SKIN, PLAIN, WIN_AT, SOLID_BITS } = _V2.BITS;
+// Rays in the buildings' openings (see openings) and the town (see
+// townAir): from points in each skin or plain cell with openings or town of
+// the city's own cell, along the axes and diagonals and two others, what a
+// level says of a ray holds (see rayHolds); and many more points where two
+// or more solids' openings are (they may overlap, or one run on through
+// another), and in the town (among its lots' boxes).
+test('what the openings and the town say of a ray holds', () => {
+  const { TOWN_AT, SKIN, PLAIN, WIN_AT, SOLID_BITS, OPEN_AT } = _V2.BITS;
   const rnd = rand(19);
   const s = Math.SQRT1_2;
   const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
-  let cells = 0, shared = 0, inAir = 0;
+  let cells = 0, shared = 0, towns = 0, inAir = 0, townAir = 0, corners = 0;
   const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 });
   // (The camera at frac in cell x, y, z; its record of the level.)
   const at = (x, y, z, frac) => {
@@ -294,16 +295,35 @@ test('what the openings say of a ray holds', () => {
     const r0 = at(x, y, z, [0.5, 0.5, 0.5]);
     const [m, , wins] = _V2.relief(r0.id.map((q) => ((q % P) + P) % P), r0.pid);
     const kind = m & 3;
-    if (!(kind === SKIN || kind === PLAIN) || !wins || (kind === PLAIN && (m >>> TOWN_AT) & 1)) continue;
+    const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
+    if (!(kind === SKIN || kind === PLAIN) || !(wins || town)) continue;
     cells++;
     const solids = WIN_AT.filter((b) => (wins >>> b) & ((1 << SOLID_BITS) - 1)).length;
     shared += solids > 1;
-    for (let k = 0; k < (solids > 1 ? 40 : 1); k++) {
-      at(x, y, z, [rnd(), rnd(), rnd()]);
+    towns += town;
+    // (From a point, along each of es: how many in air.)
+    const ask = (frac, es) => {
+      at(x, y, z, frac.slice());
       flight.sense();
       const r = mine();
-      for (const e of k ? [dirs[k % dirs.length]] : dirs) inAir += rayHolds(flight, r, [0, 0, 0], e.map((v) => v / Math.hypot(...e))).inAir;
+      return es.reduce((n, e) => n + rayHolds(flight, r, [0, 0, 0], e.map((v) => v / Math.hypot(...e)), `cell ${[x, y, z]} frac ${frac}`).inAir, 0);
+    };
+    for (let k = 0; k < (solids > 1 || town ? 40 : 1); k++) {
+      const said = ask([rnd(), rnd(), rnd()], k ? [dirs[k % dirs.length]] : dirs);
+      inAir += said;
+      if (town) townAir += said;
     }
+    // (And in the town, toward each corner it cuts off aslant: into the
+    // square across it, which is not the town's.)
+    const open = (m >>> OPEN_AT) & 63, cut = (m >>> (TOWN_AT + 1)) & 15;
+    if (town) [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([sx, sz], c) => {
+      if (!(open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(cut & (1 << c)))) return;
+      for (let k = 0; k < 12; k++) {
+        const frac = [rnd(), rnd(), rnd()];
+        const to = [sx > 0 ? 1 + rnd() * 0.05 : -rnd() * 0.05, rnd(), sz > 0 ? 1 + rnd() * 0.05 : -rnd() * 0.05];
+        corners += ask(frac, [to.map((v, a) => v - frac[a])]);
+      }
+    });
   }
-  assert.ok(cells > 1000 && shared > 50 && inAir > 2000, `${cells} cells (${shared} with openings of more than one solid), ${inAir} rays in air: the test reaches the openings`);
+  assert.ok(cells > 1000 && shared > 50 && towns > 20 && inAir > 2000 && townAir > 1000 && corners > 150, `${cells} cells (${shared} with openings of more than one solid, ${towns} with town), ${inAir} rays in air (${townAir} in the town, ${corners} toward its corners): the test reaches the openings and the town`);
 });

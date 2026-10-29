@@ -8,13 +8,14 @@ import assert from 'node:assert/strict';
 // one (a piece may run on out of its cell where a coarser level's air is,
 // as an opening out of a building does into the city's); and the surface it
 // meets there faces back along it. Says whether it was known, and in air.
-export function rayHolds(flight, r, v, dir) {
+// (at: where the point is, for the messages.)
+export function rayHolds(flight, r, v, dir, at = '') {
   const R = flight.space.R;
   const ray = { dir };
   const a = flight.airAt(r, v, ray);
   assert.equal(a, flight.airAt(r, v), 'the distance is the same, asked with a ray or not');
   if (!ray.known) return { known: false, inAir: false };
-  const where = `level ${r.level} at F ${flight.pos.F}, v ${v}, dir ${dir}`;
+  const where = `level ${r.level} at F ${flight.pos.F}, v ${v}, dir ${dir}${at && `, ${at}`}`;
   assert.equal(ray.reach >= 0, a <= 0, `in air (${a}) but reach ${ray.reach}, ${where}`);
   if (ray.reach < 0) return { known: true, inAir: false };
   assert.ok(ray.reach >= -a - 1e-9, `reach ${ray.reach} less than the distance ${-a}, ${where}`);

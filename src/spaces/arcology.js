@@ -2556,31 +2556,33 @@ function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
   cellOpen = (wrun >>> OPEN_AT) & 63;
   cellCross = !!((wrun >>> CROSS_AT) & 1);
   const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
-  // (A ray, where the cell's air is all pockets and openings: not yet the
-  // town's.)
-  if (ray && !town) P.aim(ray);
-  else ray = null;
+  if (ray) P.aim(ray);
   const a = openings(L, f, wins, clip, ray);
   cellOpen = (m >>> OPEN_AT) & 63;
   cellCross = !!((clip >>> CROSS_AT) & 1);
-  const t = town ? townAir(L, f, m) : NONE;
+  const t = town ? townAir(L, f, m, ray) : NONE;
   return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
 }
 
 // See townAir in the shader.
-function townAir(L, f, m) {
+// (ray: as in hallsAir, aimed already.)
+function townAir(L, f, m, ray) {
   const p = [0, 1, 2].map((a) => L[a] + f[a]), open = (m >>> OPEN_AT) & 63, corner = (m >>> TOWN_CORNER_AT) & 15;
-  piece();
-  plane(-p[1]);
-  plane(p[1] - R);
-  plane(p[0] - R - (open & 1 ? TOWN_MARGIN : 0));
-  plane(-p[0] - (open & 2 ? TOWN_MARGIN : 0));
-  plane(p[2] - R - (open & 16 ? TOWN_MARGIN : 0));
-  plane(-p[2] - (open & 32 ? TOWN_MARGIN : 0));
-  TOWN_CORNERS.forEach(([sx, sz], c) => {
-    if (open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(corner & (1 << c))) plane((sx * (p[0] - (sx > 0 ? R : 0)) + sz * (p[2] - (sz > 0 ? R : 0))) * Math.SQRT1_2);
-  });
-  const box = gD;
+  const sides = () => {
+    P.airPiece();
+    P.airPlane(-p[1], 0, -1, 0);
+    P.airPlane(p[1] - R, 0, 1, 0);
+    P.airPlane(p[0] - R - (open & 1 ? TOWN_MARGIN : 0), 1, 0, 0);
+    P.airPlane(-p[0] - (open & 2 ? TOWN_MARGIN : 0), -1, 0, 0);
+    P.airPlane(p[2] - R - (open & 16 ? TOWN_MARGIN : 0), 0, 0, 1);
+    P.airPlane(-p[2] - (open & 32 ? TOWN_MARGIN : 0), 0, 0, -1);
+    TOWN_CORNERS.forEach(([sx, sz], c) => {
+      if (open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(corner & (1 << c)))
+        P.airPlane((sx * (p[0] - (sx > 0 ? R : 0)) + sz * (p[2] - (sz > 0 ? R : 0))) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
+    });
+    return P.S.d;
+  };
+  const box = sides();
   // (The point's own lot: the first holding it.)
   const { dens, plan } = townCell();
   // (A lot at the cell's far side holds the side too: p can be on it.)
@@ -2591,7 +2593,35 @@ function townAir(L, f, m) {
     const b = townShape(h, h2, r, dens, k);
     if (b) d = Math.min(d, boxDist(b, p));
   }
-  return Math.max(box, -d);
+  const t = Math.max(box, -d);
+  if (ray && t <= 0) {
+    // (A ray: every lot it could reach before it leaves.)
+    P.S.ray = true;
+    sides();
+    plan.forEach((r, l) => {
+      if (Math.max(r[0] - p[0], -p[1], r[1] - p[2], p[0] - r[2], p[1] - TOWN.H, p[2] - r[3]) >= P.S.x) return;
+      const h = lotHash(l, 7), h2 = lotHash(l, 8);
+      for (let k = 0; k < TOWN_SHAPES; k++) {
+        const b = townShape(h, h2, r, dens, k);
+        if (b) boxSolid(b, p);
+      }
+    });
+    P.S.ray = false;
+    if (P.S.x > ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+  }
+  return t;
+}
+
+// See boxSolid in the shader.
+function boxSolid([x0, y0, z0, x1, y1, z1], p) {
+  P.solidPiece();
+  P.solidPlane(x0 - p[0], -1, 0, 0);
+  P.solidPlane(p[0] - x1, 1, 0, 0);
+  P.solidPlane(y0 - p[1], 0, -1, 0);
+  P.solidPlane(p[1] - y1, 0, 1, 0);
+  P.solidPlane(z0 - p[2], 0, 0, -1);
+  P.solidPlane(p[2] - z1, 0, 0, 1);
+  return P.solidDone();
 }
 
 // See openings in the shader.
@@ -2669,9 +2699,8 @@ function groundAir(L, f, own) {
   return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
 }
 
-// (ray: see hallsAir. The halls' cells, the relief's skin and plain cells
-// (not yet the town's), and cells all solid answer it; elsewhere (the
-// town, the city level) it is not known yet.)
+// (ray: see hallsAir. The halls' cells, the relief's cells, and cells all
+// solid answer it; elsewhere (the city level) it is not known yet.)
 function cellAir(L, f, id, seed, dg, level, up, ray) {
   const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
   if (ray) ray.known = false;

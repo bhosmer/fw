@@ -132,18 +132,26 @@ check('the shader and the JavaScript agree about rays', async () => {
 
 // In the arcology's skin, where the buildings' relief is (fw.check flies
 // from the start and seldom gets there): at points in and around the skin
-// cells, the camera put there, every level asked about.
+// cells, the camera put there, every level asked about; and about rays, there
+// and in the plain cells' openings and the town.
 check('the shader and the JavaScript agree in the arcology\'s skin', async () => {
-  const { VOLUME } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
-  const { lo, size, kind, at: cellAt } = VOLUME;
-  const cells = [];
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
-    if (kind[cellAt([x, y, z])] === 2) cells.push([x + lo[0], y + lo[1], z + lo[2]]);
+  const { VOLUME, _V2 } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const { lo, size, kind, data, words, at: cellAt } = VOLUME, { TOWN_AT, SKIN, PLAIN, WIN_AT, SOLID_BITS } = _V2.BITS;
+  const groups = { skin: [], openings: [], overlaps: [], town: [] };
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+    const v = cellAt([x, y, z]), c = [x + lo[0], y + lo[1], z + lo[2]];
+    if (kind[v] === SKIN) groups.skin.push(c);
+    else if (kind[v] === PLAIN && (data[words * v] >>> TOWN_AT) & 1) groups.town.push(c);
+    else if (kind[v] === PLAIN && data[words * v + 2]) groups.openings.push(c);
+    // (Where two or more solids' openings are, which may overlap.)
+    if (WIN_AT.filter((b) => (data[words * v + 2] >>> b) & ((1 << SOLID_BITS) - 1)).length > 1) groups.overlaps.push(c);
+  }
   let seed = 7;
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
   // (Lattice units of level CITY + 1 from the middle city cell's corner, as
   // fractions of the cell of level CITY - 1 the building is in.)
-  const points = Array.from({ length: 1000 }, () => cells[Math.floor(rnd() * cells.length)].map((x) => (12 + (x - 0.5 + 2 * rnd()) / 24) / 24));
+  const pick = (cells, n) => Array.from({ length: n }, () => cells[Math.floor(rnd() * cells.length)].map((x) => (12 + (x - 0.5 + 2 * rnd()) / 24) / 24));
+  const points = pick(groups.skin, 1000);
   await load('start', 'alhambra', false, 'arcology');
   const worst = await page.eval(`(() => {
     let worst = { diff: 0 };
@@ -158,23 +166,27 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
     return worst;
   })()`);
   assert(worst.diff < 1e-3, `they differ by ${JSON.stringify(worst)}`);
-  // (And about rays, where the JavaScript answers them, from the same points.)
-  const rays = await page.eval(`(() => {
-    const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
-    let k = 0;
-    for (const frac of ${JSON.stringify(points)}) {
-      fw.pos.F = -3; fw.pos.frac = frac; fw.pos.digits = new Map();
-      for (let j = 0; j < 3; j++) {
-        const a = (k++ * 2.399963) % 6.283, z = ((k * 0.618034) % 1) * 2 - 1, c = Math.sqrt(1 - z * z);
-        fw.compareRays(fw.pos.levels(-3, 0), [[0, 0, 0]], [c * Math.cos(a), z, c * Math.sin(a)], sum);
+  // (And about rays, where the JavaScript answers them, from the same points,
+  // and from others in the plain cells' openings (mostly solid: more of them),
+  // where two solids' openings meet, and in the town.)
+  for (const [name, at] of [['skin', points], ['openings', pick(groups.openings, 1000)], ['overlaps', pick(groups.overlaps, 1000)], ['town', pick(groups.town, 400)]]) {
+    const rays = await page.eval(`(() => {
+      const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
+      let k = 0;
+      for (const frac of ${JSON.stringify(at)}) {
+        fw.pos.F = -3; fw.pos.frac = frac; fw.pos.digits = new Map();
+        for (let j = 0; j < 3; j++) {
+          const a = (k++ * 2.399963) % 6.283, z = ((k * 0.618034) % 1) * 2 - 1, c = Math.sqrt(1 - z * z);
+          fw.compareRays(fw.pos.levels(-3, 0), [[0, 0, 0]], [c * Math.cos(a), z, c * Math.sin(a)], sum);
+        }
       }
-    }
-    return sum;
-  })()`);
-  assert(rays.ratio < 1 && rays.apart === 0 && rays.facing === 0, `about rays they differ: ${JSON.stringify(rays)}`);
-  // (Rays in the relief's own air, one level finer than the city, not only
-  // where all is solid.)
-  assert((rays.inAir[-1] ?? 0) > 100, `only ${rays.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(rays.inAir)}`);
+      return sum;
+    })()`);
+    assert(rays.ratio < 1 && rays.apart === 0 && rays.facing === 0, `${name}: about rays they differ: ${JSON.stringify(rays)}`);
+    // (Rays in the relief's own air, one level finer than the city, not
+    // only where all is solid.)
+    assert((rays.inAir[-1] ?? 0) > 100, `${name}: only ${rays.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(rays.inAir)}`);
+  }
 });
 
 // From up above each world too, the exact way sees nothing the older one
