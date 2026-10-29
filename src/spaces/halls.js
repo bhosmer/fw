@@ -224,6 +224,12 @@ const FORMS = {
 // kind, int or bool: see check in twin.js.)
 const values = (x, where) => (typeof x === 'number' ? { kind: Number.isInteger(x) && Math.abs(x) < 2 ** 31 ? 'int' : 'number', values: [x] } : twin.check(LANG, x, NAMES, where));
 
+// A share's threshold, as both languages compare a hash's number (a whole
+// number of 2^-24ths) with it: rounded up to a whole number of those, which
+// single precision holds exactly. (Else the shader's literal, rounded down,
+// could pick otherwise than the JavaScript for one number in 2^24.)
+const threshold = (x) => Math.ceil(x * 2 ** 24) / 2 ** 24;
+
 // Each part's kinds in order, checked, each with the number below which it
 // (or one before it) is chosen (to; the last, none).
 function families(spec) {
@@ -241,7 +247,7 @@ function families(spec) {
       if (!last && !(typeof k.share === 'number' && k.share >= 0)) bad(`${name}: a share of ${JSON.stringify(k.share)}`);
       // (Rounded: 0.24 + 0.28 + 0.16 + 0.16 is not quite 0.84.)
       if (!last) sum = +(sum + k.share).toPrecision(12);
-      return { name, ...k, to: last ? null : sum };
+      return { name, ...k, to: last ? null : threshold(sum) };
     });
     if (sum > 1) bad(`shares adding up to ${sum}, more than all`);
     // (Each kind's parts, as the part's form has them, each holding what it
@@ -487,7 +493,7 @@ float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 // (And only where the space allows a room: spaceRoom, which each space
 // defines; the halls everywhere.)
 bool spaceRoom(ivec3 id, uint seed);
-bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(spec.solid)}; }
+bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(threshold(spec.solid))}; }
 
 // Is the point x + f on the upper side of c? (L alone is rounded, and can
 // put a point half a unit on the wrong side.)
@@ -587,7 +593,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
 
   const ancestors = new Map(); // level -> where its cell sits in its parent
   // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
-  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= spec.solid;
+  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= threshold(spec.solid);
 
   // For finding a way through the halls (see planner.js): a cell's room, if
   // it has one (its height, its middle in its lattice units, and whether

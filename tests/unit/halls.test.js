@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import halls from '../../src/spaces/halls.js';
+import halls, { makeHalls } from '../../src/spaces/halls.js';
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 
@@ -54,4 +54,22 @@ test('the world is the same every time', () => {
   assert.deepEqual(a, b);
   assert.deepEqual(halls.palette(7), halls.palette(7));
   assert.notDeepEqual(halls.palette(7), halls.palette(8));
+});
+
+// Each kind's threshold is one single precision holds exactly, so that the
+// shader's literal picks just as the JavaScript's number does; and each
+// picks, for every hash's number (a whole number of 2^-24ths), as the
+// shares themselves say: tried at the numbers either side of it.
+test('the halls\' thresholds pick alike in both languages, as the shares say', () => {
+  for (const made of [makeHalls(), makeHalls({ walls: { door: { share: 0.1 } }, slabs: { solid: { share: 0.33 } } })])
+    for (const [part, kinds] of Object.entries(made.kinds)) {
+      let sum = 0;
+      for (const k of kinds) {
+        if (k.to === null) continue;
+        sum = +(sum + made.spec[part][k.name].share).toPrecision(12);
+        assert.equal(Math.fround(k.to), k.to, `${part}.${k.name}: ${k.to} is not exact in single precision`);
+        const at = Math.floor(sum * 2 ** 24);
+        for (let n = at - 2; n <= at + 2; n++) assert.equal(n / 2 ** 24 < k.to, n / 2 ** 24 < sum, `${part}.${k.name}: the number ${n} / 2^24`);
+      }
+    }
 });
