@@ -234,11 +234,8 @@ const FORMS = {
 // kind, int or bool: see check in twin.js.)
 const values = (x, where) => (typeof x === 'number' ? { kind: Number.isInteger(x) && Math.abs(x) < 2 ** 31 ? 'int' : 'number', values: [x] } : twin.check(LANG, x, NAMES, where));
 
-// A share's threshold, as both languages compare a hash's number (a whole
-// number of 2^-24ths) with it: rounded up to a whole number of those, which
-// single precision holds exactly. (Else the shader's literal, rounded down,
-// could pick otherwise than the JavaScript for one number in 2^24.)
-const threshold = (x) => Math.ceil(x * 2 ** 24) / 2 ** 24;
+// (A share's threshold: see pieces.js.)
+const { threshold } = P;
 
 // Each part's kinds in order, checked, each with the number below which it
 // (or one before it) is chosen (to; the last, none).

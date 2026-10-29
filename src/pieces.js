@@ -129,5 +129,10 @@ export function aim(ray) {
 // is x + f on the upper side of c (L alone is rounded, and can put a point
 // half a unit on the wrong side); and the distance for nothing at all.
 export const h01 = (h) => (h >>> 8) / 16777216;
+// A share's threshold, as both languages compare such a number (a whole
+// number of 2^-24ths) with it: rounded up to a whole number of those, which
+// single precision holds exactly. (Else the shader's literal, rounded down,
+// could pick otherwise than the JavaScript for one number in 2^24.)
+export const threshold = (x) => Math.ceil(x * 2 ** 24) / 2 ** 24;
 export const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 export const NONE = 1e9;

@@ -299,7 +299,8 @@ export function makeArcology(set) {
   // cells), whose boxes make the masses and the ragged silhouettes; and the
   // next (in its units), smaller boxes cut into those. What keeps anything
   // from being cut loose is in the setup after BARE_PL.
-  const LEVELS = [def.relief.city, def.relief.finer].map((lv) => ({ ...lv, cumulative: lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y)) }));
+  // (Each level's depths' cumulative shares, as thresholds: see pieces.js.)
+  const LEVELS = [def.relief.city, def.relief.finer].map((lv) => ({ ...lv, cumulative: lv.weights.map((_, i) => P.threshold(lv.weights.slice(0, i + 1).reduce((x, y) => x + y))) }));
   const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
   const POCKET_SALT = 0x27d4eb2d, ROW_SALT = 0x165667b1, DEPTH_SALT = 0xd3a2646c;
 
