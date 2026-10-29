@@ -400,11 +400,7 @@ function pieces(js, levels, salt) {
   // (An expression (checked: see families), in the language.)
   const e = (x) => (js || typeof x === 'number' ? String(x) : twin.glsl(LANG, x));
   const num = (x) => (js ? String(x) : glf(x));
-  const NOTHING = js ? 'NONE' : '1e9', D = js ? 'S.d' : 'gD';
-  // (A function's opening line, from its parameters' types.)
-  const fn = (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`);
-  // (A declaration; changing: one that changes after.)
-  const decl = (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`;
+  const { fn, decl, loop, D, NOTHING } = twin.writer(js);
   // (The kind the hash's number t picks: for each kind, the lines give(kind)
   // writes, one kind's only; none: what is returned instead, below the first
   // kind's share, when that kind is nothing.)
@@ -513,7 +509,7 @@ function pieces(js, levels, salt) {
       ...body,
       decl('float', `d = ${NOTHING}`, true),
       decl('int', 'np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0'),
-      js ? 'for (let k = 0; k < 4; k++) {' : 'for (int k = 0; k < 4; k++) {',
+      loop('k', 0, 4),
       '  ' + decl('int', 'kp = k & 1, kq = k >> 1'),
       js ? '  if (!S.ray && (kp !== np || kq !== nq)) continue;' : '  if (!gRay && (kp != np || kq != nq)) continue;',
       '  ' + decl('int', `cp = kp ${js ? '===' : '=='} 1 ? ${mx} : ${ax}, cq = kq ${js ? '===' : '=='} 1 ? ${mz} : ${az}`),
@@ -623,9 +619,7 @@ function pieces(js, levels, salt) {
       '}',
     );
 
-  // (In JavaScript, a point's coordinates are arrays.)
-  const text = out.join('\n');
-  return js ? text.replace(/\b([Lfq])\.([xyz])\b/g, (_, v, a) => `${v}[${'xyz'.indexOf(a)}]`) : text;
+  return js ? twin.arrays(out.join('\n'), ['L', 'f', 'q']) : out.join('\n');
 }
 
 // The halls, made from HALLS with what set changes (see define in util.js):
@@ -663,7 +657,7 @@ export function makeHalls(set) {
   // nz); known says whether the cell answers that (here, always).
   const { roomHigh, wallShape, slabHole, slabHalf, furnitureKind, hallsAir } = new Function(
     'P', 'C', 'M', 'R', 'HLO', 'HHI', 'FAR', 'H2', 'hashCell', 'wrapId', 'built',
-    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\nconst float = (x) => x, abs = Math.abs;\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabHole, slabHalf, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
+    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\n${twin.AS_GLSL}\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabHole, slabHalf, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
   )(P, C, M, R, HLO, HHI, FAR, Math.SQRT1_2, hashCell, wrapId, built);
 
   // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls

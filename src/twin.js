@@ -309,3 +309,28 @@ export function check(lang, e, names, where) {
 // clear but while asked, and the way out in reach and nrm.
 export const reask = (js, d, ask) =>
   js ? [`through(ray, ${d}, () => ${ask});`] : [`if (ray && ${d} + gO <= 0.0) {`, '  gRay = true;', `  ${ask};`, '  gRay = false;', '  if (gX > reach) { reach = gX; nrm = gN; }', '}'];
+
+// What the cell writers (the halls' pieces, the arcology's cityPieces)
+// write alike, in GLSL or JavaScript (js): a function's opening line, from
+// its parameters' types; a declaration (changing: one that changes after);
+// a counted loop; a piece's distance (D), no piece (NOTHING), and the ray's
+// state (RAY: whether there is one; X: how far it goes in the piece).
+export function writer(js) {
+  return {
+    fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
+    decl: (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`,
+    loop: (v, from, to) => `for (${js ? 'let' : 'int'} ${v} = ${from}; ${v} < ${to}; ${v}++) {`,
+    D: js ? 'S.d' : 'gD',
+    NOTHING: js ? 'NONE' : '1e9',
+    RAY: js ? 'S.ray' : 'gRay',
+    X: js ? 'S.x' : 'gX',
+  };
+}
+// (In the JavaScript they write, float and abs are as GLSL has them.)
+export const AS_GLSL = 'const float = (x) => x, abs = Math.abs;';
+// Their text in JavaScript, where a point's coordinates are arrays: each of
+// the names' components (L.x, SLO[k].y) as an element (L[0], SLO[k][1]).
+export function arrays(text, names) {
+  const name = new RegExp(`(${names.map((n) => `\\b${n.replace(/[[\]]/g, '\\$&')}`).join('|')})\\.([xyz])\\b`, 'g');
+  return text.replace(name, (_, v, a) => `${v}[${'xyz'.indexOf(a)}]`);
+}

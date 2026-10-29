@@ -1052,21 +1052,97 @@ export function makeArcology(set) {
 
   const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
 
-  // One solid's distance, as GLSL: each plane's offset worked out in whole
-  // numbers (o is the cell's corner from the middle cell's), and only the
-  // small parts in floats.
-  function solidGlsl(s, j) {
-    const lines = planesOf(s).map((p) => {
-      const nrm = `vec3(${p.n.map((x) => glf(x / p.len)).join(', ')})`;
-      if (p.dir < 3) {
-        const a = 'xyz'[p.dir];
-        return `  solidPlane((float(${p.scale} * L.${a} - (${p.K} - ${p.scale} * o.${a})) + ${glf(p.scale)} * f.${a}) * ${glf(1 / p.len)}, ${nrm});`;
-      }
-      const m = p.m, k = `${p.K} - ${p.scale} * (${m[0]} * o.x + ${m[1]} * o.y + ${m[2]} * o.z)`;
-      return `  fr = slantAt(${p.dir - 3}, n);\n  solidPlane((float(${p.scale} * n - (${k})) + ${glf(p.scale)} * fr) * ${glf(1 / p.len)}, ${nrm});`;
+  // The city's own pieces, in either language (js: true, or GLSL), written
+  // once: each of the building's solids from its planes (upright or along a
+  // slant: see PLANES), as solidN, and solid(k); the plaza's air (see
+  // plaza), from the solids' bounds and the near cells' lists (see NEAR);
+  // and a ground cell's (see groundAir). (The JavaScript's, made into
+  // functions below; the point along the slants, SL, as setPoint sets it.)
+  // A solid's plane is worked out in each language's own way: in GLSL in
+  // whole numbers, then the small parts in floats, times one over its
+  // length; in JavaScript in doubles, divided by it.
+  function cityPieces(js) {
+    const solids = SOLIDS.map((sd, j) => {
+      const lines = planesOf(sd).map((p) => {
+        // (In JavaScript, -0 kept as such.)
+        const nrm = js ? p.n.map((x) => (Object.is(x / p.len, -0) ? '-0' : String(x / p.len))).join(', ') : `vec3(${p.n.map((x) => glf(x / p.len)).join(', ')})`;
+        if (p.dir < 3) {
+          const a = js ? `[${p.dir}]` : `.${'xyz'[p.dir]}`;
+          return js
+            ? `  solidPlane((${p.scale} * L${a} - (${p.K} - ${p.scale} * o${a}) + ${p.scale} * f${a}) / ${p.len}, ${nrm});`
+            : `  solidPlane((float(${p.scale} * L${a} - (${p.K} - ${p.scale} * o${a})) + ${glf(p.scale)} * f${a}) * ${glf(1 / p.len)}, ${nrm});`;
+        }
+        const m = p.m, i = p.dir - 3, o = js ? ['o[0]', 'o[1]', 'o[2]'] : ['o.x', 'o.y', 'o.z'];
+        const k = `${p.K} - ${p.scale} * (${m[0]} * ${o[0]} + ${m[1]} * ${o[1]} + ${m[2]} * ${o[2]})`;
+        return js
+          ? `  solidPlane((${p.scale} * SL.Ls[${i}] - (${k}) + ${p.scale} * SL.Fs[${i}]) / ${p.len}, ${nrm});`
+          : `  fr = slantAt(${i}, n);\n  solidPlane((float(${p.scale} * n - (${k})) + ${glf(p.scale)} * fr) * ${glf(1 / p.len)}, ${nrm});`;
+      });
+      return js
+        ? `function solid${j}(L, f, o) {\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`
+        : `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  int n;\n  float fr;\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
     });
-    return `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  int n;\n  float fr;\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
+    const solid = js
+      ? `const SOLID_FNS = [${SOLIDS.map((_, j) => `solid${j}`).join(', ')}];\nfunction solid(k, L, f, o) {\n  return SOLID_FNS[k](L, f, o);\n}`
+      : `float solid(int k, ivec3 L, vec3 f, ivec3 o) {\n  switch (k) {\n${SOLIDS.map((_, j) => `    case ${j}: return solid${j}(L, f, o);`).join('\n')}\n  }\n  return 1e9;\n}`;
+    // (Where the languages differ: what twin.writer writes, which of the
+    // near cells the cell is (a scan, or a lookup), and the point q.
+    // Otherwise the text is both's: in JavaScript float, min and max are as
+    // GLSL has them, and points are arrays.)
+    const { fn, decl, loop, D, NOTHING, RAY, X } = twin.writer(js);
+    const near = js
+      ? [decl('int', 'n = NEAR_AT.get(o.map((x) => x / R).join()) ?? -1')]
+      : [decl('int', 'n = -1', true), `${loop('j', 0, 'NNEAR')} if (NEAR_CELLS[j] == o / R) n = j; }`];
+    // (How far the point is outside solid k's bounds along axis a.)
+    const off = (a) => `max(float(SLO[k].${a} - o.${a}) - q.${a}, q.${a} - float(SHI[k].${a} - o.${a}))`;
+    const span = (x, f, lo, hi, a) => twin.planes(js, 'air', [{ span: [x, f, lo, hi, a] }])[0];
+    const plaza = [
+      '// The air over the plaza, less the building: the distance to the nearest',
+      '// solid (and, for a ray, where it strikes one, if before it leaves this',
+      "// piece of air). The piece runs a cell past this one's sides each way (so",
+      '// that it does not seem to close in at every one; narrower, rays far off',
+      '// crossed so many pieces that they ran out of steps), and the solids asked',
+      '// about are all that reach into it (see NEAR).',
+      fn('float', 'plaza', ['ivec3 L', 'vec3 f', 'ivec3 id']),
+      ...[
+        'airPiece();',
+        span('L.x', 'f.x', '-R', '2 * R', 0),
+        span('L.z', 'f.z', '-R', '2 * R', 2),
+        '// (From the floor, in the bottom row; higher up, from a little below the',
+        '// cell, into the air of the one under it.)',
+        span('L.y', 'f.y', `id.y == ${ROW_ID} ? G : -M`, 'R + M', 1),
+        decl('float', `box = ${D}`),
+        decl('float', `d = ${NOTHING}`, true),
+        js ? 'const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 q = vec3(L) + f;',
+        decl('ivec3', 'o = fromMiddle(id)'),
+        ...near,
+        'if (n < 0) return box;',
+        loop('j', 'NEAR_START[n]', 'NEAR_START[n + 1]'),
+        ...[
+          decl('int', 'k = NEAR_BLOCKS[j]'),
+          '// (A solid further off than one already found, or than a ray goes in',
+          '// this piece, is not asked about.)',
+          decl('float', `far = max(max(${off('x')}, ${off('y')}), ${off('z')})`),
+          `if (far >= d && (!${RAY} || far >= ${X})) continue;`,
+          'd = min(d, solid(k, L, f, o));',
+        ].map((l) => '  ' + l),
+        '}',
+        'return max(box, -d);',
+      ].map((l) => '  ' + l),
+      '}',
+    ];
+    const ground = [
+      fn('float', 'groundAir', ['ivec3 L', 'vec3 f']),
+      "  // (No nearer air than the cell's sides, past which another cell may have",
+      "  // some: under the floor too, which is on cells' sides.)",
+      '  ' + decl('float', 'e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)), min(float(R - L.z) - f.z, float(L.z) + f.z))'),
+      '  return max(e, 0.0);',
+      '}',
+    ];
+    const text = (lines) => (js ? twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'SLO[k]', 'SHI[k]']) : lines.join('\n'));
+    return { solids: `${solids.join('\n')}\n${solid}`, plaza: text(plaza), ground: text(ground) };
   }
+  const CITY_GLSL = cityPieces(false);
 
   const glsl = /* glsl */ `
 const int G = ${G};
@@ -1245,14 +1321,7 @@ bool groundCell(ivec3 own, ivec3 up) {
   ivec3 v = fromMiddle(up) + own - VOL_LO;
   return v.x < 0 || v.z < 0 || v.x >= VOL_SIZE.x || v.z >= VOL_SIZE.z;
 }
-float groundAir(ivec3 L, vec3 f, ivec3 own) {
-  // (No nearer air than the cell's sides, past which another cell may have
-  // some; under the floor, nor than the floor.)
-  float e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)),
-                min(float(R - L.z) - f.z, float(L.z) + f.z));
-  float d = max(e, 0.0);
-  return own.y < G ? min(float((G - own.y) * R - L.y) - f.y, d) : d;
-}
+${CITY_GLSL.ground}
 
 // The rectangle of face k at level lv that the point is in (u along the
 // face, in its own measure, y its true height, each a whole
@@ -1996,44 +2065,9 @@ float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   return slabHole(L, f, -M, G + 1, hashCell(below, seed ^ ${hexu(HALLS.salt.slab)}), ${CITY});
 }
 
-${SOLIDS.map(solidGlsl).join('\n')}
-float solid(int k, ivec3 L, vec3 f, ivec3 o) {
-  switch (k) {
-${SOLIDS.map((_, j) => `    case ${j}: return solid${j}(L, f, o);`).join('\n')}
-  }
-  return 1e9;
-}
+${CITY_GLSL.solids}
 
-// The air over the plaza, less the building: the distance to the nearest
-// solid (and, for a ray, where it strikes one, if before it leaves this
-// piece of air). The piece runs a cell past this one's sides each way (so
-// that it does not seem to close in at every one; narrower, rays far off
-// crossed so many pieces that they ran out of steps), and the solids asked
-// about are all that reach into it (see NEAR).
-float plaza(ivec3 L, vec3 f, ivec3 id) {
-  airPiece();
-  airSpan(L.x, f.x, -R, 2 * R, EX);
-  airSpan(L.z, f.z, -R, 2 * R, EZ);
-  // (From the floor, in the bottom row; higher up, from a little below the
-  // cell, into the air of the one under it.)
-  airSpan(L.y, f.y, id.y == ${ROW_ID} ? G : -M, R + M, EY);
-  float box = gD, d = 1e9;
-  vec3 q = vec3(L) + f;
-  ivec3 o = fromMiddle(id);
-  int n = -1;
-  for (int j = 0; j < NNEAR; j++) if (NEAR_CELLS[j] == o / R) n = j;
-  if (n < 0) return box;
-  for (int j = NEAR_START[n]; j < NEAR_START[n + 1]; j++) {
-    int k = NEAR_BLOCKS[j];
-    // (A solid further off than one already found, or than a ray goes in
-    // this piece, is not asked about.)
-    vec3 off = max(vec3(SLO[k] - o) - q, q - vec3(SHI[k] - o));
-    float far = max(max(off.x, off.y), off.z);
-    if (far >= d && (!gRay || far >= gX)) continue;
-    d = min(d, solid(k, L, f, o));
-  }
-  return max(box, -d);
-}
+${CITY_GLSL.plaza}
 
 // A cell of the city.
 float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
@@ -2077,7 +2111,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     reach = -1.0;
     nrm = vec3(0.0);
     ivec3 own = id - R * ivec3(floor((vec3(id) + 0.5) / float(R)));
-    if (level == ${CITY + 1} && m.x == 0u && groundCell(own, gUp)) d = groundAir(L, f, own);
+    if (level == ${CITY + 1} && m.x == 0u && groundCell(own, gUp)) d = groundAir(L, f);
     else if (m.x == 0u || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, level, reach, nrm);
     if (m.x != 0u) d = reliefCell(L, f, id, seed, m, d, reach, nrm);
   }
@@ -2125,7 +2159,9 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // the same order and choices as the shader's, but not everywhere in the
   // same form (the two agree as the parity checks show, not by
   // construction: see .claude/design/t10-review.md).
-  let dLs, dFs;
+  // (The point along the slants, as setPoint last set it: read by the code
+  // written below, made into functions, as by the rest.)
+  const SL = { Ls: null, Fs: null };
 
   const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
 
@@ -2133,12 +2169,12 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // along the slants (from dg, or else from L and f).
   function setPoint(L, f, dg) {
     P.at(L, f, dg);
-    if (dg?.Ls) (dLs = dg.Ls), (dFs = dg.fs);
+    if (dg?.Ls) (SL.Ls = dg.Ls), (SL.Fs = dg.fs);
     else {
       // (Split again, as levelRay does: a whole number and the rest, at most a half.)
-      dFs = SLANTS.map((m) => m[0] * f[0] + m[1] * f[1] + m[2] * f[2]);
-      dLs = SLANTS.map((m, k) => m[0] * L[0] + m[1] * L[1] + m[2] * L[2] + Math.round(dFs[k]));
-      dFs = dFs.map((x) => x - Math.round(x));
+      const fs = SLANTS.map((m) => m[0] * f[0] + m[1] * f[1] + m[2] * f[2]);
+      SL.Ls = SLANTS.map((m, k) => m[0] * L[0] + m[1] * L[1] + m[2] * L[2] + Math.round(fs[k]));
+      SL.Fs = fs.map((x) => x - Math.round(x));
     }
   }
 
@@ -2153,39 +2189,14 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   }
   const wellAir = (L, f, { h }) => slabHole(L, f, -M, G + 1, h, CITY);
 
-  // One solid, o the cell's corner from the middle cell's (see solidGlsl).
-  function solid(s, L, f, o) {
-    P.solidPiece();
-    for (const p of planesOf(s)) {
-      const [nx, ny, nz] = p.n.map((x) => x / p.len);
-      if (p.dir < 3) {
-        const a = p.dir;
-        P.solidPlane((p.scale * L[a] - (p.K - p.scale * o[a]) + p.scale * f[a]) / p.len, nx, ny, nz);
-      } else {
-        const m = p.m, k = p.K - p.scale * (m[0] * o[0] + m[1] * o[1] + m[2] * o[2]);
-        P.solidPlane((p.scale * dLs[p.dir - 3] - k + p.scale * dFs[p.dir - 3]) / p.len, nx, ny, nz);
-      }
-    }
-    return P.solidDone();
-  }
-
-  // See plaza in the shader (a piece: for a ray too). (Its solids asked as
-  // the shader asks them, the same ones passed over: so the distance is the
-  // shader's, which may be less than the nearest solid's.)
-  function plaza(L, f, id) {
-    P.airPiece();
-    P.airSpan(L[0], f[0], -R, 2 * R, 0);
-    P.airSpan(L[2], f[2], -R, 2 * R, 2);
-    P.airSpan(L[1], f[1], id[1] === ROW_ID ? G : -M, R + M, 1);
-    const box = P.S.d, o = fromMiddle(id), q = [0, 1, 2].map((a) => L[a] + f[a]);
-    let d = NONE;
-    for (const k of NEAR.get(o.map((x) => x / R).join()) ?? []) {
-      const s = SOLIDS[k], far = Math.max(...[0, 1, 2].map((a) => Math.max(s.lo[a] - o[a] - q[a], q[a] - (s.hi[a] - o[a]))));
-      if (far >= d && (!P.S.ray || far >= P.S.x)) continue;
-      d = Math.min(d, solid(s, L, f, o));
-    }
-    return Math.max(box, -d);
-  }
+  // The city's own pieces in JavaScript (see cityPieces), made into
+  // functions.
+  const NEAR_AT = new Map(NEAR_CELLS.map((c, n) => [c.join(), n]));
+  const CITY_JS = cityPieces(true);
+  const { plaza, groundAir } = new Function(
+    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS',
+    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${CITY_JS.solids}\n${CITY_JS.plaza}\n${CITY_JS.ground}\nreturn { plaza, groundAir };\n//# sourceURL=cityPieces.gen.js`,
+  )(P, SL, fromMiddle, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS);
 
   let cellB = [0, 0, 0];
   // The sides a skin cell's pockets (or a cell's openings) run on
@@ -2252,12 +2263,12 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // as a whole number and the rest).
   function faceAt(F, lv, base) {
     const S = lv ? R : 1;
-    const u = F.t.sign * dLs[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * dFs[F.t.k];
+    const u = F.t.sign * SL.Ls[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * SL.Fs[F.t.k];
     const ms = SLANTS[F.ms.k], mn = SLANTS[F.plane.k];
-    const Yi = F.gm * (F.ms.sign * dLs[F.ms.k] + F.ms.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.yk * F.K * S;
-    const Yf = F.gm * F.ms.sign * dFs[F.ms.k];
+    const Yi = F.gm * (F.ms.sign * SL.Ls[F.ms.k] + F.ms.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.yk * F.K * S;
+    const Yf = F.gm * F.ms.sign * SL.Fs[F.ms.k];
     const y = fdiv(Yi + Math.floor(Yf), F.p), fy = (Yi - y * F.p + Yf) / F.p;
-    const ni = F.plane.sign * (dLs[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * dFs[F.plane.k];
+    const ni = F.plane.sign * (SL.Ls[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * SL.Fs[F.plane.k];
     return { u, fu, y, fy, Yi, Yf, ni, nf, S };
   }
 
@@ -2431,7 +2442,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - 2 - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - 2)));
       if (away > 0) return void (far = Math.min(far, away));
       const m = SLANTS[F.plane.k], sg = F.plane.sign;
-      const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / F.nl;
+      const s = (sg * SL.Ls[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * SL.Fs[F.plane.k]) / F.nl;
       if (s < -BAND_IN) far = Math.min(far, -s - BAND_IN);
       else if (s > BAND_OUT) far = Math.min(far, s - BAND_OUT);
       else a = facePocket(0, k, L, f, base, a, ray);
@@ -2470,8 +2481,8 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // openings alone; see openings.)
   function windowAir(j, L, f, d, ray) {
     const W = WINDOWS[j], base = cellB.map((x) => x * R);
-    const u = W.t.sign * dLs[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * dFs[W.t.k];
-    const w = W.h.sign * dLs[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * dFs[W.h.k];
+    const u = W.t.sign * SL.Ls[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * SL.Fs[W.t.k];
+    const w = W.h.sign * SL.Ls[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * SL.Fs[W.h.k];
     const y = base[1] + L[1] - GROUND * R;
     const K = W.K * R, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
     const along = W.tv.map((x) => x / W.len), across = W.hv.map((x) => x / W.len);
@@ -2690,15 +2701,11 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return a;
   }
 
-  // See groundCell and groundAir in the shader.
+  // See groundCell in the shader.
   function groundCell(own, up) {
     if (up[1] !== ROW_ID) return false;
     const o = fromMiddle(up), v = [0, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
     return v[0] < 0 || v[1] < 0 || v[0] >= VOLUME.size[0] || v[1] >= VOLUME.size[2];
-  }
-  function groundAir(L, f, own) {
-    const d = Math.max(Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]), 0);
-    return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
   }
 
   // (ray: see hallsAir. Every cell answers it.)
@@ -2717,7 +2724,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     }
     if (level === CITY + 1 && up) {
       const own = id.map((x) => x - R * Math.floor((x + 0.5) / R));
-      if (groundCell(own, up)) return solid(groundAir(L, f, own));
+      if (groundCell(own, up)) return solid(groundAir(L, f));
     }
     if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
     if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, level, roomRule, ray);
