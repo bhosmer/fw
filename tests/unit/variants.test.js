@@ -134,11 +134,14 @@ test('a variant must be one the definition has', () => {
     [{ town: { margin: 2 } }, /town\.margin/],
     [{ relief: { finer: { quant: 1 } } }, /must be even/],
     [{ relief: { city: { sby: 3 } } }, /must be even/],
+    [{ relief: { finer: { sb: 25 } } }, /whole quanta/],
+    [{ relief: { finer: { sby: 72 } } }, /could span 12 ridge rows/],
     [{ relief: { finer: { weights: [0.5, 0.5] } } }, /as many weights as depths/],
     [{ relief: { finer: { weights: [0.5, 0.1, 0.1, 0.1, 0.1] } } }, /adding up to 1/],
     [{ relief: { finer: { depths: [0, 2, 4, 6, 7] } } }, /twelfths/],
     [{ relief: { city: { depths: [0, 0.3, 0.5] } } }, /quarters/],
-    [{ relief: { finer: { min: 1 } } }, /min under 3/],
+    [{ relief: { finer: { min: 1 } } }, /could span 8 ridge rows/],
+    [{ relief: { finer: { splits: 2, sby: 48 } } }, /could span 8 ridge rows/],
     [{ town: { density: [] } }, /town\.density/],
     [{ town: { density: [12.5, 45, 80] } }, /town\.density/],
     [{ town: { density: [-5, 45, 80] } }, /town\.density/],
@@ -151,6 +154,9 @@ test('a variant must be one the definition has', () => {
     [{ town: { pick: [0], plans: [[[0, 0, 12.5, 24], [12.5, 0, 24, 24]]] } }, /whole units/],
     [{ town: { pick: [0], plans: [Array.from({ length: 24 }, (_, i) => [i, 0, i + 1, 24])] } }, /sixteen/],
   ]) assert.throws(() => makeArcology(set), said, JSON.stringify(set));
+  // (And what the exact count of ridge rows lets through that a rougher one
+  // would not: rows of 36 span six.)
+  assert.ok(makeArcology({ relief: { finer: { sby: 36 } } }).arcology, 'relief.finer.sby 36 builds');
 });
 
 // A variant is held to what every world must be: here, what its levels say

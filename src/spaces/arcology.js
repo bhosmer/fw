@@ -72,6 +72,39 @@ const TOWN_DEF = {
 // is built of (see halls.js), its relief and its town.
 export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF });
 
+// The most ridge rows a face's rectangle can span, one level finer: as many
+// as both copies look under (see underRidge), check's bound on the relief.
+const RIDGE_SPAN = 6;
+
+// The most ridge rows one level finer that a rectangle of that level (lv: its
+// sby, quant, splits and min) can span. A ridge's rows are each city cell
+// split as ridgeRow splits it: a part of n quanta, 2 min or more, is cut at
+// any whole quantum leaving min each side, each part again, splits deep;
+// each cell its own. A rectangle is sby high, from a city cell's edge plus
+// a whole number of sby: so from any multiple of gcd(sby, R) along a cell.
+function spans(lv) {
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a), memo = new Map();
+  // (The most parts of [lo, hi), cut d deep, that meet [a, b).)
+  const meet = (lo, hi, d, a, b) => {
+    if (hi <= a || lo >= b) return 0;
+    const n = (hi - lo) / lv.quant, key = `${lo},${hi},${d},${a},${b}`;
+    if (d === 0 || n < 2 * lv.min) return 1;
+    if (!memo.has(key)) {
+      let most = 0;
+      for (let s = lv.min; s <= n - lv.min; s++) most = Math.max(most, meet(lo, lo + s * lv.quant, d - 1, a, b) + meet(lo + s * lv.quant, hi, d - 1, a, b));
+      memo.set(key, most);
+    }
+    return memo.get(key);
+  };
+  let most = 0;
+  for (let o = 0; o < R; o += gcd(lv.sby, R)) {
+    let rows = 0;
+    for (let c = 0; c * R < o + lv.sby; c++) rows += meet(0, R, lv.splits, Math.max(o, c * R) - c * R, Math.min(o + lv.sby, (c + 1) * R) - c * R);
+    most = Math.max(most, rows);
+  }
+  return most;
+}
+
 // What the rest of the arcology needs of a definition's relief and town,
 // beyond its kinds (define checks those): a variant that breaks one is
 // refused here, saying which, rather than built wrong (or into a shader
@@ -86,16 +119,19 @@ function check(def) {
     if (!lv.depths.length || lv.weights.length !== lv.depths.length) bad(`relief.${name}: as many weights as depths, at least one`);
     if (lv.weights.some((w) => !(w >= 0)) || Math.abs(lv.weights.reduce((a, b) => a + b) - 1) > 1e-9) bad(`relief.${name}: weights of 0 or more, adding up to 1`);
   }
-  // (The city's rows are halved, and the finer level's measure: whole numbers
-  // in both copies only if even; its depths are in whole twelfths, as the
-  // city's in quarters, of a cell; and the shader looks at no more than six
-  // ridge rows under a rectangle, as many as the finer level's smallest
-  // rectangles, three quanta, can span: none smaller has been tried.)
+  // (The city's rows are halved, and the finer level's heights are halved
+  // into twelfths of a cell (h12): whole numbers in both copies only if
+  // even; rectangles and rows are cut at whole quanta (so finer heights are
+  // even); its depths are in whole twelfths, as the city's in quarters, of a
+  // cell; and both copies look under at most RIDGE_SPAN ridge rows under a
+  // rectangle (the city's: two at most): see spans.)
   const { city, finer } = def.relief;
   if (city.sby % 2 || finer.quant % 2) bad('relief: city.sby and finer.quant must be even');
+  for (const [name, lv] of Object.entries(def.relief)) if (lv.sb % lv.quant || lv.sby % lv.quant) bad(`relief.${name}: sb and sby in whole quanta (multiples of quant, ${lv.quant})`);
+  const rows = spans(finer);
+  if (rows > RIDGE_SPAN) bad(`relief.finer: a rectangle could span ${rows} ridge rows, more than the ${RIDGE_SPAN} looked under (fewer splits, a larger min, or another sby would do)`);
   if (!city.depths.every((d) => Number.isInteger(d * 4) && d >= 0)) bad('relief.city: depths in quarters of a cell');
   if (!finer.depths.every((d) => Number.isInteger(d / 2) && d >= 0)) bad('relief.finer: depths in twelfths of a cell (even numbers)');
-  if (finer.min < 3) bad('relief.finer: min under 3 (the shader looks under no more than six ridge rows)');
   // (The halls by level: only where there are halls, at the city's level
   // (under the plaza, by the building) and finer.)
   for (const l of Object.keys(def.halls.byLevel)) if (+l < CITY) bad(`halls.byLevel.${l}: there are no halls coarser than the city's level (${CITY})`);
@@ -520,7 +556,6 @@ export function makeArcology(set) {
     F.ncap = [1, R].map((S, lv) => Array.from({ length: n }, (_, i) => most((t) => t <= F.cap[i] && width((i + F.c0) / 12, S) >= F.edges[0].Wt[lv][t] + F.edges[1].Wt[lv][t])));
   }
   const capIndex = (F, i) => Math.min(Math.max(i - F.c0, 0), F.cap.length - 1);
-  const capAt = (F, i0, i1) => Math.min(F.cap[capIndex(F, i0)], F.cap[capIndex(F, i1)]);
   // (Whether F's notch at its e-th ridge, from the ridge to W(16) in, over
   // cells Y0 to Y1, could meet a solid without relief: the whole box, also
   // where it runs on past the ridge, to where F's out-plane or its floor
@@ -577,14 +612,14 @@ export function makeArcology(set) {
     }
     return { y0, y1, t, tc, cy0: R * cw.y0, cy1: R * cw.y1 };
   }
-  // The ridges' rows as a table, for the shader to look up rather than work
-  // out (each takes several hashes and caps; review21): for each ridge and
-  // level, from RR_FROM[lv] (level units) for RR_N[lv] heights, ridgeRow's
-  // y0, y1, t and tc, as a texture's rows (2 r + lv). Wide enough for every
-  // height the cell table can ask after, its cells' and a cell or two
-  // more each way (the shader holds a height outside to the table's last
-  // row, where the JavaScript would work it out: so the table must cover
-  // them all; at least -4 to 43, as it has been).
+  // The ridges' rows as a table, for both copies to look up rather than
+  // work out (each takes several hashes and caps; review21): for each ridge
+  // and level, from RR_FROM[lv] (level units) for RR_N[lv] heights,
+  // ridgeRow's y0, y1, t and tc, as a texture's rows (2 r + lv). Wide enough
+  // for every height the cell table can ask after, its cells' and a cell or
+  // two more each way (a height outside is held to the table's last row: so
+  // the table must cover them all, as checked once the table is made; at
+  // least -4 to 43, as it has been).
   const cellsLo = Math.min(...SOLIDS.map((s) => s.lo[1])) - ORIGIN[1], cellsHi = Math.max(...SOLIDS.map((s) => s.hi[1])) - ORIGIN[1];
   const RR0 = Math.min(-4, cellsLo - 4), RR1 = Math.max(44, cellsHi + 7);
   const RR_FROM = [RR0, RR0 * R], RR_N = [RR1 - RR0, (RR1 - RR0) * R];
@@ -598,87 +633,6 @@ export function makeArcology(set) {
         }
     return { size: [w, 2 * RIDGES.length], data };
   })();
-  // Whether a cut t deep over [u0, u1] x [y0, y1] (level lv's measure and
-  // units) comes within W(t) of F's e-th ridge at either height.
-  function nearRidge(F, e, lv, u0, u1, y0, y1, t) {
-    const E = F.edges[e], S = lv ? R : 1, u = E.sg > 0 ? u0 : u1;
-    return [y0, y1].some((y) => zone(E, u, y, S) < E.Wt[lv][t] * Math.abs(E.dl));
-  }
-  // Depth profiles (relief-v5.md, terraces.md). A cut's depth behind its face
-  // varies with height: a terrace's ramps up from nothing at the edge of its
-  // band to all of it at its wall's foot, and is nothing elsewhere in its
-  // rows; one level finer, a cut adds to the city's terrace under it. Near a
-  // ridge a cut must be, at every height, no deeper than the ridge's own cut
-  // there (then the two are one cut from past the ridge, inside the ridge's
-  // pair: the pair argument holds slice by slice). Heights here are in
-  // twelfths of a cell (h12), on which all rows and terraces' heights lie;
-  // depths in twelfths; so every test is exact.
-  const h12 = (lv, y) => (lv ? y / 2 : 12 * y);
-  // (A terrace's height for t twelfths, in twelfths: rounded down, see terrace.)
-  function terraceH(F, t) {
-    return Math.floor((t * F.nl) / Math.abs(F.n[1]) + 1e-3);
-  }
-  // A city terrace of face F, t twelfths deep over rows a to b (h12): its band
-  // [lo, hi] and the height its wall stands at (anchor); null if not cut. On a
-  // face all terraces' ramps have one slope, so one is no deeper than another
-  // over a height range where both are in their bands iff its anchor is
-  // nearer the band's end it ramps from (the upper's: its top; the lower's:
-  // its bottom).
-  function band(F, a, b, t) {
-    if (!(t > 0)) return null;
-    const H = terraceH(F, t), up = F.n[1] > 0;
-    return { up, lo: up ? b - H : a, hi: up ? b : a + H, at: up ? b : a };
-  }
-  const under = (c, R) => R && R.lo <= c.lo && c.hi <= R.hi && (c.up ? R.at >= c.at : R.at <= c.at);
-  // Whether a cut of face F at level lv over heights s to e (h12) is, at its
-  // e-th ridge, no deeper than the ridge's: city, its city terrace's band (or
-  // null); fine (one level finer), its own part, b twelfths over heights lo to hi.
-  function underRidge(F, e, lv, s, e2, city, fine) {
-    const r = RIDGES[F.er[e]];
-    for (let y = s; y < e2; ) {
-      const w = ridgeRow(r, lv, lv ? 2 * y : Math.floor(y / 12)), a = Math.max(s, h12(lv, w.y0)), b = Math.min(e2, h12(lv, w.y1));
-      const RB = band(F, h12(lv, w.cy0), h12(lv, w.cy1), w.tc);
-      if (city) {
-        const c = { ...city, lo: Math.max(a, city.lo), hi: Math.min(b, city.hi) };
-        if (c.lo < c.hi && !under(c, RB)) return false;
-      }
-      if (fine) {
-        const lo = Math.max(a, fine.lo), hi = Math.min(b, fine.hi);
-        if (lo < hi) {
-          // (The ridge's own part one level finer: behind its terrace's wall
-          // in its band, else behind the face; as cutOf.)
-          const ra = h12(lv, w.y0), rb = h12(lv, w.y1), inb = RB && (RB.up ? rb >= RB.lo : ra <= RB.hi);
-          const alo = inb && RB.up ? Math.max(ra, RB.lo) : ra, ahi = inb && !RB.up ? Math.min(rb, RB.hi) : rb;
-          if (!(fine.b <= w.t - w.tc && alo <= lo && hi <= ahi)) return false;
-        }
-      }
-      y = h12(lv, w.y1);
-    }
-    return true;
-  }
-  // A face's rectangle at level lv (drawn depth index j; one level finer on
-  // the city's rectangle, rows cy0 to cy1 in cells, fl twelfths deep): the
-  // deepest of its level's depths, from its own down, no deeper than the
-  // slice allows and, at each ridge it comes within W(t) of, than the ridge's
-  // cut at every height (see underRidge). In twelfths: fl if none.
-  function rectDepth(F, lv, u0, u1, y0, y1, j, fl, cy0, cy1) {
-    const P = LEVELS[lv], s = h12(lv, y0), e2 = h12(lv, y1);
-    const cityB = lv ? band(F, 12 * cy0, 12 * cy1, fl) : null;
-    for (let jj = j; jj > 0; jj--) {
-      const t = fl + (lv ? twelfths(P.depths[jj] / R) : 3 * quarters(P.depths[jj]));
-      if (t > capAt(F, s, e2)) continue;
-      let city, fine = null;
-      if (!lv) city = band(F, s, e2, t);
-      else {
-        city = cityB;
-        // (Its own part: in the city terrace's band, from its floor or to its ceiling; else all its rows.)
-        const inb = cityB && (cityB.up ? e2 >= cityB.lo : s <= cityB.hi);
-        fine = { b: t - fl, lo: inb && cityB.up ? Math.max(s, cityB.lo) : s, hi: inb && !cityB.up ? Math.min(e2, cityB.hi) : e2 };
-      }
-      if ([0, 1].every((e) => !nearRidge(F, e, lv, u0, u1, y0, y1, t) || underRidge(F, e, lv, s, e2, city, fine))) return t;
-    }
-    return fl;
-  }
   // (The shader takes a depth plane of 0 for no cut; the tables of W(t)
   // and the caps hold t up to 16; a pair's two floors, each rounded in to its
   // face's measure, differ by less than MARGIN: see relief-v4.md.)
@@ -877,7 +831,7 @@ export function makeArcology(set) {
   // (For the checks: how many rays the solids without relief have stopped
   // in the city's pockets: see cityPockets.)
   const SEEN = { clipped: 0 };
-  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
   const VOLUME = (() => {
     const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
     const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -1031,6 +985,11 @@ export function makeArcology(set) {
     }
     return { lo, size, data, words: WORDS, kind, open, at, within };
   })();
+  // (Both copies look a ridge's rows up in RIDGE_ROWS, at the heights of the
+  // table's cells (notchAir) and, within them, of the faces' masses
+  // (underRidge: no deeper than the caps, which are nothing outside them): so
+  // the ridges' rows' table must hold the table's heights.)
+  if (VOLUME.lo[1] - ORIGIN[1] < RR0 || VOLUME.lo[1] + VOLUME.size[1] - ORIGIN[1] > RR1) throw new Error('arcology: the ridges\' rows\' table short of the table\'s heights (RR0, RR1)');
 
   // The ways into the building from the plaza, for the tour (see
   // Planner.waysFromCity): each a room of the halls one level finer than the
@@ -1089,7 +1048,35 @@ export function makeArcology(set) {
   const FROM = [0, 1, 2].map((a) => R * (1 + Math.max(Math.abs(VOLUME.lo[a] - ORIGIN[a]), Math.abs(VOLUME.lo[a] + VOLUME.size[a] - 1 - ORIGIN[a]))));
   if (OPEN_ROWS.SOLID_PI.some((p) => p.slice(0, 3).reduce((t, x, a) => t + Math.abs(x) * FROM[a], 0) + Math.abs(p[3]) >= 2 ** 31)) throw new Error('arcology: a solid too fine for the openings\' whole numbers (planeAt): another slope (see slopes in hexahedron.js)');
   // (A table's GLSL declaration: its type, and each row's.)
-  const table = (type, name, n, row) => `const ${type} ${name}[${n}] = ${type}[${n}](${OPEN_ROWS[name].map(row).join(', ')});`;
+  // The relief's tables likewise (see LEVELS, FACES, RIDGES and their
+  // declarations in the shader): each level's measures (sb, sby, quant,
+  // splits), least part and depths' shares (padded to ND with 2: never
+  // drawn) and depths (padded with 0); each face's quanta and heights, caps
+  // (FCAPS, from FCR: offset, c0, how many), ridges (dl, al, be, sg W), W(t)
+  // at them, which ridges, and its normal's measures.
+  const RELIEF_ROWS = (() => {
+    const caps = [], at = [];
+    for (const F of FACES) {
+      at.push([caps.length, F.c0, F.cap.length]);
+      F.cap.forEach((c) => caps.push(c));
+    }
+    return {
+      LV: LEVELS.map((l) => [l.sb, l.sby, l.quant, l.splits]),
+      LV_MIN: LEVELS.map((l) => l.min),
+      CUM: LEVELS.flatMap((l) => [...l.cumulative, ...Array(ND - l.depths.length).fill(2)]),
+      DEPTHS: LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]),
+      FQY: FACES.map((F) => [F.q2[0], F.q2[1], F.lo4, F.hi4]),
+      FCAPS: caps,
+      FCR: at,
+      FEDGE: FACES.flatMap((F) => F.edges.map((E) => [E.dl, E.al, E.be, E.sg * E.W])),
+      FWT: FACES.flatMap((F) => F.edges.flatMap((E) => E.Wt.flat())),
+      FER: FACES.flatMap((F) => F.er),
+      FNS: FACES.map((F) => [F.nl, F.gm * F.mlen]),
+      FNH: FACES.map((F) => [F.n[1], Math.hypot(F.n[0], F.n[2])]),
+    };
+  })();
+  // (A table's GLSL declaration: its type, and each row's.)
+  const table = (type, name, n, row, rows = OPEN_ROWS) => `const ${type} ${name}[${n}] = ${type}[${n}](${rows[name].map(row).join(', ')});`;
   const vrow = (type) => (r) => `${type}(${r.join(', ')})`;
 
   // The city's own pieces, in either language (js: true, or GLSL), written
@@ -1629,7 +1616,221 @@ export function makeArcology(set) {
     const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['p', 'lo', 'hi', 'off', 'r', 'CELL.b'])) : lines.join('\n'));
     return { box: text(box), air: text(air) };
   }
-  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false);
+  // The relief's whole-number decisions, in either language (js: true, or
+  // GLSL), written once from its tables (RELIEF_ROWS, and the ridges' rows,
+  // RIDGE_ROWS): the rectangle of a face the point is in, and its depth's
+  // index (rectangle); a face's caps (capsAt, capAt) and a level's depths
+  // (depthOf); the row of a ridge a height is in (ridgeRow, looked up in the
+  // table, as the builder's ridgeRow made it); whether a cut comes near a
+  // ridge (nearRidge) and is no deeper than the ridge's there (underRidge);
+  // heights in twelfths (h12), terraces' heights and bands (terraceH,
+  // bandOf); and a rectangle's depth (rectDepth). (The JavaScript's, made
+  // into functions below; what the shader keeps in globals (gU0, gRY0 and
+  // the rest), in RS.)
+  function reliefPieces(js) {
+    // (Where the languages differ: what twin.writer writes; the globals (or
+    // RS); a vector (ivec3, or an array, also as an out parameter, set part
+    // by part, and copied where GLSL copies); the ridges' rows (a texture,
+    // or the table's array); a whole number multiplied as GLSL's int does
+    // (Math.imul) and divided (truncated). Otherwise the text is both's: in
+    // JavaScript float, int, uint, abs, floor, round, clamp, min and max are
+    // as GLSL has them, vectors are arrays, and whole numbers are as
+    // twin.unsigned makes them.)
+    const { fn, decl, loop, ivec3: iv, indent: ins } = twin.writer(js);
+    const g = (name) => (js ? `RS.${name}` : `g${name}`);
+    const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
+    // (A vector b set to the parts xs: as GLSL assigns one, part by part in
+    // JavaScript, where an out parameter is the caller's array.)
+    const set3 = (b, xs) => (js ? xs.map((x, a) => `${b}[${a}] = ${x};`).join(' ') : `${b} = ivec3(${xs.join(', ')});`);
+    // (A rectangle: rows of sby, each shifted along by its own whole number
+    // of quanta at the city's level (one level finer, tiled afresh in each
+    // city rectangle: no shift, so that the tiles align with its edges),
+    // split splits times across the longer side more likely than the shorter
+    // (in proportion), never leaving a part under min quanta: no thin
+    // slices.)
+    const vec3Of = (name, from) => (js ? `const ${name} = ${from ? `[${from}[0], ${from}[1], ${from}[2]]` : '[0, 0, 0]'};` : `ivec3 ${name}${from ? ` = ${from}` : ''};`);
+    const rect = [
+      "// The rectangle of face k at level lv that the point is in (u along the",
+      '// face, in its own measure, y its true height, each a whole',
+      "// number and the rest), and its depth's index. One level finer, tiled afresh",
+      '// in each city rectangle (tile, from its corner; no rows shifted).',
+      ...(js ? [] : ['int gU0, gU1, gY0, gY1, gDepth;']),
+      fn('void', 'rectangle', ['int lv', 'int k', 'int u', 'float fu', 'int y', 'float fy', 'uint tile']),
+      ...ins([
+        decl('ivec4', 'lvp = LV[lv]'),
+        decl('int', `q = lv == 0 ? FQY[k].x : FQY[k].y, n = ${idiv('lvp.x', 'lvp.z')}, su = n * q`),
+        decl('uint', 'salt = uint(lv * 0x5bd1e995) ^ tile'),
+        decl('int', 'row = fdiv(y - (fy < 0.0 ? 1 : 0), lvp.y)'),
+        decl('int', `shift = lv == 0 ? q * int(hashCell(${iv(['row', 'k', 'lv'])}, ROW_SALT ^ salt) % uint(n)) : 0`),
+        decl('int', 'col = fdiv(u - (fu < 0.0 ? 1 : 0) - shift, su)'),
+        decl('int', 'u0 = col * su + shift, u1 = u0 + su, y0 = row * lvp.y, y1 = y0 + lvp.y', true),
+        decl('uint', `h = hashCell(${iv(['col', 'row', 'k'])}, POCKET_SALT ^ salt)`, true),
+        decl('int', 'm = LV_MIN[lv]'),
+        loop('i', 0, 'lvp.w'),
+        ...ins([
+          decl('int', `nu = ${idiv('(u1 - u0)', 'q')}, ny = ${idiv('(y1 - y0)', 'lvp.z')}`),
+          decl('bool', 'cu = nu >= 2 * m, cy = ny >= 2 * m'),
+          'if (cu || cy) {',
+          ...ins([
+            decl('bool', 'alongU = cu && (!cy || (h & 0xffu) * uint(nu + ny) < 256u * uint(nu))'),
+            decl('int', 's = m + int((h >> 8) % uint((alongU ? nu : ny) - 2 * m + 1))'),
+            'if (alongU) { if (beyond(u, fu, u0 + s * q)) u0 += s * q; else u1 = u0 + s * q; }',
+            'else { if (beyond(y, fy, y0 + s * lvp.z)) y0 += s * lvp.z; else y1 = y0 + s * lvp.z; }',
+          ]),
+          '}',
+          `h = hashCell(${iv(['u0', 'y0', `${js ? 'Math.imul(u1, 4099)' : 'u1 * 4099'} + y1`])}, (POCKET_SALT ^ salt) ^ uint(k));`,
+        ]),
+        '}',
+        decl('float', `t = h01(hashCell(${iv(['u0', 'y0', 'k'])}, DEPTH_SALT ^ salt))`),
+        decl('int', 'j = 0', true),
+        `${loop('i', 0, 'ND - 1').slice(0, -2)} if (t >= CUM[lv * ND + i]) j = i + 1;`,
+        `${g('U0')} = u0; ${g('U1')} = u1; ${g('Y0')} = y0; ${g('Y1')} = y1; ${g('Depth')} = j;`,
+      ]),
+      '}',
+    ];
+    const one = (head, body) => `${head} ${body} }`;
+    // Depth profiles (relief-v5.md, terraces.md). A cut's depth behind its
+    // face varies with height: a terrace's ramps up from nothing at the edge
+    // of its band to all of it at its wall's foot, and is nothing elsewhere in
+    // its rows; one level finer, a cut adds to the city's terrace under it.
+    // Near a ridge a cut must be, at every height, no deeper than the ridge's
+    // own cut there (then the two are one cut from past the ridge, inside the
+    // ridge's pair: the pair argument holds slice by slice). Heights here are
+    // in twelfths of a cell (h12), on which all rows and terraces' heights
+    // lie; depths in twelfths; so every test is exact.
+    // - nearRidge: whether a cut t deep over [u0, u1] x [y0, y1] (level lv's
+    //   measure and units) comes within W(t) of face k's e-th ridge at either
+    //   height.
+    // - terraceH: a terrace's height for t twelfths, in twelfths, rounded
+    //   down (see terrace).
+    // - bandOf: a city terrace of face k, t twelfths deep over rows a to b
+    //   (h12): its band [lo, hi] and the height its wall stands at (anchor).
+    //   On a face all terraces' ramps have one slope, so one is no deeper
+    //   than another over a height range where both are in their bands iff
+    //   its anchor is nearer the band's end it ramps from (the upper's: its
+    //   top; the lower's: its bottom).
+    // - underRidge: whether a cut of face k at level lv over heights s to e2
+    //   (h12) is, at its e-th ridge, no deeper than the ridge's: city, its
+    //   city terrace's band (if hasCity); one level finer, its own part, fb
+    //   twelfths over heights flo to fhi (if hasFine); the ridge's own part
+    //   one level finer is behind its terrace's wall in its band, else behind
+    //   the face, as cutOf. At most RIDGE_SPAN rows (see check).
+    // - rectDepth: a face's rectangle at level lv (drawn depth index j; one
+    //   level finer on the city's rectangle, rows cy0 to cy1 in cells, fl
+    //   twelfths deep): the deepest of its level's depths, from its own down,
+    //   no deeper than the slice allows and, at each ridge it comes within
+    //   W(t) of, than the ridge's cut at every height. In twelfths: fl if
+    //   none. (Its own part one level finer: in the city terrace's band, from
+    //   its floor or to its ceiling; else all its rows.)
+    const decide = [
+      '// See capAt, pairFits, ridgeRow and nearRidge in the JS.',
+      "// (Face k's caps at height i, twelfths of a cell.)",
+      one(fn('int', 'capsAt', ['int k', 'int i']), `${decl('ivec3', 'c = FCR[k]')} return FCAPS[c.x + clamp(i - c.y, 0, c.z - 1)];`),
+      one(fn('int', 'capAt', ['int k', 'int i0', 'int i1']), 'return min(capsAt(k, i0), capsAt(k, i1));'),
+      one(fn('int', 'depthOf', ['int lv', 'int j']), 'return lv == 0 ? 3 * int(round(DEPTHS[j] * 4.0)) : int(round(DEPTHS[ND + j] / 2.0));'),
+      '// The row of ridge r at level lv that height y (level units) is in (see',
+      "// ridgeRow in the JS, and RIDGE_ROWS): gRY0, gRY1, its depth gRT and the",
+      "// city's row's gRTC, and the city's row's heights gRCY0, gRCY1 (level units).",
+      ...(js ? [] : ['int gRY0, gRY1, gRT, gRTC, gRCY0, gRCY1;']),
+      js
+        ? 'function ridgeAt(r, lv, y) { const i = 4 * ((2 * r + lv) * RR_W + clamp(y - RR_FROM[lv], 0, RR_N[lv] - 1)); return RR_DATA.subarray(i, i + 4); }'
+        : 'ivec4 ridgeAt(int r, int lv, int y) { return texelFetch(uRidgeRows, ivec2(clamp(y - RR_FROM[lv], 0, RR_N[lv] - 1), 2 * r + lv), 0); }',
+      fn('void', 'ridgeRow', ['int r', 'int lv', 'int y']),
+      ...ins([
+        decl('ivec4', 'w = ridgeAt(r, lv, y)'),
+        `${g('RY0')} = w.x; ${g('RY1')} = w.y; ${g('RT')} = w.z; ${g('RTC')} = w.w;`,
+        `${g('RCY0')} = w.x; ${g('RCY1')} = w.y;`,
+        'if (lv == 1) {',
+        ...ins([decl('ivec4', 'c = ridgeAt(r, 0, fdiv(y, R))'), `${g('RCY0')} = R * c.x; ${g('RCY1')} = R * c.y;`]),
+        '}',
+      ]),
+      '}',
+      fn('bool', 'nearRidge', ['int k', 'int e', 'int lv', 'int u0', 'int u1', 'int y0', 'int y1', 'int t']),
+      ...ins([
+        decl('ivec4', 'E = FEDGE[k * 2 + e]'),
+        decl('int', 'S = lv == 0 ? 1 : R, sg = E.w > 0 ? 1 : -1, sd = E.x > 0 ? 1 : -1, u = sg > 0 ? u0 : u1'),
+        decl('int', 'W = FWT[((k * 2 + e) * 2 + lv) * 17 + t] * abs(E.x)'),
+        'return sg * sd * (u * E.x - E.y * y0 - S * E.z) < W || sg * sd * (u * E.x - E.y * y1 - S * E.z) < W;',
+      ]),
+      '}',
+      '// Depth profiles: see h12, terraceH, band, underRidge and rectDepth in the JS.',
+      one(fn('int', 'h12', ['int lv', 'int y']), `return lv == 0 ? 12 * y : ${idiv('y', '2')};`),
+      one(fn('int', 'terraceH', ['int k', 'int t']), 'return int(floor(float(t) * FNS[k].x / abs(FNH[k].x) + 1e-3));'),
+      "// (A city terrace's band and anchor: lo, hi, at; false if not cut.)",
+      fn('bool', 'bandOf', ['int k', 'int a', 'int b', 'int t', 'out ivec3 B']),
+      ...ins([
+        set3('B', ['0', '0', '0']).replace('ivec3(0, 0, 0)', 'ivec3(0)'),
+        'if (t <= 0) return false;',
+        decl('int', 'H = terraceH(k, t)'),
+        js ? 'if (FNH[k].x > 0.0) { B[0] = b - H; B[1] = b; B[2] = b; } else { B[0] = a; B[1] = a + H; B[2] = a; }' : 'B = FNH[k].x > 0.0 ? ivec3(b - H, b, b) : ivec3(a, a + H, a);',
+        'return true;',
+      ]),
+      '}',
+      fn('bool', 'underRidge', ['int k', 'int e', 'int lv', 'int s', 'int e2', 'bool hasCity', 'ivec3 city', 'bool hasFine', 'int fb', 'int flo', 'int fhi']),
+      ...ins([
+        decl('int', 'r = FER[k * 2 + e], y = s', true),
+        decl('bool', 'up = FNH[k].x > 0.0'),
+        loop('i', 0, RIDGE_SPAN),
+        ...ins([
+          'if (y >= e2) break;',
+          'ridgeRow(r, lv, lv == 0 ? fdiv(y, 12) : 2 * y);',
+          decl('int', `ra = h12(lv, ${g('RY0')}), rb = h12(lv, ${g('RY1')}), a = max(s, ra), b = min(e2, rb)`),
+          vec3Of('RB'),
+          decl('bool', `rok = bandOf(k, h12(lv, ${g('RCY0')}), h12(lv, ${g('RCY1')}), ${g('RTC')}, RB)`),
+          'if (hasCity) {',
+          ...ins([
+            decl('int', 'lo = max(a, city.x), hi = min(b, city.y)'),
+            'if (lo < hi && !(rok && RB.x <= lo && hi <= RB.y && (up ? RB.z >= city.z : RB.z <= city.z))) return false;',
+          ]),
+          '}',
+          'if (hasFine) {',
+          ...ins([
+            decl('int', 'lo = max(a, flo), hi = min(b, fhi)'),
+            'if (lo < hi) {',
+            ...ins([
+              decl('bool', 'inb = rok && (up ? rb >= RB.x : ra <= RB.y)'),
+              decl('int', 'alo = inb && up ? max(ra, RB.x) : ra, ahi = inb && !up ? min(rb, RB.y) : rb'),
+              `if (!(fb <= ${g('RT')} - ${g('RTC')} && alo <= lo && hi <= ahi)) return false;`,
+            ]),
+            '}',
+          ]),
+          '}',
+          'y = rb;',
+        ]),
+        '}',
+        'return true;',
+      ]),
+      '}',
+      fn('int', 'rectDepth', ['int k', 'int lv', 'int u0', 'int u1', 'int y0', 'int y1', 'int j', 'int fl', 'int cy0', 'int cy1']),
+      ...ins([
+        decl('int', 's = h12(lv, y0), e2 = h12(lv, y1)'),
+        vec3Of('cityB'),
+        decl('bool', 'hasCB = lv == 1 && bandOf(k, 12 * cy0, 12 * cy1, fl, cityB)'),
+        decl('bool', 'up = FNH[k].x > 0.0'),
+        `for (${js ? 'let' : 'int'} jj = ND - 1; jj > 0; jj--) {`,
+        ...ins([
+          'if (jj > j) continue;',
+          decl('int', 't = fl + depthOf(lv, jj)'),
+          'if (t > capAt(k, s, e2)) continue;',
+          vec3Of('city', 'cityB'),
+          decl('bool', 'hasCity = hasCB, hasFine = lv == 1', true),
+          'if (lv == 0) hasCity = bandOf(k, s, e2, t, city);',
+          decl('bool', 'inb = hasCB && (up ? e2 >= cityB.x : s <= cityB.y)'),
+          decl('int', 'flo = inb && up ? max(s, cityB.x) : s, fhi = inb && !up ? min(e2, cityB.y) : e2'),
+          decl('bool', 'ok = true', true),
+          loop('e', 0, 2).slice(0, -2),
+          '  if (ok && nearRidge(k, e, lv, u0, u1, y0, y1, t) && !underRidge(k, e, lv, s, e2, hasCity, city, hasFine, t - fl, flo, fhi)) ok = false;',
+          'if (ok) return t;',
+        ]),
+        '}',
+        'return fl;',
+      ]),
+      '}',
+    ];
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB'])) : lines.join('\n'));
+    return { rect: text(rect), decide: text(decide) };
+  }
+  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false);
 
   const glsl = /* glsl */ `
 const int G = ${G};
@@ -1661,9 +1862,9 @@ const uint POCKET_SALT = ${POCKET_SALT}u, ROW_SALT = ${ROW_SALT}u, DEPTH_SALT = 
 // least a part may be (LV_MIN, in quanta); and their depths' shares, ND to a
 // level.
 const int ND = ${ND};
-const ivec4 LV[2] = ivec4[2](${LEVELS.map((l) => `ivec4(${l.sb}, ${l.sby}, ${l.quant}, ${l.splits})`).join(', ')});
-const int LV_MIN[2] = int[2](${LEVELS.map((l) => l.min).join(', ')});
-const float CUM[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.cumulative, ...Array(ND - l.depths.length).fill(2)]).map(glf).join(', ')});
+${table('ivec4', 'LV', 2, vrow('ivec4'), RELIEF_ROWS)}
+${table('int', 'LV_MIN', 2, String, RELIEF_ROWS)}
+${table('float', 'CUM', '2 * ND', glf, RELIEF_ROWS)}
 const int NF = ${FACES.length};
 // Each face (see FACES and the setup after BARE_PL): n's slant (index, sign),
 // K, alpha; its rows' K term (F.yk); nn; its unit normal; its h and t as
@@ -1675,42 +1876,35 @@ const int FNY[NF] = int[NF](${FACES.map((F) => F.yk).join(', ')});
 const int FNN[NF] = int[NF](${FACES.map((F) => F.nn).join(', ')});
 const vec3 FN[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.n.map((x) => glf(x / F.nl)).join(', ')})`).join(', ')});
 const ivec4 FHT[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.h.k}, ${F.h.sign}, ${F.t.k}, ${F.t.sign})`).join(', ')});
-const ivec4 FQY[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.q2[0]}, ${F.q2[1]}, ${F.lo4}, ${F.hi4})`).join(', ')});
+${table('ivec4', 'FQY', 'NF', vrow('ivec4'), RELIEF_ROWS)}
 const ivec3 FT[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.tv))});
 const float FLEN[NF] = float[NF](${FACES.map((F) => glf(F.len)).join(', ')});
 const ivec4 FSL[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.ms.k}, ${F.ms.sign}, ${F.gm}, ${F.p})`).join(', ')});
 // Each face's normal's upright part and the length of its level part (raw: see terrace in the JS).
-const vec2 FNH[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.n[1])}, ${glf(Math.hypot(F.n[0], F.n[2]))})`).join(', ')});
-const vec2 FNS[NF] = vec2[NF](${FACES.map((F) => `vec2(${glf(F.nl)}, ${glf(F.gm * F.mlen)})`).join(', ')});
+${table('vec2', 'FNH', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
+${table('vec2', 'FNS', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
 // Each face's two ridges (see F.edges): dl, al, be, and sg (as sg W(DMAX)); and the other face's index.
-const ivec4 FEDGE[NF * 2] = ivec4[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => `ivec4(${E.dl}, ${E.al}, ${E.be}, ${E.sg * E.W})`)).join(', ')});
+${table('ivec4', 'FEDGE', 'NF * 2', vrow('ivec4'), RELIEF_ROWS)}
 const int FEG[NF * 2] = int[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => FACES.indexOf(E.G))).join(', ')});
 // W(t) at each ridge of each face (see F.edges), at each level, t twelfths, 0 to 16.
-const int FWT[NF * 68] = int[NF * 68](${FACES.flatMap((F) => F.edges.flatMap((E) => E.Wt.flat())).join(', ')});
+${table('int', 'FWT', 'NF * 68', String, RELIEF_ROWS)}
 // Each face's ridges: which (see RIDGES), and the plane of a notch's edge
 // there (see F.edges: gl, and gn, its unit normal into the face).
 const int NRID = ${RIDGES.length};
-const int FER[NF * 2] = int[NF * 2](${FACES.flatMap((F) => F.er).join(', ')});
+${table('int', 'FER', 'NF * 2', String, RELIEF_ROWS)}
 const float EGL[NF * 2] = float[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => glf(E.gl))).join(', ')});
 const vec3 EGN[NF * 2] = vec3[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => `vec3(${E.gn.map(glf).join(', ')})`)).join(', ')});
 // Each ridge's two faces. Each face's caps (see F.cap, F.ncap: cap, and
 // each level's ncap, five bits each), from F.c0, and where they are (offset,
 // c0, how many); and each ridge's bare rows (see r.barep), likewise.
-${(() => {
-    const caps = [], fr = [];
-    for (const F of FACES) {
-      fr.push(`ivec3(${caps.length}, ${F.c0}, ${F.cap.length})`);
-      F.cap.forEach((c) => caps.push(c));
-    }
-    return `const int FCAPS[${caps.length}] = int[${caps.length}](${caps.join(', ')});
-const ivec3 FCR[NF] = ivec3[NF](${fr.join(', ')});`;
-  })()}
+${table('int', 'FCAPS', RELIEF_ROWS.FCAPS.length, String, RELIEF_ROWS)}
+${table('ivec3', 'FCR', 'NF', vrow('ivec3'), RELIEF_ROWS)}
 // The ridges' rows (RIDGE_ROWS in the JS, the table uRidgeRows): from
 // RR_FROM, RR_N of them.
 const int RR_FROM[2] = int[2](${RR_FROM.join(', ')}), RR_N[2] = int[2](${RR_N.join(', ')});
 const int FOUR = ${FOUR.k};
 // Each level's depths (its own units).
-const float DEPTHS[2 * ND] = float[2 * ND](${LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]).map(glf).join(', ')});
+${table('float', 'DEPTHS', '2 * ND', glf, RELIEF_ROWS)}
 const uint TILE_SALT = ${TILE_SALT}u;
 const float DMAX = ${glf(DMAX)}, BAND_IN = ${glf(BAND_IN)}, BAND_OUT = ${glf(BAND_OUT)};
 // The faces with openings (see WINDOWS): h and t as slants (index, sign); K,
@@ -1781,37 +1975,7 @@ int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); } // floor
 
 ${CITY_GLSL.ground}
 
-// The rectangle of face k at level lv that the point is in (u along the
-// face, in its own measure, y its true height, each a whole
-// number and the rest), and its depth's index. One level finer, tiled afresh
-// in each city rectangle (tile, from its corner; no rows shifted).
-int gU0, gU1, gY0, gY1, gDepth;
-void rectangle(int lv, int k, int u, float fu, int y, float fy, uint tile) {
-  ivec4 lvp = LV[lv];
-  int q = lv == 0 ? FQY[k].x : FQY[k].y, n = lvp.x / lvp.z, su = n * q;
-  uint salt = uint(lv * 0x5bd1e995) ^ tile;
-  int row = fdiv(y - (fy < 0.0 ? 1 : 0), lvp.y);
-  int shift = lv == 0 ? q * int(hashCell(ivec3(row, k, lv), ROW_SALT ^ salt) % uint(n)) : 0;
-  int col = fdiv(u - (fu < 0.0 ? 1 : 0) - shift, su);
-  int u0 = col * su + shift, u1 = u0 + su, y0 = row * lvp.y, y1 = y0 + lvp.y;
-  uint h = hashCell(ivec3(col, row, k), POCKET_SALT ^ salt);
-  int m = LV_MIN[lv];
-  for (int i = 0; i < lvp.w; i++) {
-    int nu = (u1 - u0) / q, ny = (y1 - y0) / lvp.z;
-    bool cu = nu >= 2 * m, cy = ny >= 2 * m;
-    if (cu || cy) {
-      bool alongU = cu && (!cy || (h & 0xffu) * uint(nu + ny) < 256u * uint(nu));
-      int s = m + int((h >> 8) % uint((alongU ? nu : ny) - 2 * m + 1));
-      if (alongU) { if (beyond(u, fu, u0 + s * q)) u0 += s * q; else u1 = u0 + s * q; }
-      else { if (beyond(y, fy, y0 + s * lvp.z)) y0 += s * lvp.z; else y1 = y0 + s * lvp.z; }
-    }
-    h = hashCell(ivec3(u0, y0, u1 * 4099 + y1), (POCKET_SALT ^ salt) ^ uint(k));
-  }
-  float t = h01(hashCell(ivec3(u0, y0, k), DEPTH_SALT ^ salt));
-  int j = 0;
-  for (int i = 0; i < ND - 1; i++) if (t >= CUM[lv * ND + i]) j = i + 1;
-  gU0 = u0; gU1 = u1; gY0 = y0; gY1 = y1; gDepth = j;
-}
+${RELIEF_GLSL.rect}
 
 // How far inside the solids without relief (pillars, the column) the point q
 // is (cells from the building's origin; outside, less than 0): the city's
@@ -1829,88 +1993,7 @@ float bareIn(vec3 q) {
   for (int i = 0; i < NBARE; i++) d = max(d, -solidOut(BARE_ID[i], q));
   return d;
 }
-// See capAt, pairFits, ridgeRow and nearRidge in the JS.
-// (Face k's caps at height i, twelfths of a cell.)
-int capsAt(int k, int i) { ivec3 c = FCR[k]; return FCAPS[c.x + clamp(i - c.y, 0, c.z - 1)]; }
-int capAt(int k, int i0, int i1) { return min(capsAt(k, i0), capsAt(k, i1)); }
-int depthOf(int lv, int j) { return lv == 0 ? 3 * int(round(DEPTHS[j] * 4.0)) : int(round(DEPTHS[ND + j] / 2.0)); }
-// The row of ridge r at level lv that height y (level units) is in (see
-// ridgeRow in the JS, and RIDGE_ROWS): gRY0, gRY1, its depth gRT and the
-// city's row's gRTC, and the city's row's heights gRCY0, gRCY1 (level units).
-int gRY0, gRY1, gRT, gRTC, gRCY0, gRCY1;
-ivec4 ridgeAt(int r, int lv, int y) { return texelFetch(uRidgeRows, ivec2(clamp(y - RR_FROM[lv], 0, RR_N[lv] - 1), 2 * r + lv), 0); }
-void ridgeRow(int r, int lv, int y) {
-  ivec4 w = ridgeAt(r, lv, y);
-  gRY0 = w.x; gRY1 = w.y; gRT = w.z; gRTC = w.w;
-  gRCY0 = w.x; gRCY1 = w.y;
-  if (lv == 1) {
-    ivec4 c = ridgeAt(r, 0, fdiv(y, R));
-    gRCY0 = R * c.x; gRCY1 = R * c.y;
-  }
-}
-bool nearRidge(int k, int e, int lv, int u0, int u1, int y0, int y1, int t) {
-  ivec4 E = FEDGE[k * 2 + e];
-  int S = lv == 0 ? 1 : R, sg = E.w > 0 ? 1 : -1, sd = E.x > 0 ? 1 : -1, u = sg > 0 ? u0 : u1;
-  int W = FWT[((k * 2 + e) * 2 + lv) * 17 + t] * abs(E.x);
-  return sg * sd * (u * E.x - E.y * y0 - S * E.z) < W || sg * sd * (u * E.x - E.y * y1 - S * E.z) < W;
-}
-// Depth profiles: see h12, terraceH, band, underRidge and rectDepth in the JS.
-int h12(int lv, int y) { return lv == 0 ? 12 * y : y / 2; }
-int terraceH(int k, int t) { return int(floor(float(t) * FNS[k].x / abs(FNH[k].x) + 1e-3)); }
-// (A city terrace's band and anchor: lo, hi, at; false if not cut.)
-bool bandOf(int k, int a, int b, int t, out ivec3 B) {
-  B = ivec3(0);
-  if (t <= 0) return false;
-  int H = terraceH(k, t);
-  B = FNH[k].x > 0.0 ? ivec3(b - H, b, b) : ivec3(a, a + H, a);
-  return true;
-}
-bool underRidge(int k, int e, int lv, int s, int e2, bool hasCity, ivec3 city, bool hasFine, int fb, int flo, int fhi) {
-  int r = FER[k * 2 + e], y = s;
-  bool up = FNH[k].x > 0.0;
-  for (int i = 0; i < 6; i++) {
-    if (y >= e2) break;
-    ridgeRow(r, lv, lv == 0 ? fdiv(y, 12) : 2 * y);
-    int ra = h12(lv, gRY0), rb = h12(lv, gRY1), a = max(s, ra), b = min(e2, rb);
-    ivec3 RB;
-    bool rok = bandOf(k, h12(lv, gRCY0), h12(lv, gRCY1), gRTC, RB);
-    if (hasCity) {
-      int lo = max(a, city.x), hi = min(b, city.y);
-      if (lo < hi && !(rok && RB.x <= lo && hi <= RB.y && (up ? RB.z >= city.z : RB.z <= city.z))) return false;
-    }
-    if (hasFine) {
-      int lo = max(a, flo), hi = min(b, fhi);
-      if (lo < hi) {
-        bool inb = rok && (up ? rb >= RB.x : ra <= RB.y);
-        int alo = inb && up ? max(ra, RB.x) : ra, ahi = inb && !up ? min(rb, RB.y) : rb;
-        if (!(fb <= gRT - gRTC && alo <= lo && hi <= ahi)) return false;
-      }
-    }
-    y = rb;
-  }
-  return true;
-}
-int rectDepth(int k, int lv, int u0, int u1, int y0, int y1, int j, int fl, int cy0, int cy1) {
-  int s = h12(lv, y0), e2 = h12(lv, y1);
-  ivec3 cityB;
-  bool hasCB = lv == 1 && bandOf(k, 12 * cy0, 12 * cy1, fl, cityB);
-  bool up = FNH[k].x > 0.0;
-  for (int jj = ND - 1; jj > 0; jj--) {
-    if (jj > j) continue;
-    int t = fl + depthOf(lv, jj);
-    if (t > capAt(k, s, e2)) continue;
-    ivec3 city = cityB;
-    bool hasCity = hasCB, hasFine = lv == 1;
-    if (lv == 0) hasCity = bandOf(k, s, e2, t, city);
-    bool inb = hasCB && (up ? e2 >= cityB.x : s <= cityB.y);
-    int flo = inb && up ? max(s, cityB.x) : s, fhi = inb && !up ? min(e2, cityB.y) : e2;
-    bool ok = true;
-    for (int e = 0; e < 2; e++)
-      if (ok && nearRidge(k, e, lv, u0, u1, y0, y1, t) && !underRidge(k, e, lv, s, e2, hasCity, city, hasFine, t - fl, flo, fhi)) ok = false;
-    if (ok) return t;
-  }
-  return fl;
-}
+${RELIEF_GLSL.decide}
 
 // Where the point is on face k (see faceAt in the JS).
 int gPu, gPy, gPYi, gPni;
@@ -2405,6 +2488,19 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', ...Object.keys(OPEN_ROWS),
     `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\nreturn { openLo, openHi, openings };\n//# sourceURL=openingsPieces.gen.js`,
   )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, ...Object.values(OPEN_ROWS));
+  // The relief's whole-number decisions in JavaScript (see reliefPieces),
+  // made into functions, and what the shader keeps in globals (gU0, gRY0 and
+  // the rest), RS.
+  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0 };
+  const RELIEF_JS = reliefPieces(true);
+  const { rectangle, ridgeRow: ridgeRowAt, terraceH, rectDepth } = new Function(
+    'P', 'RS', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
+    `'use strict';\nconst { beyond, h01 } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\nreturn { rectangle, ridgeRow, terraceH, rectDepth };\n//# sourceURL=reliefPieces.gen.js`,
+  )(P, RS, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
+  // (A rectangle, and a ridge's row, as the hand-written relief takes them.)
+  const rectOf = (lv, k, u, fu, y, fy, tile) => (rectangle(lv, k, u, fu, y, fy, tile), { u0: RS.U0, u1: RS.U1, y0: RS.Y0, y1: RS.Y1, depth: RS.Depth });
+  const rowOf = (r, lv, y) => (ridgeRowAt(r, lv, y), { y0: RS.RY0, y1: RS.RY1, t: RS.RT, tc: RS.RTC, cy0: RS.RCY0, cy1: RS.RCY1 });
+
   // The town in JavaScript (see townPieces), made into functions.
   const TOWN_JS = townPieces(true);
   const { townAir } = new Function(
@@ -2429,37 +2525,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return [VOLUME.data[i], VOLUME.data[i + 1], VOLUME.data[i + 2], VOLUME.data[i + 3]];
   }
 
-  // See rectangle in the shader.
-  function rectangle(lv, k, u, fu, y, fy, tile = 0) {
-    const P = LEVELS[lv], q = FACES[k].q2[lv], n = P.sb / P.quant, su = n * q;
-    const salt = (Math.imul(lv, 0x5bd1e995) ^ tile) >>> 0;
-    const row = fdiv(y - (fy < 0 ? 1 : 0), P.sby);
-    // (One level finer, tiled afresh in each city rectangle: no shift, so that the tiles align with its edges.)
-    const shift = lv ? 0 : q * (hashCell([row, k, lv], (ROW_SALT ^ salt) >>> 0) % n);
-    const col = fdiv(u - (fu < 0 ? 1 : 0) - shift, su);
-    let u0 = col * su + shift, u1 = u0 + su, y0 = row * P.sby, y1 = y0 + P.sby;
-    let h = hashCell([col, row, k], (POCKET_SALT ^ salt) >>> 0);
-    for (let i = 0; i < P.splits; i++) {
-      // Across the longer side more likely than the shorter (in proportion),
-      // and never leaving a part under min quanta: no thin slices.
-      const nu = (u1 - u0) / q, ny = (y1 - y0) / P.quant, m = P.min;
-      const cu = nu >= 2 * m, cy = ny >= 2 * m;
-      if (cu || cy) {
-        const alongU = cu && (!cy || (h & 0xff) * (nu + ny) < 256 * nu);
-        const s = m + ((h >>> 8) % ((alongU ? nu : ny) - 2 * m + 1));
-        if (alongU) {
-          if (beyond(u, fu, u0 + s * q)) u0 += s * q;
-          else u1 = u0 + s * q;
-        } else if (beyond(y, fy, y0 + s * P.quant)) y0 += s * P.quant;
-        else y1 = y0 + s * P.quant;
-      }
-      h = hashCell([u0, y0, Math.imul(u1, 4099) + y1], (POCKET_SALT ^ salt ^ k) >>> 0);
-    }
-    const t = h01(hashCell([u0, y0, k], (DEPTH_SALT ^ salt) >>> 0));
-    let j = 0;
-    for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
-    return { u0, u1, y0, y1, depth: j };
-  }
 
 
   // Where the point is on face F at level lv (base its cell's corner from the
@@ -2488,7 +2553,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // (H on the grid of the finer rows, rounded down: so that no finer
   // pocket's row ends just short of, or on, its floor; see inBand.)
   function terrace(F, S, y0, y1, t) {
-    const H = (terraceH(F, t) * S) / 12, up = F.n[1] > 0;
+    const H = (terraceH(F.index, t) * S) / 12, up = F.n[1] > 0;
     return { up, yin: up ? y1 : y0, yb: up ? y1 - H : y0 + H, back: 0 };
   }
   // (Whether rows y0 to y1 reach into terrace w's band, or to its floor:
@@ -2574,7 +2639,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     // on unbroken across it.)
     const widest = edgeAt(16);
     if (widest > 0) return Math.min(d, widest);
-    const r = RIDGES[F.er[e]], w = ridgeRow(r, lv, p.y);
+    const w = rowOf(F.er[e], lv, p.y);
     let cap = Math.min(Y - w.y0, w.y1 - Y, -widest);
     // (One level finer, only its own part: the city's row is the city's.)
     if (!w.t || (lv && w.t === w.tc)) return Math.min(d, Math.max(cap, 0));
@@ -2608,14 +2673,14 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
     const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
     const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
-    const c = rectangle(0, k, uc, fuc, yc, fyc), tc = rectDepth(F, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0, 0, 0);
+    const c = rectOf(0, k, uc, fuc, yc, fyc, 0), tc = rectDepth(k, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0, 0, 0);
     let r = c, t = tc, fl = 0;
     if (lv) {
       // One level finer: tiled afresh from the city rectangle's corner, on its floor.
       const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
-      const q = rectangle(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
+      const q = rectOf(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
       r = { u0: q.u0 + ou, u1: q.u1 + ou, y0: q.y0 + oy, y1: q.y1 + oy };
-      t = rectDepth(F, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
+      t = rectDepth(k, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
       fl = tc;
     }
     const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1], Y = p.Yi + p.Yf;

@@ -399,3 +399,22 @@ test('what the city says of a ray holds', () => {
   }
   assert.ok(count.plaza > 1000 && count.pockets > 500 && count.bare > 300 && count.clipped >= 10 && count.wells > 50 && count.sky > 200, `rays in air: ${JSON.stringify(count)}: the test reaches what it means to`);
 });
+
+// The ridges' rows, as both copies look them up (the table, RIDGE_ROWS), are
+// the rows as the table was made from (ridgeRow): at every height it holds.
+test('the ridges\' rows looked up are the rows as made', () => {
+  const { built, looked, from, n } = _V2.ridgeRows;
+  let compared = 0;
+  for (let r = 0; r < _V2.RIDGES.length; r++)
+    for (let lv = 0; lv < 2; lv++) {
+      // (Outside the table, a height is held to its first or last row.)
+      assert.deepEqual(looked(r, lv, from[lv] - 5), looked(r, lv, from[lv]), `ridge ${r}, level ${lv}: under the table`);
+      assert.deepEqual(looked(r, lv, from[lv] + n[lv] + 5), looked(r, lv, from[lv] + n[lv] - 1), `ridge ${r}, level ${lv}: over the table`);
+      for (let y = from[lv]; y < from[lv] + n[lv]; y++) {
+        const a = built(r, lv, y), b = looked(r, lv, y);
+        for (const k of ['y0', 'y1', 't', 'tc', 'cy0', 'cy1']) assert.equal(b[k], a[k], `ridge ${r}, level ${lv}, height ${y}: ${k}`);
+        compared++;
+      }
+    }
+  assert.ok(compared > 5000, `${compared} heights`);
+});
