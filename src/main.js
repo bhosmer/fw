@@ -1,16 +1,14 @@
 import { Renderer, TAA_N } from './renderer.js';
 import { Controls } from './controls.js';
-import halls from './spaces/halls.js';
-import arcology from './spaces/arcology.js';
+import { WORLDS } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot } from './pilot.js';
 import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { Pacing } from './pacing.js';
 
-// The worlds, and the one we are in: the one a link is in (one from before
-// there were others is in the halls), or else the one last visited.
-const WORLDS = [halls, arcology];
+// The world we are in: the one a link is in (one from before there were
+// others is in the halls), or else the one last visited.
 const WORLD_KEY = 'fw.world';
 const space = (() => {
   let name;
@@ -20,7 +18,7 @@ const space = (() => {
   try {
     name ??= localStorage.getItem(WORLD_KEY);
   } catch {}
-  return WORLDS.find((w) => w.name === name) ?? halls;
+  return WORLDS.find((w) => w.name === name) ?? WORLDS[0];
 })();
 try {
   localStorage.setItem(WORLD_KEY, space.name);
