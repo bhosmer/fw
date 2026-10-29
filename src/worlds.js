@@ -41,6 +41,9 @@ export async function makeWorld(name, changes) {
 // changes, as define takes them. Passed over: a number alone (as makes a
 // link new), and what is added to links as they are passed on (utm_..., and
 // the like). A link with changes names its world (the parts differ).
+// And a second world to compare it with, vs: ...&vs=name (by default the
+// first's name), with the same changes and any of its own on top
+// (vs.part.of.it=value); it must differ from the first.
 export const ADDED = /^(utm_\w+|fbclid|gclid|msclkid|mc_\w+|ref)$/;
 export function fromLink(search) {
   const parts = search.replace(/^\?/, '').split('&').filter(Boolean).map((x) => {
@@ -52,10 +55,26 @@ export function fromLink(search) {
   });
   const names = parts.filter((x) => !x.includes('=') && !/^\d+$/.test(x));
   if (names.length > 1) throw new Error(`a link names one world, not ${names.join(' and ')}`);
-  const changes = new Map();
+  const changes = new Map(), theirs = new Map();
+  let vs = null;
   for (const x of parts.filter((x) => x.includes('='))) {
     const i = x.indexOf('='), path = x.slice(0, i), text = x.slice(i + 1);
     if (ADDED.test(path)) continue;
+    if (path === 'vs') {
+      if (vs !== null) throw new Error('vs is set twice');
+      vs = text;
+      continue;
+    }
+    if (path.startsWith('vs.')) {
+      const p = path.slice(3);
+      if (theirs.has(p)) throw new Error(`${path} is set twice`);
+      try {
+        theirs.set(p, JSON.parse(text));
+      } catch {
+        throw new Error(`${path}=${text}: the value is not one (a number, true or false, "text", or [a, list])`);
+      }
+      continue;
+    }
     if (changes.has(path)) throw new Error(`${path} is set twice`);
     try {
       changes.set(path, JSON.parse(text));
@@ -63,6 +82,9 @@ export function fromLink(search) {
       throw new Error(`${path}=${text}: the value is not one (a number, true or false, "text", or [a, list])`);
     }
   }
-  if (changes.size && !names.length) throw new Error('a link with changes names its world (?arcology&..., ?halls&...)');
-  return { name: names[0] ?? null, changes: changes.size ? byPaths(Object.fromEntries(changes)) : undefined };
+  if ((changes.size || vs !== null || theirs.size) && !names.length) throw new Error('a link with changes, or a world to compare with, names its world (?arcology&..., ?halls&...)');
+  const name = names[0] ?? null, mine = changes.size ? byPaths(Object.fromEntries(changes)) : undefined;
+  if (vs === null && !theirs.size) return { name, changes: mine, vs: null };
+  if (vs === name && !theirs.size) throw new Error(`vs=${vs}: the same as the world it is to be compared with`);
+  return { name, changes: mine, vs: { name: vs ?? name, changes: merge(mine, theirs.size ? byPaths(Object.fromEntries(theirs)) : undefined) } };
 }

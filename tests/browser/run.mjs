@@ -345,11 +345,88 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
   }
   const next = await page.eval(`({ search: location.search, world: fw.space.name, shown: document.querySelector('.world').textContent })`);
   assert(next.search === '' && next.world === 'halls' && next.shown === 'halls', `the next world: ${JSON.stringify(next)}`);
-  for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['arcology&town.density=[30,60', /not one/]]) {
+  for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['arcology&town.density=[30,60', /not one/], ['arcology&vs=nope', /vs: there is no world nope/], ['arcology/cornice&vs=arcology&building.edge="cornice"', /vs: arcology is the same world/]]) {
     await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra', false, 'halls'));
     const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
     assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
   }
+});
+
+// Two worlds compared (&vs=...): flipping between them changes the world
+// alone. At rest, A, then B, then A again: the first and last the same to
+// the byte; B as B is when its link is opened in the same state; the
+// shader's and the JavaScript's agreement there as well; a flip quick (B
+// drawn once already, behind the loading screen); and a link saved with B
+// shown opens with B shown.
+check('two worlds compared flip, and nothing else changes', async () => {
+  const STATE = `window.__keep = () => ({ F: fw.pos.F, frac: fw.pos.frac.slice(), digits: [...fw.pos.digits].map(([j, d]) => [j, d.slice()]), yaw: fw.controls.yaw, pitch: fw.controls.pitch, scale: fw.flight.scale, pace: fw.flight.pace, fog: fw.flight.fog, fogTarget: fw.flight.fogTarget, room: fw.flight.room });
+    window.__put = (s) => { fw.pos.F = s.F; fw.pos.frac = s.frac.slice(); fw.pos.digits = new Map(s.digits.map(([j, d]) => [j, d.slice()])); Object.assign(fw.controls, { yaw: s.yaw, pitch: s.pitch }); Object.assign(fw.flight, { scale: s.scale, pace: s.pace, fog: s.fog, fogTarget: s.fogTarget, room: s.room }); };
+    window.__pic = (s, ref = false) => { __put(s); fw.reference = ref; const px = fw.snap(320, 240); fw.reference = false; let x = 2166136261; for (let i = 0; i < px.length; i++) x = Math.imul(x ^ px[i], 16777619) >>> 0; return x; };`;
+  // (B: the city's pockets deeper, which the place looks into.)
+  const A = 'arcology&vs.relief.city.depths=[0,0.25,0.75]', B = 'arcology&relief.city.depths=[0,0.25,0.75]';
+  await load('relief', 'alhambra', false, A);
+  await page.eval(STATE);
+  const s0 = await page.eval('__keep()');
+  const r = await page.eval(`(() => {
+    const s0 = ${JSON.stringify(s0)}, out = { shown: [fw.shown] };
+    // (A's own programs, the probe's and the older one's, made first: B's
+    // must be B's.)
+    __put(s0);
+    out.checkA = fw.check(40).diff;
+    out.refA = __pic(s0, true);
+    out.a1 = __pic(s0);
+    let t0 = performance.now();
+    fw.flip();
+    out.b = __pic(s0);
+    out.ms = performance.now() - t0;
+    out.shown.push(fw.shown);
+    out.refB = __pic(s0, true);
+    out.check = JSON.stringify((__put(s0), fw.check(40)));
+    __put(s0);
+    out.checkB = fw.check(300);
+    fw.flip();
+    out.a2 = __pic(s0);
+    out.shown.push(fw.shown);
+    return out;
+  })()`);
+  assert(r.shown.join() === 'A,B,A', `shown: ${r.shown}`);
+  assert(r.a1 === r.a2, 'A after a flip there and back is not A as it was');
+  assert(r.a1 !== r.b, 'A and B look the same: the place does not show what differs');
+  assert(r.ms < 250, `a flip and a picture took ${r.ms} ms`);
+  assert(r.checkA < 1e-3 && r.checkB.diff < 1e-3 && r.checkB.more.diff < 1e-3, `the shader and the JavaScript differ: in A ${r.checkA}, in B flipped to ${JSON.stringify(r.checkB)}`);
+  await load('relief', 'alhambra', false, B);
+  await page.eval(STATE);
+  const direct = await page.eval(`({ b: __pic(${JSON.stringify(s0)}), ref: __pic(${JSON.stringify(s0)}, true), check: JSON.stringify((__put(${JSON.stringify(s0)}), fw.check(40))) })`);
+  assert(direct.b === r.b, 'B flipped to is not B as its own link shows it');
+  assert(direct.ref === r.refB, 'B flipped to, drawn the older way, is not B as its own link draws it so');
+  assert(direct.check === r.check, `B flipped to and B by its own link differ in what fw.check finds: ${r.check} / ${direct.check}`);
+  // (Saved with B shown, opened again: B shown.)
+  await load('relief', 'alhambra', false, A);
+  await page.eval('(fw.flip(), fw.saveLocation())');
+  const href = await page.eval('location.href');
+  await page.goto(href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, 'halls'));
+  const again = await page.eval(`({ shown: fw.shown, label: document.querySelector('.world').textContent })`);
+  assert(again.shown === 'B' && again.label === 'B: arcology relief.city.depths=[0,0.25,0.75]', `opened again: ${JSON.stringify(again)}`);
+  // (Running as the app runs, at rest: a flip is drawn.)
+  await load('relief', 'alhambra', true, A);
+  const drawn = await page.eval(`new Promise((ok) => {
+    let n = 0;
+    const draw = fw.renderer.draw.bind(fw.renderer);
+    fw.renderer.draw = (...a) => (n++, draw(...a));
+    setTimeout(() => { const before = n, kept = fw.renderer.prev !== null; fw.flip(); const prev = fw.renderer.prev; setTimeout(() => ok([before, n, kept, prev]), 600); }, 1500);
+  })`);
+  assert(drawn[1] - drawn[0] >= 8, `at rest, a flip drew ${drawn[1] - drawn[0]} frames`);
+  assert(drawn[2] && drawn[3] === null, 'the history (there before the flip) was kept across it');
+  // (Where the two put their defaults differently, the halls and fewer of
+  // them solid: B flipped to and saved opens as B, where it was.)
+  await load('start', 'alhambra', false, 'halls&vs.solid=0.3');
+  await page.eval(STATE);
+  const h = await page.eval(`(() => { fw.flip(); fw.fly(0.3, { f: 1 }); fw.saveLocation(); const s = __keep(); return { s, pic: __pic(s), href: location.href, sky: fw.flight.skyHeight() }; })()`);
+  await page.goto(h.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, 'halls'));
+  await page.eval(STATE);
+  const h2 = await page.eval(`({ shown: fw.shown, F: fw.pos.F, frac: fw.pos.frac, pic: __pic(${JSON.stringify(h.s)}) })`);
+  assert(h2.shown === 'B' && h2.F === h.s.F && JSON.stringify(h2.frac) === JSON.stringify(h.s.frac) && h2.pic === h.pic, `the halls compared, saved with B shown: ${JSON.stringify({ was: h.s.F, ...h2, pic: h2.pic === h.pic })}`);
+  assert(h.sky > -1e29, 'B, flipped to, has no sky: it stands on the other\'s ground');
 });
 
 // From up above each world too, the exact way sees nothing the older one

@@ -76,6 +76,23 @@ export class Flight {
     this.travelled = 0;
     this.lastMove = [0, 0, 0]; // what the last step moved us by, in level-F cells
   }
+  // Be in space from now on (another of the same lattice: a variant of the
+  // world we are in), where we are, as we were: nothing is sensed again until
+  // we move, so that a flip between two at rest changes the world alone.
+  // (Where we are, but in its own frame: a cell where the other's default
+  // would have put it is where this one's default puts it, as its own link
+  // would have it.)
+  setSpace(space) {
+    if (space.R !== this.R) throw new Error('flight: a space of another lattice');
+    const was = this.pos.defaultDigit;
+    for (const [j, d] of this.pos.digits) {
+      const w = was(j), n = space.ancestorDigit(j);
+      if (d.every((x, a) => x === w[a]) && n.some((x, a) => x !== w[a])) this.pos.digits.set(j, n.slice());
+    }
+    this.space = space;
+    this.pos.defaultDigit = space.ancestorDigit;
+    this.pos.slants = space.slants ?? [];
+  }
 
   // One level's air distance at the point v from the camera, in level-F
   // cells (what levelAir in shaders.js gives), worked out here so that

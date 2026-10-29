@@ -20,11 +20,13 @@ function cannot(err) {
 // The world we are in: the one a link names (?variant&part=value: see
 // fromLink in worlds.js), or that the place in a link is in (one from
 // before there were others is in the halls), or else the one last visited;
-// made from its definition with the link's changes.
+// made from its definition with the link's changes. And, where the link
+// names one to compare it with (&vs=...), that one too (other), on the same
+// lattice: V flips between them.
 const WORLD_KEY = 'fw.world';
-let world;
+let world, other = null, link;
 try {
-  const link = fromLink(location.search);
+  link = fromLink(location.search);
   let name = link.name;
   try {
     if (!name && location.hash.length > 1) name = JSON.parse(atob(location.hash.slice(1))).world ?? 'halls';
@@ -34,16 +36,32 @@ try {
   } catch {}
   if (!name || (!link.name && !WORLDS.includes(name))) name = WORLDS[0];
   world = await makeWorld(name, link.changes);
+  if (link.vs) {
+    try {
+      other = await makeWorld(link.vs.name, link.vs.changes);
+    } catch (err) {
+      throw new Error(`vs: ${err.message}`);
+    }
+    if (other.space.R !== world.space.R) throw new Error(`vs: ${link.vs.name} is not on ${name}'s lattice: they cannot be compared`);
+    if (other.space.glsl === world.space.glsl) throw new Error(`vs: ${link.vs.name} is the same world as ${name}, as the link changes them`);
+  }
 } catch (err) {
   cannot(err);
 }
-const space = world.space;
+// (The world shown: the first, or, flipped, the other: side 0 or 1.)
+let space = world.space, side = 0, flippedAt = -Infinity;
 // (A variant is the link's: what is remembered is the world it is of.)
 try {
   localStorage.setItem(WORLD_KEY, world.base);
 } catch {}
-// What the world is called, with the changes its link makes.
-const worldLabel = [world.name, ...location.search.slice(1).split('&').map(decodeURIComponent).filter((x) => x.includes('=') && !ADDED.test(x.split('=')[0]))].join(' ');
+// What each world is called, with the changes its link makes (the other's:
+// those both share, and its own).
+const changed = location.search.slice(1).split('&').map(decodeURIComponent).filter((x) => x.includes('=') && !ADDED.test(x.split('=')[0]) && x.split('=')[0] !== 'vs');
+const labels = [
+  [world.name, ...changed.filter((x) => !x.startsWith('vs.'))].join(' '),
+  other ? [link.vs.name, ...changed.filter((x) => !x.startsWith('vs.')), ...changed.filter((x) => x.startsWith('vs.')).map((x) => x.slice(3))].join(' ') : '',
+];
+const worldLabel = () => (other ? `${side ? 'B' : 'A'}: ${labels[side]}` : labels[0]);
 const R = space.R;
 
 // Of the levels around us, the most that are drawn.
@@ -72,6 +90,7 @@ function toggleHelp() {
 let renderer;
 try {
   renderer = new Renderer(canvas, space, UP + DOWN + 1, N_VIEW);
+  if (other) renderer.addSpace(other.space);
   await renderer.ready();
 } catch (err) {
   cannot(err);
@@ -174,8 +193,11 @@ function scaleLabel(F) {
 // bookmarked or sent to someone.
 function saveLocation() {
   // (Only the digits that are not what they would be anyway.)
-  const digits = [...pos.digits].filter(([j, d]) => space.ancestorDigit(j).some((x, a) => x !== d[a]));
-  const at = { world: space.name, F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch };
+  // (Only the digits that are not what they would be anyway, in either
+  // world compared; and which is shown.)
+  const anyway = (j, d) => [world, other].every((w) => !w || w.space.ancestorDigit(j).every((x, a) => x === d[a]));
+  const digits = [...pos.digits].filter(([j, d]) => !anyway(j, d));
+  const at = { world: world.base, F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch, ...(side ? { shown: 'B' } : {}) };
   // (Where the page is framed, this may not be allowed: then it is not kept.)
   try {
     history.replaceState(null, '', '#' + btoa(JSON.stringify(at)));
@@ -187,6 +209,7 @@ function loadLocation() {
     // (A place in another world than this one is no place here.)
     if ((here.world ?? 'halls') !== world.base) return false;
     pos.F = here.F;
+    if (other && (here.shown === 'B') !== (side === 1)) flip();
     pos.frac = here.frac;
     pos.digits = new Map(here.digits);
     controls.yaw = here.yaw;
@@ -211,6 +234,21 @@ function nextWorld() {
   location.reload();
 }
 
+// The other world compared, where we are, as we are (see Flight.setSpace):
+// nothing else changes, so that what differs is the world. (The tour, if
+// on, starts afresh; what it was about to see was of the other.)
+function flip() {
+  if (!other) return;
+  side = 1 - side;
+  space = (side ? other : world).space;
+  renderer.setSpace(space);
+  flight.setSpace(space);
+  lookAt = null;
+  if (pilot.on) pilot.start(pos.F);
+  flippedAt = performance.now();
+  showScheme();
+}
+
 // Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
 function respawn() {
   flight.elsewhere(Math.random);
@@ -233,7 +271,8 @@ function nextScheme(by) {
 }
 function showScheme() {
   for (const el of document.querySelectorAll('.scheme')) el.textContent = SCHEMES[scheme].name;
-  for (const el of document.querySelectorAll('.world')) el.textContent = worldLabel;
+  for (const el of document.querySelectorAll('.world')) el.textContent = worldLabel();
+  for (const el of document.querySelectorAll('.vs')) el.hidden = !other;
 }
 showScheme();
 addEventListener('keydown', (e) => {
@@ -242,6 +281,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
   if (e.code === 'KeyN') (e.shiftKey ? nextWorld : respawn)();
+  if (e.code === 'KeyV') flip();
 });
 // The same, by buttons, for touch screens.
 const BUTTONS = {
@@ -250,6 +290,7 @@ const BUTTONS = {
   help: toggleHelp,
   new: respawn,
   world: nextWorld,
+  vs: flip,
 };
 for (const [name, act] of Object.entries(BUTTONS)) {
   document.getElementById(name + '-button')?.addEventListener('click', (e) => {
@@ -272,7 +313,7 @@ else flight.elsewhere(Math.random);
 let shown = '', settled = 0;
 function present() {
   resize();
-  const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), canvas.width, canvas.height, upscale, debug, reference, scheme].join();
+  const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), canvas.width, canvas.height, upscale, debug, reference, scheme, side].join();
   let key = keyNow();
   if (key === shown && upscale < 1) {
     upscale = 1;
@@ -358,8 +399,20 @@ function tick(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${worldLabel}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 || now - flippedAt < 2000 ? `   world: ${worldLabel()}` : other ? `   ${side ? 'B' : 'A'}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
   requestAnimationFrame(frame);
+}
+// Where two worlds are compared, the one not shown drawn once before the
+// first frame: the GPU builds a program's pipeline when first drawing with
+// it, a stall better behind the loading screen than at the first flip.
+if (other) {
+  try {
+    flip();
+    draw();
+    flip();
+  } catch (err) {
+    cannot(err);
+  }
 }
 requestAnimationFrame(frame);
 
@@ -369,8 +422,15 @@ window.fw = {
   pos,
   flight,
   controls,
-  space,
+  get space() {
+    return space;
+  },
   renderer,
+  flip,
+  // (Which world compared is shown: 'A' or 'B'; null if none is compared.)
+  get shown() {
+    return other ? (side ? 'B' : 'A') : null;
+  },
   saveLocation,
   set debug(v) {
     debug = v;

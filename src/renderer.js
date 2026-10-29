@@ -59,28 +59,19 @@ export class Renderer {
     if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('EXT_color_buffer_float is not available');
     this.gl = gl;
     this.canvas = canvas;
-    this.space = space;
     this.nProbe = nProbe;
     this.nView = nView;
 
     // (The programs, begun here and finished in ready; parallel compiling is
     // asked for first, to cover them.)
     this.parallel = gl.getExtension('KHR_parallel_shader_compile');
-    const viewUniforms = [
+    this.viewUniforms = [
       ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uInlay', 'uStride', 'uDebug', 'uJitter', 'uLodH', 'uToOut',
     ];
     this.pending = [
-      ['viewProg', viewFrag(nView, space, true), viewUniforms],
       ['smoothProg', SMOOTH_FRAG, ['uTex', 'uRes']],
       ['taauProg', TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']],
     ].map(([key, frag, names]) => ({ key, names, prog: begin(gl, frag) }));
-    // The older way of finding what each pixel sees, to check the above
-    // against: made the first time it is asked for (see refProg).
-    this.makeRef = () => link(gl, viewFrag(nView, space, false), viewUniforms);
-    // And the probe, which checks the JavaScript twin against the shader
-    // (see probe): made when first asked for too.
-    this.makeProbe = () => link(gl, probeFrag(nProbe, space), [...LEVEL_UNIFORMS, 'uProbeV', 'uProbeDir']);
-
     // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
     // pictures, drawn into in turn, each with its weights; and what the frame
     // before was drawn from.
@@ -111,15 +102,36 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.probeBuf = new Float32Array(2 * nProbe * PROBE_POINTS * 4);
 
+    // The space drawn (and any others added: see addSpace).
+    this.entries = new Map();
+    this.addSpace(space);
+    this.setSpace(space);
+  }
+
+  // A space to draw (besides any others: setSpace picks which): its view
+  // program, begun now and finished in ready; the older way of finding what
+  // each pixel sees, to check that against, and the probe, which checks the
+  // JavaScript twin against the shader (see probe), both made the first time
+  // they are asked for; and what it keeps as tables, as textures.
+  addSpace(space) {
+    if (this.entries.has(space)) return;
+    const gl = this.gl, { nView, nProbe } = this;
+    const e = {
+      begun: begin(gl, viewFrag(nView, space, true)),
+      viewProg: null,
+      makeRef: () => link(gl, viewFrag(nView, space, false), this.viewUniforms),
+      makeProbe: () => link(gl, probeFrag(nProbe, space), [...LEVEL_UNIFORMS, 'uProbeV', 'uProbeDir']),
+      volume: null,
+      tables: [],
+    };
     // What a space keeps as a table rather than works out (see volume in
-    // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned integers, on a
-    // unit of its own.
-    this.volume = null;
+    // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned
+    // integers, on a unit of its own (bound as each frame is drawn).
     if (space.volume) {
       const { size, data, words } = space.volume;
-      this.volume = gl.createTexture();
+      e.volume = gl.createTexture();
       gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
-      gl.bindTexture(gl.TEXTURE_3D, this.volume);
+      gl.bindTexture(gl.TEXTURE_3D, e.volume);
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -127,7 +139,7 @@ export class Renderer {
       gl.texImage3D(gl.TEXTURE_3D, 0, inner, size[0], size[1], size[2], 0, form, gl.UNSIGNED_INT, data);
       gl.activeTexture(gl.TEXTURE0);
     }
-    this.tables = (space.tables ?? []).map(({ name, size, data }, i) => {
+    e.tables = (space.tables ?? []).map(({ name, size, data }, i) => {
       const tex = gl.createTexture();
       gl.activeTexture(gl.TEXTURE0 + TABLES_UNIT + i);
       gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -138,16 +150,29 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE0);
       return { name, tex, unit: TABLES_UNIT + i };
     });
+    this.entries.set(space, e);
+  }
+
+  // Draw space (added already) from now on: afresh, the history being
+  // another's.
+  setSpace(space) {
+    const e = this.entries.get(space);
+    if (!e) throw new Error('renderer: a space it was not given');
+    this.space = space;
+    this.entry = e;
+    this.reset();
   }
 
   // Once the GPU has built the programs (asked without waiting, where it can
   // say), finishes them: nothing is drawn before. (Their errors are thrown
   // here.)
   async ready() {
-    const gl = this.gl, par = this.parallel;
-    while (par && !this.pending.every(({ prog }) => gl.getProgramParameter(prog, par.COMPLETION_STATUS_KHR))) await new Promise((r) => setTimeout(r, 16));
+    const gl = this.gl, par = this.parallel, entries = [...this.entries.values()].filter((e) => e.begun);
+    const progs = [...this.pending.map(({ prog }) => prog), ...entries.map((e) => e.begun)];
+    while (par && !progs.every((prog) => gl.getProgramParameter(prog, par.COMPLETION_STATUS_KHR))) await new Promise((r) => setTimeout(r, 16));
     for (const { key, prog, names } of this.pending) this[key] = finish(gl, prog, names);
-    this.pending = null;
+    for (const e of entries) (e.viewProg = finish(gl, e.begun, this.viewUniforms)), (e.begun = null);
+    this.pending = [];
   }
 
   setLevels(p, recs, n) {
@@ -178,14 +203,15 @@ export class Renderer {
     gl.uniform3fv(p.u.uFr, fr);
     gl.uniform3iv(p.u.uId, id);
     gl.uniform3iv(p.u.uPid, pid);
-    if (this.volume) {
+    const { volume, tables } = this.entry;
+    if (volume) {
       gl.activeTexture(gl.TEXTURE0 + VOLUME_UNIT);
-      gl.bindTexture(gl.TEXTURE_3D, this.volume);
+      gl.bindTexture(gl.TEXTURE_3D, volume);
       gl.activeTexture(gl.TEXTURE0);
       gl.uniform1i(p.u.uVolume, VOLUME_UNIT);
     }
-    p.tables ??= this.tables.map((t) => gl.getUniformLocation(p.prog, t.name));
-    this.tables.forEach((t, i) => {
+    p.tables ??= tables.map((t) => gl.getUniformLocation(p.prog, t.name));
+    tables.forEach((t, i) => {
       gl.activeTexture(gl.TEXTURE0 + t.unit);
       gl.bindTexture(gl.TEXTURE_2D, t.tex);
       gl.activeTexture(gl.TEXTURE0);
@@ -217,7 +243,7 @@ export class Renderer {
   // (lattice units; less than 0, none), n: the surface it meets there }.
   probe(recs, points = [[0, 0, 0]], dir = null) {
     const gl = this.gl;
-    const p = (this.probeProg ??= this.makeProbe());
+    const p = (this.entry.probeProg ??= this.entry.makeProbe());
     const n = this.nProbe, b = this.probeBuf;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
     gl.viewport(0, 0, 2 * n, points.length);
@@ -475,7 +501,7 @@ export class Renderer {
   // Everything the view program needs to draw recs as view describes.
   setView(recs, view, stride) {
     const gl = this.gl;
-    const p = view.reference ? (this.refProg ??= this.makeRef()) : this.viewProg;
+    const e = this.entry, p = view.reference ? (e.refProg ??= e.makeRef()) : e.viewProg;
     const n = this.nView;
     gl.useProgram(p.prog);
     this.setLevels(p, recs, n);

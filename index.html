@@ -30,7 +30,7 @@
         #buttons { display: flex; }
         #hud { bottom: 64px; }
       }
-      #buttons { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+      #buttons { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
       #buttons button {
         font: 14px ui-monospace, Menlo, monospace; color: #fff; background: rgba(0, 0, 0, 0.35);
         border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 8px; padding: 10px 12px;
@@ -49,18 +49,21 @@ R / F        rewind / replay             - / =   travel speed
 N / shift-N  somewhere new / world: <span class="world"></span> (next)
 L / shift-L  scheme: <span class="scheme"></span> (next / previous)
 P            tour (fly as usual to steer it)
-H            hide this</pre><pre class="touch">one finger    look
+<span class="vs" hidden>V            the other world compared (shown: <span class="world"></span>)
+</span>H            hide this</pre><pre class="touch">one finger    look
 two fingers   slide
 pinch         forward / back
 new           somewhere new
 world         <span class="world"></span> (next)
 tour          start / stop the tour
 scheme        <span class="scheme"></span> (next)
-?             hide this</pre></div>
+<span class="vs" hidden>A / B         the other world compared
+</span>?             hide this</pre></div>
     <div id="buttons">
       <button id="tour-button">tour</button>
       <button id="new-button">new</button>
       <button id="world-button">world</button>
+      <button id="vs-button" class="vs" hidden>A / B</button>
       <button id="scheme-button">scheme</button>
       <button id="help-button">?</button>
     </div>
