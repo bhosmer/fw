@@ -17,7 +17,6 @@ export class Controls {
     this.yaw = 0.6;
     this.pitch = -0.05;
     this.speed = 1;
-    this.thread = false;
     this.turned = -Infinity; // when the view was last turned by hand
     this.slide = [0, 0]; // dragged sideways and up, not yet travelled (radians)
     this.dolly = 0; // wheeled forward, not yet travelled (clearances)
@@ -39,7 +38,6 @@ export class Controls {
     addEventListener('keydown', (e) => {
       if (e.metaKey || e.altKey || e.ctrlKey) return;
       this.keys.add(e.code);
-      if (e.code === 'KeyT' && !e.repeat) this.thread = !this.thread;
       if (e.code === 'Minus') this.faster(1 / 1.25);
       if (e.code === 'Equal') this.faster(1.25);
       if (e.code === 'Space' || e.code === 'Backspace' || e.code.startsWith('Arrow')) e.preventDefault();

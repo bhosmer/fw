@@ -31,7 +31,6 @@ const R = space.R;
 const N_VIEW = 12;
 
 const FOV_TAN = Math.tan((70 * Math.PI) / 360);
-const N_THREAD = 64; // points in the drawn thread
 const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
 
 const canvas = document.getElementById('view');
@@ -51,7 +50,7 @@ function toggleHelp() {
 
 let renderer;
 try {
-  renderer = new Renderer(canvas, space, UP + DOWN + 1, N_VIEW, N_THREAD);
+  renderer = new Renderer(canvas, space, UP + DOWN + 1, N_VIEW);
   await renderer.ready();
 } catch (err) {
   help.textContent = err.message;
@@ -93,7 +92,6 @@ function viewNow() {
     sky: flight.skyHeight(),
     // (Deep down R^F is Infinity, and none times that no number at all.)
     sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
-    thread: controls.thread ? flight.thread(50 * maxT, N_THREAD) : null,
   };
   return { recs, view };
 }
@@ -179,9 +177,9 @@ function loadLocation() {
   }
 }
 
-// X switches between the two ways of stepping rays, to compare them by eye;
-// L between schemes (shift-L back); P starts and stops the tour; N goes
-// somewhere new, shift-N to the next world; H hides and shows the legend.
+// L switches between schemes (shift-L back); P starts and stops the tour; N
+// goes somewhere new, shift-N to the next world; H hides and shows the
+// legend. (The old way of stepping rays, to compare by eye: fw.reference.)
 
 // Off to the next world, somewhere in it as on a first visit.
 function nextWorld() {
@@ -219,7 +217,6 @@ function showScheme() {
 showScheme();
 addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.code === 'KeyX') reference = !reference;
   if (e.code === 'KeyP') toggleTour();
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
@@ -254,7 +251,7 @@ else flight.elsewhere(Math.random);
 let shown = '', settled = 0;
 function present() {
   resize();
-  const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), controls.thread, canvas.width, canvas.height, upscale, debug, reference, scheme].join();
+  const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), canvas.width, canvas.height, upscale, debug, reference, scheme].join();
   let key = keyNow();
   if (key === shown && upscale < 1) {
     upscale = 1;
@@ -340,7 +337,7 @@ function tick(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping (X)' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${space.name}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 ? `   world: ${space.name}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

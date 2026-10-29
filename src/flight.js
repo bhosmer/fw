@@ -379,38 +379,6 @@ export class Flight {
     return len;
   }
 
-  // The way we came, as at most n points relative to where we are now,
-  // nearest first, none further than range. Walking the trail backwards from
-  // here, each stretch is as long as it can be without straying visibly from
-  // the path: short near us, longer with distance.
-  thread(range, n) {
-    const { trail, scale } = this;
-    const pts = [];
-    const p = [0, 0, 0];
-    let anchor = null;
-    let run = 0;
-    for (let i = this.travelled - 1; i >= 0 && pts.length < n * 3; i--) {
-      const m = trail[i];
-      const k = Math.pow(this.R, this.pos.F - m.F);
-      for (let a = 0; a < 3; a++) p[a] -= m.delta[a] * k;
-      const far = Math.hypot(...p);
-      if (!(far < range)) break;
-      if (!anchor) {
-        // Begin a little way off, not in our own eye.
-        if (i > 0 && far < 0.1 * scale) continue;
-      } else {
-        run += Math.hypot(...m.delta) * k;
-        const chord = Math.hypot(p[0] - anchor[0], p[1] - anchor[1], p[2] - anchor[2]);
-        const size = Math.hypot(...anchor) + scale;
-        if (i > 0 && run < chord + 0.004 * size && chord < 0.5 * size) continue;
-      }
-      anchor = p.slice();
-      run = 0;
-      pts.push(...p);
-    }
-    return new Float32Array(pts);
-  }
-
   // The levels to draw, seen out to maxT, at most n of them, each with how
   // far away its nearest air is (near), from where we are now (which may be
   // a step on from where sense() last looked); and all the levels around us,

@@ -269,11 +269,10 @@ void main() {
 
 // exact: step each ray from one piece of air to the next (the renderer).
 // Otherwise: step by the safe distance (sphere tracing, kept to check against).
-export function viewFrag(nlev, space, nThread, exact) {
+export function viewFrag(nlev, space, exact) {
   return (
     common(nlev, space) +
     /* glsl */ `
-#define NT ${nThread}
 #define EXACT ${exact ? 1 : 0}
 uniform int uN;            // levels in use, coarsest first
 uniform float uNear[NLEV]; // how far from the camera each level's nearest air is
@@ -315,8 +314,6 @@ uniform float uInlay;
 uniform vec3 uSun;         // toward the sun
 uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
-uniform vec3 uThread[NT];  // the way we came, as a polyline, nearest end first
-uniform int uThreadN;
 uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float
 uniform float uStride;     // draw only every this many pixels (see Renderer.look)
 uniform vec2 uToOut;       // the picture's pixels per pixel drawn, each way (temporal upscaling: see TAAU_FRAG)
@@ -744,34 +741,6 @@ void main() {
     vec3 lit = shade(p, n, rd, t, slot, skin, pix);
 
     col = mix(col, lit, exp(-min(t, gWideT) / uFogLen - max(t - gWideT, 0.0) / gWideFog));
-  }
-
-  // The thread: for each stretch of it, how close this pixel's ray passes.
-  // It shows through walls, dimmed, so it can be followed out of sight.
-  if (uThreadN > 1) {
-    float depth = hit ? t : 1e30;
-    float glow = 0.0;
-    for (int i = 0; i < NT - 1; i++) {
-      if (i >= uThreadN - 1) break;
-      // Keep only the part of this stretch that is in front of us.
-      vec3 a = uThread[i], c = uThread[i + 1];
-      float sa = dot(a, rd), sc = dot(c, rd), front = 0.02 * uScale;
-      if (sa < front && sc < front) continue;
-      if (sa < front) a = mix(a, c, (front - sa) / (sc - sa));
-      else if (sc < front) c = mix(c, a, (front - sc) / (sa - sc));
-      vec3 ab = c - a;
-      float b = dot(ab, rd);
-      vec3 ap = a - rd * dot(a, rd), abp = ab - rd * b;
-      float u = clamp(-dot(ap, abp) / max(dot(abp, abp), 1e-30), 0.0, 1.0);
-      float s = dot(a, rd) + u * b;
-      if (s <= 0.0) continue;
-      float dist = length(ap + u * abp);
-      float w = s * pix * (1.2 + 5.0 * uScale / (s + uScale));
-      float g = 1.0 - smoothstep(0.5 * w, 1.5 * w, dist) + 0.35 * exp(-dist / (4.0 * w));
-      g *= (s > depth ? 0.3 : 1.0) * exp(-s / (3.0 * uFogLen));
-      glow = max(glow, g);
-    }
-    col += vec3(1.0, 0.82, 0.38) * glow;
   }
 
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));

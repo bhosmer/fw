@@ -89,16 +89,6 @@ test('rewinding comes back to where we started', () => {
   for (let a = 0; a < 3; a++) assert.ok(Math.abs(flight.pos.frac[a] - start.frac[a]) < 1e-9, `${flight.pos.frac} not ${start.frac}`);
 });
 
-test('the thread is the way we came, within reach', () => {
-  const flight = new Flight(halls, controls());
-  flight.begin(true);
-  wander(flight, 600, null, 7);
-  const range = 50 * flight.scale;
-  const pts = flight.thread(range, 64);
-  assert.ok(pts.length > 0 && pts.length <= 64 * 3 && pts.length % 3 === 0);
-  for (let i = 0; i < pts.length; i += 3) assert.ok(Math.hypot(pts[i], pts[i + 1], pts[i + 2]) < range);
-});
-
 // The halls with nothing finer than level 0: there, a wall never opens.
 const bare = { ...halls, cellAir: (L, f, id, seed, dg, level, up) => (level <= 0 ? halls.cellAir(L, f, id, seed, dg, level, up) : 1) };
 

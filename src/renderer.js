@@ -53,7 +53,7 @@ export { TAA_N };
 
 export class Renderer {
   // nProbe: most levels probe() can be asked about. nView: most levels drawn.
-  constructor(canvas, space, nProbe, nView, nThread) {
+  constructor(canvas, space, nProbe, nView) {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not available');
     if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('EXT_color_buffer_float is not available');
@@ -67,17 +67,17 @@ export class Renderer {
     // asked for first, to cover them.)
     this.parallel = gl.getExtension('KHR_parallel_shader_compile');
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH', 'uToOut',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uInlay', 'uStride', 'uDebug', 'uJitter', 'uLodH', 'uToOut',
     ];
     this.pending = [
       ['probeProg', probeFrag(nProbe, space), LEVEL_UNIFORMS],
-      ['viewProg', viewFrag(nView, space, nThread, true), viewUniforms],
+      ['viewProg', viewFrag(nView, space, true), viewUniforms],
       ['smoothProg', SMOOTH_FRAG, ['uTex', 'uRes']],
       ['taauProg', TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']],
     ].map(([key, frag, names]) => ({ key, names, prog: begin(gl, frag) }));
     // The older way of finding what each pixel sees, to check the above
     // against: made the first time it is asked for (see refProg).
-    this.makeRef = () => link(gl, viewFrag(nView, space, nThread, false), viewUniforms);
+    this.makeRef = () => link(gl, viewFrag(nView, space, false), viewUniforms);
 
     // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
     // pictures, drawn into in turn, each with its weights; and what the frame
@@ -519,8 +519,6 @@ export class Renderer {
     gl.uniform1f(p.u.uStride, stride);
     gl.uniform2f(p.u.uJitter, 0, 0);
     gl.uniform2f(p.u.uToOut, 1, 1);
-    gl.uniform1i(p.u.uThreadN, view.thread ? view.thread.length / 3 : 0);
-    if (view.thread?.length) gl.uniform3fv(p.u.uThread, view.thread);
     return p;
   }
 
