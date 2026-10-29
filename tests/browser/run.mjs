@@ -180,8 +180,8 @@ check('the two ways of stepping rays agree', async () => {
 
 // Each reference picture: a place, a scheme, and how it is drawn.
 const PICTURES = [
-  ['court', 'alhambra'], ['court', 'nocturne'], ['court', 'sunlit'],
-  ['ground', 'alhambra'], ['ground', 'sunlit'],
+  ['court', 'alhambra'], ['court', 'nocturne'], ['court', 'de chirico'],
+  ['ground', 'alhambra'], ['ground', 'de chirico'],
   ['start', 'alhambra'], ['start', 'de chirico'],
 ];
 check('views look as they did', async () => {
@@ -230,7 +230,7 @@ check('views look as they did', async () => {
 // flash brighter or darker than both the frame before and the frame after,
 // flying slowly forward over the ground.
 check('distant detail does not sparkle', async () => {
-  await load('ground', 'sunlit');
+  await load('ground', 'de chirico');
   const perFrame = await page.eval(`(() => {
     const W = 960, H = 540, N = 16, frames = [];
     for (let k = 0; k < N; k++) {

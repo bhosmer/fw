@@ -40,9 +40,6 @@ const TABLES_UNIT = 3;
 // resolved: see resolve.)
 const WEIGHT_UNIT = 7;
 
-// Shafts of light are drawn for one pixel in this many each way (see draw).
-const SHAFT_STRIDE = 6;
-
 // Temporal antialiasing: how much of the history each frame keeps, and where
 // in its pixel each frame's rays go (Halton 2, 3: 16 points, from the middle).
 // (Centred: the points' mean is the pixel's middle.) And the least sig of a
@@ -70,7 +67,7 @@ export class Renderer {
     // asked for first, to cover them.)
     this.parallel = gl.getExtension('KHR_parallel_shader_compile');
     const viewUniforms = [
-      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uGlow', 'uMirror', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uShafts', 'uShaftTex', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH', 'uToOut', 'uShaftAt', 'uShaftN',
+      ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uInlay', 'uStride', 'uDebug', 'uThread', 'uThreadN', 'uJitter', 'uLodH', 'uToOut',
     ];
     this.pending = [
       ['probeProg', probeFrag(nProbe, space), LEVEL_UNIFORMS],
@@ -94,11 +91,6 @@ export class Renderer {
     this.still = 0;
     // The texture unit a space's volume is kept on (0 and 1 are the picture's).
 
-// Shafts of light are drawn into this, coarser than the picture (see draw).
-    this.shaftTex = null;
-    this.shaftFbo = gl.createFramebuffer();
-    this.shaftSize = [-1, -1];
-    this.shaftTarget(1, 1);
     this.viewTex = null;
     this.viewFbo = gl.createFramebuffer();
     this.viewSize = [0, 0];
@@ -278,25 +270,6 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
   }
 
-  shaftTarget(w, h) {
-    const gl = this.gl;
-    if (this.shaftSize[0] !== w || this.shaftSize[1] !== h) {
-      if (this.shaftTex) gl.deleteTexture(this.shaftTex);
-      this.shaftTex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, this.shaftTex);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.shaftFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.shaftTex, 0);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      this.shaftSize = [w, h];
-    }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shaftFbo);
-  }
-
   draw(recs, view) {
     const gl = this.gl;
     const timed = this.timer && !this.timingPaused && !view.debug && this.timing.length < 8;
@@ -325,11 +298,8 @@ export class Renderer {
 
   drawFrame(recs, view) {
     const gl = this.gl;
-    // Shafts of light are soft, and costly (a ray toward the sun from each of
-    // many points along every ray): drawn first, for every SHAFT_STRIDE-th
-    // pixel each way, and spread over the rest by the texture's filtering.
-    // (Temporal upscaling: the view, and its shafts, drawn at fewer pixels,
-    // `render` of them, into the picture-sized textures' corner.)
+    // (Temporal upscaling: the view drawn at fewer pixels, `render` of them,
+    // into the picture-sized textures' corner.)
     const W = this.canvas.width, H = this.canvas.height;
     // (Not debug views or references, which are drawn at full resolution, to
     // be exact.)
@@ -337,18 +307,6 @@ export class Renderer {
     const s = up ? view.upscale : 1;
     const render = [Math.max(1, Math.round(W * s)), Math.max(1, Math.round(H * s))];
     const toOut = [W / render[0], H / render[1]];
-    const shaftN = [Math.ceil(render[0] / SHAFT_STRIDE), Math.ceil(render[1] / SHAFT_STRIDE)];
-    if (view.scheme.shafts > 0 && !view.debug) {
-      this.shaftTarget(Math.ceil(W / SHAFT_STRIDE), Math.ceil(H / SHAFT_STRIDE));
-      gl.viewport(0, 0, ...shaftN);
-      const p = this.setView(recs, view, SHAFT_STRIDE);
-      gl.uniform2f(p.u.uToOut, ...toOut);
-      gl.uniform1i(p.u.uDebug, 6);
-      gl.activeTexture(gl.TEXTURE1); // (not the texture being drawn into)
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
     // (Distances for comparison are data, not a picture: no smoothing.)
     const raw = view.debug === 4;
     if (raw) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -356,17 +314,9 @@ export class Renderer {
     gl.viewport(0, 0, ...render);
     const p = this.setView(recs, view, 1);
     gl.uniform2f(p.u.uToOut, ...toOut);
-    if (up) {
-      gl.uniform2f(p.u.uShaftAt, 1 / SHAFT_STRIDE, 1 / SHAFT_STRIDE);
-      gl.uniform2i(p.u.uShaftN, ...shaftN);
-    }
     const taa = !!view.taa && !raw && !view.debug;
     const jit = taa ? jitter(this.frameNo++) : [0, 0];
     gl.uniform2f(p.u.uJitter, ...jit);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.shaftTex);
-    gl.uniform1i(p.u.uShaftTex, 1);
-    gl.activeTexture(gl.TEXTURE0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (raw) return;
 
@@ -553,12 +503,9 @@ export class Renderer {
     gl.uniform1f(p.u.uAmbient, sc.ambient);
     gl.uniform1f(p.u.uLamp, sc.lamp);
     gl.uniform1f(p.u.uLampReach, sc.lampReach);
-    gl.uniform1f(p.u.uGlow, sc.glow);
-    gl.uniform1f(p.u.uMirror, sc.mirror);
     gl.uniform1f(p.u.uDisc, sc.disc);
     gl.uniform1f(p.u.uClouds, sc.clouds);
     gl.uniform1f(p.u.uStars, sc.stars);
-    gl.uniform1f(p.u.uShafts, view.debug ? 0 : sc.shafts); // (draw() leaves them out of debugging views)
     gl.uniform1f(p.u.uInlay, sc.inlay);
     const d = Math.hypot(...sc.sunDir);
     gl.uniform3fv(p.u.uSun, sc.sunDir.map((x) => x / d));
@@ -572,12 +519,6 @@ export class Renderer {
     gl.uniform1f(p.u.uStride, stride);
     gl.uniform2f(p.u.uJitter, 0, 0);
     gl.uniform2f(p.u.uToOut, 1, 1);
-    // (On its own unit, which no pass draws into while it is bound there.)
-    gl.uniform1i(p.u.uShaftTex, 1);
-    // (The shafts' texture as drawn for the whole canvas: see drawFrame.)
-    const sn = this.shaftTex ? this.shaftSize : [1, 1];
-    gl.uniform2f(p.u.uShaftAt, sn[0] / this.canvas.width, sn[1] / this.canvas.height);
-    gl.uniform2i(p.u.uShaftN, ...sn);
     gl.uniform1i(p.u.uThreadN, view.thread ? view.thread.length / 3 : 0);
     if (view.thread?.length) gl.uniform3fv(p.u.uThread, view.thread);
     return p;

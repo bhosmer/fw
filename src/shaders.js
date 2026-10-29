@@ -308,25 +308,18 @@ uniform vec3 uSunCol;
 uniform float uAmbient;
 uniform float uLamp;
 uniform float uLampReach;
-uniform float uGlow;
-uniform float uMirror;
 uniform float uDisc;
 uniform float uClouds;
 uniform float uStars;
-uniform float uShafts;
 uniform float uInlay;
 uniform vec3 uSun;         // toward the sun
 uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
 uniform vec3 uThread[NT];  // the way we came, as a polyline, nearest end first
 uniform int uThreadN;
-uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float;
-                          // 6: the light the haze catches, alone (see shafts())
-uniform sampler2D uShaftTex; // that light, drawn coarser (see Renderer.draw)
+uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: distance as a float
 uniform float uStride;     // draw only every this many pixels (see Renderer.look)
 uniform vec2 uToOut;       // the picture's pixels per pixel drawn, each way (temporal upscaling: see TAAU_FRAG)
-uniform vec2 uShaftAt;     // where in the shafts' texture a pixel drawn is (texels per pixel)
-uniform ivec2 uShaftN;     // and how much of it was drawn
 
 out vec4 outColor;
 
@@ -356,12 +349,6 @@ const float LEAN_MIN = 0.6;
 // ground, and gets at most this many steps to come out.
 const float SUN_DEPTH = 1.0;
 const int SUN_STEPS = 48;
-// Steps for what a mirror floor reflects.
-const int MIRROR_STEPS = 64;
-// Shafts of light: how many points along a ray are tried for sunlight, and
-// how many steps each gets to reach the sky.
-const int SHAFT_SAMPLES = 16;
-const int SHAFT_STEPS = 32;
 
 // Per ray: for each level, how far along the ray it is known to stay solid.
 float gSolid[NLEV];
@@ -617,9 +604,8 @@ vec3 beyond(vec3 rd, bool open) {
 }
 
 // The colour of a surface of level slot at p (camera-relative), facing n,
-// seen along rd from t away, before any haze. shadows: cast a ray toward the
-// sun to see whether it is in sunlight (else it is taken to be in shade).
-vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix, bool shadows) {
+// seen along rd from t away, before any haze.
+vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix) {
   float foot = max(t * pix, 1e-5 * uScale);
   float seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
   int s2;
@@ -635,8 +621,8 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix, boo
   }
   ao = clamp(ao / 0.96, 0.0, 1.0);
 
-  // Ceilings are coloured as floors, except where floors are water.
-  float flatness = smoothstep(0.5, 0.9, uMirror > 0.0 ? n.y : abs(n.y));
+  // Ceilings are coloured as floors.
+  float flatness = smoothstep(0.5, 0.9, abs(n.y));
   vec3 base = slot == -2 ? uGround
             : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
                        : mix(uWall[slot], uFloor[slot], flatness);
@@ -652,7 +638,7 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix, boo
   // ground, shadows came and went as that changed.)
   float sunlit = 0.0;
   float below = -(p.y + uSkyH);
-  if (shadows && uSunK > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach)) {
+  if (uSunK > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach)) {
     for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
     bool sh, so;
     int ss = slot, st = 0;
@@ -663,57 +649,12 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float t, int slot, bool skin, float pix, boo
   float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uLampReach * uScale), 2.0));
   vec3 light = (0.15 + 0.85 * ao) * (uSky * uAmbient * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * uFill)
              + vec3(1.0, 0.9, 0.75) * lamp * uLamp
-             + uSunCol * uSunK * key * sunlit
-             + uGlow * (0.6 + 0.4 * ao);
+             + uSunCol * uSunK * key * sunlit;
 
   // Where sunlight adds to what was already bright, roll off gently
   // instead of clipping (nothing under 0.8 changes).
   vec3 lit = base * light;
   return mix(lit, 0.8 + 0.2 * (1.0 - exp(-(lit - 0.8) / 0.2)), step(0.8, lit));
-}
-
-// Shafts of light: how much of the haze in front of what we see (end away)
-// is in sunlight, tried at points along the ray (from a different start in
-// each pixel, so what falls between them shows as fine noise, not bands).
-float shafts(vec3 rd, float end, float pix, int slot, vec3 n) {
-  end = min(end, 2.0 * uFogLen);
-  float j = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-  float sum = 0.0;
-  for (int k = 0; k < SHAFT_SAMPLES; k++) {
-    float s = end * (float(k) + j) / float(SHAFT_SAMPLES);
-    vec3 q = rd * s;
-    if (-(q.y + uSkyH) > max(SUN_DEPTH * uFogLen, uSunReach)) continue;
-    for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
-    bool sh, so;
-    int ss = slot, st = 0;
-    vec3 sn = n;
-    march(q, uSun, s, pix, 1e30, SHAFT_STEPS, false, sh, so, ss, sn, st);
-    if (so) sum += exp(-s / uFogLen);
-  }
-  float phase = 0.4 + 1.6 * pow(max(dot(rd, uSun), 0.0), 6.0);
-  return phase * sum * end / (uFogLen * float(SHAFT_SAMPLES));
-}
-
-// The shafts of light drawn coarser (see Renderer.draw), here: from the four
-// nearest of those, weighted by nearness and also by how near they ended to
-// where this pixel's ray does, so that light in the haze behind an edge does
-// not spill over onto what stands in front of it.
-float shaftsHere(float end) {
-  ivec2 size = uShaftN;
-  vec2 at = gl_FragCoord.xy * uShaftAt - 0.5;
-  ivec2 c = ivec2(floor(at));
-  vec2 f = at - vec2(c);
-  float here = log2(max(end, 1e-30));
-  float sum = 0.0, wsum = 1e-6;
-  for (int k = 0; k < 4; k++) {
-    ivec2 o = ivec2(k & 1, k >> 1);
-    vec2 s = texelFetch(uShaftTex, clamp(c + o, ivec2(0), size - 1), 0).rg;
-    float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
-    w *= 1.0 / (0.05 + abs(s.g - here));
-    sum += w * s.r;
-    wsum += w;
-  }
-  return sum / wsum;
 }
 
 void main() {
@@ -765,11 +706,6 @@ void main() {
     outColor = vec4(hit ? t : -1.0, 0.0, 0.0, 1.0);
     return;
   }
-  if (uDebug == 6) {
-    float end = hit ? t : maxT;
-    outColor = vec4(shafts(rd, end, pix, slot, n), log2(max(end, 1e-30)), 0.0, 1.0);
-    return;
-  }
   if (uDebug == 4) {
     // Distance to what was hit, on a log scale, in 24 bits.
     float v = hit ? clamp((log2(max(t, 1e-30)) + 64.0) / 96.0, 0.0, 1.0) : 1.0;
@@ -805,30 +741,10 @@ void main() {
     }
 #endif
 
-    vec3 lit = shade(p, n, rd, t, slot, skin, pix, true);
-
-    // Mirror floors: what they reflect, more of it the more glancing the
-    // look (and none of the sun's shadows, which would cost another ray).
-    if (uMirror > 0.0 && n.y > 0.9) {
-      vec3 rr = reflect(rd, n);
-      for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
-      bool rh, ro;
-      int rs = slot, rst = 0;
-      gHitSkin = skin;
-      vec3 rn = n;
-      vec3 o = p + n * max(t * pix, 1e-5 * uScale);
-      float rt = march(o, rr, t, pix, uMaxT, MIRROR_STEPS, false, rh, ro, rs, rn, rst);
-      vec3 rc = beyond(rr, ro);
-      if (rh) rc = mix(rc, shade(o + rr * rt, rn, rr, t + rt, rs, gHitSkin, pix, false), exp(-rt / uFogLen));
-      float glance = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-      lit = mix(lit, rc, uMirror * mix(0.35, 1.0, glance));
-    }
+    vec3 lit = shade(p, n, rd, t, slot, skin, pix);
 
     col = mix(col, lit, exp(-min(t, gWideT) / uFogLen - max(t - gWideT, 0.0) / gWideFog));
   }
-
-  // Shafts of light: drawn coarser beforehand, since they are soft anyway.
-  if (uShafts > 0.0) col += uSunCol * uShafts * shaftsHere(hit ? t : maxT);
 
   // The thread: for each stretch of it, how close this pixel's ray passes.
   // It shows through walls, dimmed, so it can be followed out of sight.
