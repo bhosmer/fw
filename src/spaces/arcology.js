@@ -131,7 +131,7 @@ function check(def) {
   const rows = spans(finer);
   if (rows > RIDGE_SPAN) bad(`relief.finer: a rectangle could span ${rows} ridge rows, more than the ${RIDGE_SPAN} looked under (fewer splits, a larger min, or another sby would do)`);
   if (!city.depths.every((d) => Number.isInteger(d * 4) && d >= 0)) bad('relief.city: depths in quarters of a cell');
-  if (!finer.depths.every((d) => Number.isInteger(d / 2) && d >= 0)) bad('relief.finer: depths in twelfths of a cell (even numbers)');
+  if (!finer.depths.every((d) => Number.isInteger((12 * d) / R) && d >= 0)) bad(`relief.finer: depths in twelfths of a cell (multiples of ${R / 12})`);
   // (The halls by level: only where there are halls, at the city's level
   // (under the plaza, by the building) and finer.)
   for (const l of Object.keys(def.halls.byLevel)) if (+l < CITY) bad(`halls.byLevel.${l}: there are no halls coarser than the city's level (${CITY})`);
@@ -1065,7 +1065,9 @@ export function makeArcology(set) {
       LV: LEVELS.map((l) => [l.sb, l.sby, l.quant, l.splits]),
       LV_MIN: LEVELS.map((l) => l.min),
       CUM: LEVELS.flatMap((l) => [...l.cumulative, ...Array(ND - l.depths.length).fill(2)]),
-      DEPTHS: LEVELS.flatMap((l) => [...l.depths, ...Array(ND - l.depths.length).fill(0)]),
+      // (Each level's depths in twelfths of a cell: the city's in quarters,
+      // the finer's in their own units, as the builder rounds them.)
+      DEPTH12: LEVELS.flatMap((l, lv) => [...l.depths.map((d) => (lv ? twelfths(d / R) : 3 * quarters(d))), ...Array(ND - l.depths.length).fill(0)]),
       FQY: FACES.map((F) => [F.q2[0], F.q2[1], F.lo4, F.hi4]),
       FCAPS: caps,
       FCR: at,
@@ -1738,7 +1740,7 @@ export function makeArcology(set) {
       "// (Face k's caps at height i, twelfths of a cell.)",
       one(fn('int', 'capsAt', ['int k', 'int i']), `${decl('ivec3', 'c = FCR[k]')} return FCAPS[c.x + clamp(i - c.y, 0, c.z - 1)];`),
       one(fn('int', 'capAt', ['int k', 'int i0', 'int i1']), 'return min(capsAt(k, i0), capsAt(k, i1));'),
-      one(fn('int', 'depthOf', ['int lv', 'int j']), 'return lv == 0 ? 3 * int(round(DEPTHS[j] * 4.0)) : int(round(DEPTHS[ND + j] / 2.0));'),
+      one(fn('int', 'depthOf', ['int lv', 'int j']), 'return DEPTH12[lv * ND + j];'),
       '// The row of ridge r at level lv that height y (level units) is in (see',
       "// ridgeRow in the JS, and RIDGE_ROWS): gRY0, gRY1, its depth gRT and the",
       "// city's row's gRTC, and the city's row's heights gRCY0, gRCY1 (level units).",
@@ -1914,8 +1916,8 @@ ${table('ivec3', 'FCR', 'NF', vrow('ivec3'), RELIEF_ROWS)}
 // RR_FROM, RR_N of them.
 const int RR_FROM[2] = int[2](${RR_FROM.join(', ')}), RR_N[2] = int[2](${RR_N.join(', ')});
 const int FOUR = ${FOUR.k};
-// Each level's depths (its own units).
-${table('float', 'DEPTHS', '2 * ND', glf, RELIEF_ROWS)}
+// Each level's depths in twelfths of a cell (see DEPTH12 in the JS).
+${table('int', 'DEPTH12', '2 * ND', String, RELIEF_ROWS)}
 // Each face's terraces' heights for t twelfths deep, t 0 to 16 (see FTH in the JS).
 ${table('int', 'FTH', 'NF * 17', String, RELIEF_ROWS)}
 const uint TILE_SALT = ${TILE_SALT}u;
