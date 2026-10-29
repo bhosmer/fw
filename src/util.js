@@ -41,3 +41,7 @@ export function wrapId(id, R) {
 export function levelSeed(level) {
   return hash32(level ^ 0x5bd1e995);
 }
+
+// A number as a GLSL float literal, and a hash salt as a GLSL uint literal.
+export const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
+export const hexu = (x) => `0x${(x >>> 0).toString(16).padStart(8, '0')}u`;

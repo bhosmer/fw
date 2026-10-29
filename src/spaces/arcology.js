@@ -23,8 +23,8 @@
 // Deeper in, the cells are halls; cells the other solids cross are solid.
 
 import * as P from '../pieces.js';
-import halls, { hallsGlsl, hallsAir, hallsRoom, hallsOpenings, built, R, M } from './halls.js';
-import { hashCell, levelSeed, wrapId as wrapIdR } from '../util.js';
+import halls, { HALLS, hallsGlsl, hallsAir, hallsRoom, hallsOpenings, built, R, M } from './halls.js';
+import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
 import { hexahedron, GROUND } from './hexahedron.js';
 
 const wrapId = (id) => wrapIdR(id, R);
@@ -991,7 +991,6 @@ export const ENTRANCES = (() => {
 })();
 
 const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
-const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 
 // One solid's distance, as GLSL: each plane's offset worked out in whole
 // numbers (o is the cell's corner from the middle cell's), and only the
@@ -1972,12 +1971,12 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout f
 // agree), carried on up to the plaza.
 float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   ivec3 below = wrapId(id - ivec3(0, 1, 0));
-  uint h = hashCell(below, seed ^ 0x967a889bu);
+  uint h = hashCell(below, seed ^ ${hexu(HALLS.salt.slab)});
   float t = h01(h);
-  if (t < 0.66 || !(built(below, seed) || built(id, seed))) return 1e9;
+  if (t < ${glf(HALLS.slab.solid)} || !(built(below, seed) || built(id, seed))) return 1e9;
   ivec3 o = fromMiddle(id) / R;
   for (int k = 0; k < NBUILT; k++) if (BUILT_CELLS[k] == o.xz) return 1e9;
-  bool oculus = t < 0.88;
+  bool oculus = t < ${glf(HALLS.slab.oculus)};
   int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   airPiece();
   airSpan(L.y, f.y, -M, G + 1, EY);
@@ -2162,10 +2161,10 @@ function setPoint(L, f, dg) {
 
 function well(L, f, id, seed) {
   const below = wrapId([id[0], id[1] - 1, id[2]]);
-  const t = h01(hashCell(below, seed ^ 0x967a889b));
-  if (t < 0.66 || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return NONE;
+  const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
+  if (t < HALLS.slab.solid || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return NONE;
   if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return NONE;
-  const oculus = t < 0.88;
+  const oculus = t < HALLS.slab.oculus;
   const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   piece();
   span(L[1], f[1], -M, G + 1);

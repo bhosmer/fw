@@ -1,4 +1,5 @@
-const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
+import { glf } from './util.js';
+
 
 // Lattice units of margin on "this level is solid for at least this far"
 // (here, and in how far off main.js says each level's air is).

@@ -78,15 +78,31 @@
 //   - a tunnel may run on into the next cell, where that cell's own
 //     description of it must agree
 
-import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR } from '../util.js';
+import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
 import { S, at, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } from '../pieces.js';
 
 export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
 export const M = 3; // half the wall thickness between two rooms
 const HLO = 12; // ceiling height of a low room; a tall room fills the cell (18)
-const SOLID = 0.65; // share of cells that are left solid, with no room in them
-const BUILT_SALT = 0x3c6ef372;
+
+// What the halls make of a cell's hashes, in one place for both copies (and
+// for the planner, and the arcology's light wells): each choice is a hash of
+// the cell, salted for what it chooses, as a number from 0 to 1, against
+// these.
+export const HALLS = {
+  solid: 0.65, // the share of cells left solid, with no room
+  low: 0.65, // the share of rooms that are low (HLO high); the rest fill the cell
+  salt: { built: 0x3c6ef372, slab: 0x967a889b, furniture: 0x51ed270b, wallX: 0x68bc21eb, wallZ: 0x02e5be93 },
+  // Through a wall: below none, nothing; then a door, a row of windows, an
+  // arcade; above arcade, no wall at all (the rooms run together).
+  wall: { none: 0.24, door: 0.52, windows: 0.68, arcade: 0.84 },
+  // Through a slab: below solid, nothing; then an oculus; above, a light well.
+  slab: { solid: 0.66, oculus: 0.88 },
+  // In a room: below none, nothing; then piers, benches; above, a kiosk.
+  furniture: { none: 0.4, piers: 0.62, benches: 0.82 },
+};
+const { salt, wall, slab, furniture: stands } = HALLS;
 
 // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
 // cell, whatever its level.)
@@ -104,7 +120,7 @@ float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 // (And only where the space allows a room: spaceRoom, which each space
 // defines; the halls everywhere.)
 bool spaceRoom(ivec3 id, uint seed);
-bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${BUILT_SALT}u)) >= ${SOLID.toFixed(3)}; }
+bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(HALLS.solid)}; }
 
 // Which of three bays, each six units wide, holds u (integer division is slow).
 int bay(int u, float fu) { return int(clamp(floor((float(u - M) + fu) * (1.0 / 6.0)), 0.0, 2.0)); }
@@ -121,15 +137,15 @@ bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 // what is there.
 bool wallShape(uint h, int u, float fu, out int cu, out int hw, out int y0, out int sp, out int top) {
   float t = h01(h);
-  if (t < 0.24) return false;
+  if (t < ${glf(wall.none)}) return false;
   // No wall at all: the two rooms run together.
   cu = C; hw = C - M; y0 = 0; sp = 1000; top = HLO;
   // A door, in one of three positions.
-  if (t < 0.52) { cu = C + (int(float(h & 255u) * (3.0 / 256.0)) - 1) * 5; hw = 2; sp = 5; top = 1000; }
+  if (t < ${glf(wall.door)}) { cu = C + (int(float(h & 255u) * (3.0 / 256.0)) - 1) * 5; hw = 2; sp = 5; top = 1000; }
   // A row of three windows.
-  else if (t < 0.68) { cu = M + 3 + 6 * bay(u, fu); hw = 1; y0 = 4; sp = 3; top = 1000; }
+  else if (t < ${glf(wall.windows)}) { cu = M + 3 + 6 * bay(u, fu); hw = 1; y0 = 4; sp = 3; top = 1000; }
   // An arcade of three arches.
-  else if (t < 0.84) { cu = M + 3 + 6 * bay(u, fu); hw = 2; sp = 6; top = 1000; }
+  else if (t < ${glf(wall.arcade)}) { cu = M + 3 + 6 * bay(u, fu); hw = 2; sp = 6; top = 1000; }
   return true;
 }
 
@@ -153,8 +169,8 @@ float wallOpening(int p, int a, float fa, int u, float fu, int y, float fy, bool
 // oculus, or a square light well (the oculus's diagonals out of its way).
 float slabOpening(ivec3 L, vec3 f, bool up, int H, uint h) {
   float t = h01(h);
-  if (t < 0.66) return 1e9;
-  bool oculus = t < 0.88;
+  if (t < ${glf(slab.solid)}) return 1e9;
+  bool oculus = t < ${glf(slab.oculus)};
   int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   airPiece();
   airSpan(L.y, f.y, up ? M + H - 1 : -M, up ? R + M : M + 1, EY);
@@ -176,10 +192,10 @@ float slabOpening(ivec3 L, vec3 f, bool up, int H, uint h) {
 // asked; otherwise the one in our quarter of the room is the nearest.
 float furniture(ivec3 L, vec3 f, uint h, float under, float over) {
   float t = h01(h);
-  if (t < 0.40) return 1e9;
+  if (t < ${glf(stands.none)}) return 1e9;
   float d = 1e9;
-  if (t < 0.62) {
-    if (max(under, over) >= 0.88) return 1e9;
+  if (t < ${glf(stands.piers)}) {
+    if (max(under, over) >= ${glf(slab.oculus)}) return 1e9;
     // Four diamond piers, floor to ceiling.
     int nx = beyond(L.x, f.x, C) ? 1 : 0, nz = beyond(L.z, f.z, C) ? 1 : 0;
     for (int k = 0; k < 4; k++) {
@@ -195,8 +211,8 @@ float furniture(ivec3 L, vec3 f, uint h, float under, float over) {
     }
     return d;
   }
-  if (under >= 0.66) return 1e9;
-  if (t < 0.82) {
+  if (under >= ${glf(slab.solid)}) return 1e9;
+  if (t < ${glf(stands.benches)}) {
     // Two rows of benches, running along x or z (p, across q).
     bool turn = ((h >> 5) & 1u) == 1u;
     int p = turn ? L.z : L.x, q = turn ? L.x : L.z;
@@ -238,7 +254,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
   nrm = vec3(0.0);
   uint hc = hashCell(id, seed);
   bool here = built(id, seed);
-  int H = here && h01(hc) < 0.65 ? HLO : HHI;
+  int H = here && h01(hc) < ${glf(HALLS.low)} ? HLO : HHI;
 
   // Of the pieces of air the point is in, the ray stays in air to the end of
   // whichever it is in for longest. Each piece is first asked only its
@@ -247,9 +263,9 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
   bool ray = gRay;
   gRay = false;
   float room = 1e9;
-  uint hup = hashCell(id, seed ^ 0x967a889bu);
-  uint hdn = hashCell(wrapId(id - ivec3(0, 1, 0)), seed ^ 0x967a889bu);
-  uint hf = hashCell(id, seed ^ 0x51ed270bu);
+  uint hup = hashCell(id, seed ^ ${hexu(salt.slab)});
+  uint hdn = hashCell(wrapId(id - ivec3(0, 1, 0)), seed ^ ${hexu(salt.slab)});
+  uint hf = hashCell(id, seed ^ ${hexu(salt.furniture)});
   if (here) {
     room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
     if (ray && room + gO <= 0.0) {
@@ -270,7 +286,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
   bool hx = beyond(L.x, f.x, C), hz = beyond(L.z, f.z, C), hy = beyond(L.y, f.y, M + H / 2);
   ivec3 ox = hx ? id : wrapId(id - ivec3(1, 0, 0));
   ivec3 oz = hz ? id : wrapId(id - ivec3(0, 0, 1));
-  uint hwx = hashCell(ox, seed ^ 0x68bc21ebu), hwz = hashCell(oz, seed ^ 0x02e5be93u);
+  uint hwx = hashCell(ox, seed ^ ${hexu(salt.wallX)}), hwz = hashCell(oz, seed ^ ${hexu(salt.wallZ)});
   uint hwy = hy ? hup : hdn;
   if (!here) {
     // A face has an opening only if there is a room on one side of it at
@@ -328,10 +344,10 @@ const H2 = Math.SQRT1_2;
 
 function wallShape(h, u, fu) {
   const t = h01(h);
-  if (t < 0.24) return null;
-  if (t < 0.52) return { cu: C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5, hw: 2, y0: 0, sp: 5, top: 1000 };
-  if (t < 0.68) return { cu: M + 3 + 6 * bay(u, fu), hw: 1, y0: 4, sp: 3, top: 1000 };
-  if (t < 0.84) return { cu: M + 3 + 6 * bay(u, fu), hw: 2, y0: 0, sp: 6, top: 1000 };
+  if (t < wall.none) return null;
+  if (t < wall.door) return { cu: C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5, hw: 2, y0: 0, sp: 5, top: 1000 };
+  if (t < wall.windows) return { cu: M + 3 + 6 * bay(u, fu), hw: 1, y0: 4, sp: 3, top: 1000 };
+  if (t < wall.arcade) return { cu: M + 3 + 6 * bay(u, fu), hw: 2, y0: 0, sp: 6, top: 1000 };
   return { cu: C, hw: C - M, y0: 0, sp: 1000, top: HLO };
 }
 
@@ -353,8 +369,8 @@ function wallOpening(p, a, fa, u, fu, y, fy, high, h, ea, eu) {
 
 function slabOpening(L, f, up, H, h) {
   const t = h01(h);
-  if (t < 0.66) return NONE;
-  const oculus = t < 0.88;
+  if (t < slab.solid) return NONE;
+  const oculus = t < slab.oculus;
   const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   airPiece();
   airSpan(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1, 1);
@@ -372,10 +388,10 @@ function slabOpening(L, f, up, H, h) {
 // set, so then all are asked.
 function furniture(L, f, h, under, over) {
   const t = h01(h);
-  if (t < 0.4) return NONE;
+  if (t < stands.none) return NONE;
   let d = NONE;
-  if (t < 0.62) {
-    if (Math.max(under, over) >= 0.88) return NONE;
+  if (t < stands.piers) {
+    if (Math.max(under, over) >= slab.oculus) return NONE;
     const nx = beyond(L[0], f[0], C) ? 1 : 0, nz = beyond(L[2], f[2], C) ? 1 : 0;
     for (let k = 0; k < 4; k++) {
       const kx = k & 1, kz = k >> 1;
@@ -390,8 +406,8 @@ function furniture(L, f, h, under, over) {
     }
     return d;
   }
-  if (under >= 0.66) return NONE;
-  if (t < 0.82) {
+  if (under >= slab.solid) return NONE;
+  if (t < stands.benches) {
     const turn = ((h >>> 5) & 1) === 1;
     const p = turn ? L[2] : L[0], q = turn ? L[0] : L[2];
     const fp = turn ? f[2] : f[0], fq = turn ? f[0] : f[2];
@@ -438,7 +454,7 @@ function further(ray, d, ask) {
 
 const ancestors = new Map(); // level -> where its cell sits in its parent
 // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
-export const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ BUILT_SALT)) >= SOLID;
+export const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= HALLS.solid;
 
 // dg is the point along the diagonals (see Position.levels). Without it they
 // are worked out from L and f, which is only good far from any such surface.
@@ -450,11 +466,11 @@ export const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCe
 // of three windows or arches, the middle one.) The same hashes as above.
 export function hallsRoom(id, seed, rule) {
   if (!built(id, seed, rule)) return null;
-  const H = h01(hashCell(id, seed)) < 0.65 ? HLO : HHI;
+  const H = h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
   // (As furniture has it: piers, unless over or under a light well.)
-  const t = h01(hashCell(id, seed ^ 0x51ed270b));
-  const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ 0x967a889b)), over = h01(hashCell(id, seed ^ 0x967a889b));
-  return { H, middle: [C, M + H / 2, C], piers: t >= 0.4 && t < 0.62 && Math.max(under, over) < 0.88 };
+  const t = h01(hashCell(id, seed ^ salt.furniture));
+  const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab)), over = h01(hashCell(id, seed ^ salt.slab));
+  return { H, middle: [C, M + H / 2, C], piers: t >= stands.none && t < stands.piers && Math.max(under, over) < slab.oculus };
 }
 export function hallsOpenings(id, seed, rule) {
   const here = built(id, seed, rule);
@@ -469,9 +485,9 @@ export function hallsOpenings(id, seed, rule) {
     const at = [C, 0, C];
     at[a] = sign > 0 ? R : 0;
     if (a === 1) {
-      if (h01(hashCell(owner, seed ^ 0x967a889b)) < 0.66) continue;
+      if (h01(hashCell(owner, seed ^ salt.slab)) < slab.solid) continue;
     } else {
-      const s = wallShape(hashCell(owner, seed ^ (a === 0 ? 0x68bc21eb : 0x02e5be93)), C, 0);
+      const s = wallShape(hashCell(owner, seed ^ (a === 0 ? salt.wallX : salt.wallZ)), C, 0);
       if (!s) continue;
       at[a === 0 ? 2 : 0] = s.cu;
       at[1] = M + s.y0 + Math.min(s.top, s.sp + s.hw) / 2;
@@ -493,11 +509,11 @@ export function hallsAir(L, f, id, seed, dg, rule, ray) {
     (S.dx = ray.dir[0]), (S.dy = ray.dir[1]), (S.dz = ray.dir[2]);
   }
   const here = built(id, seed, rule);
-  const H = here && h01(hashCell(id, seed)) < 0.65 ? HLO : HHI;
+  const H = here && h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
   let room = NONE;
-  const hup = hashCell(id, seed ^ 0x967a889b);
-  const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ 0x967a889b);
-  const hf = hashCell(id, seed ^ 0x51ed270b);
+  const hup = hashCell(id, seed ^ salt.slab);
+  const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab);
+  const hf = hashCell(id, seed ^ salt.furniture);
   if (here) {
     room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
     further(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
@@ -509,7 +525,7 @@ export function hallsAir(L, f, id, seed, dg, rule, ray) {
   const hx = beyond(L[0], f[0], C), hz = beyond(L[2], f[2], C), hy = beyond(L[1], f[1], M + H / 2);
   const ox = hx ? id : wrapId([id[0] - 1, id[1], id[2]]);
   const oz = hz ? id : wrapId([id[0], id[1], id[2] - 1]);
-  let hwx = hashCell(ox, seed ^ 0x68bc21eb), hwz = hashCell(oz, seed ^ 0x02e5be93), hwy = hy ? hup : hdn;
+  let hwx = hashCell(ox, seed ^ salt.wallX), hwz = hashCell(oz, seed ^ salt.wallZ), hwy = hy ? hup : hdn;
   if (!here) {
     // A face has an opening only if there is a room on one side of it at
     // least. From a room, an opening into a solid cell is a niche.
