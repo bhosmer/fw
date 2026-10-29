@@ -122,7 +122,13 @@ function check(def) {
 // checks its table and its parts (_V2).
 export function makeArcology(set) {
   const def = check(frozen(define(ARCOLOGY, set)));
-  const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = makeHalls(def.halls);
+  const { space: halls, spec: HALLS, kinds: hallsKinds, to: hallsTo, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = makeHalls(def.halls);
+  // (Below which a slab is solid, and an opening through it an oculus: see
+  // well. The well's shapes are the halls' own, as yet written again here:
+  // so they must be the ones it writes.)
+  const slabTo = (name) => hallsTo('slabs', name);
+  if (JSON.stringify(hallsKinds.slabs.map(({ name, half, cut }) => [name, half, cut])) !== JSON.stringify([['solid', undefined, undefined], ['oculus', 3, 4], ['well', 6, 'FAR']]))
+    throw new Error('arcology: the light wells are written for the halls\' slabs as they are (solid, oculus 3 and 4, well 6), not as changed');
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
   // lower's apex a cell under the plaza's floor (see GROUND).
@@ -1963,10 +1969,10 @@ float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   ivec3 below = wrapId(id - ivec3(0, 1, 0));
   uint h = hashCell(below, seed ^ ${hexu(HALLS.salt.slab)});
   float t = h01(h);
-  if (t < ${glf(HALLS.slab.solid)} || !(built(below, seed) || built(id, seed))) return 1e9;
+  if (t < ${glf(slabTo('solid'))} || !(built(below, seed) || built(id, seed))) return 1e9;
   ivec3 o = fromMiddle(id) / R;
   for (int k = 0; k < NBUILT; k++) if (BUILT_CELLS[k] == o.xz) return 1e9;
-  bool oculus = t < ${glf(HALLS.slab.oculus)};
+  bool oculus = t < ${glf(slabTo('oculus'))};
   int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
   airPiece();
   airSpan(L.y, f.y, -M, G + 1, EY);
@@ -2152,9 +2158,9 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   function wellOf(id, seed) {
     const below = wrapId([id[0], id[1] - 1, id[2]]);
     const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
-    if (t < HALLS.slab.solid || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return null;
+    if (t < slabTo('solid') || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return null;
     if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
-    const oculus = t < HALLS.slab.oculus;
+    const oculus = t < slabTo('oculus');
     return { w: oculus ? 3 : 6, dg: oculus ? 4 : 1000 };
   }
   function wellAir(L, f, { w, dg }) {

@@ -48,16 +48,16 @@ test('a variant is made from the definition, and leaves the world as it was', ()
   assert.equal(viewFrag(12, again.arcology, true), before.glsl, 'made again: the same shader');
   assert.deepEqual(again.VOLUME.data, VOLUME.data, 'made again: the same table');
   assert.deepEqual(sample(again.arcology), before.at, 'made again: the same air');
-  const v = makeArcology({ building: { edge: 'cornice' }, halls: { solid: 0.5, wall: { door: 0.6 } }, town: { density: [30, 60, 90] } });
+  const v = makeArcology({ building: { edge: 'cornice' }, halls: { solid: 0.5, walls: { door: { share: 0.36 } } }, town: { density: [30, 60, 90] } });
   assert.equal(v.def.building.edge, 'cornice');
-  assert.equal(v.def.halls.wall.door, 0.6);
-  assert.equal(v.def.halls.wall.windows, ARCOLOGY.halls.wall.windows, 'what is not changed is kept');
+  assert.equal(v.def.halls.walls.door.share, 0.36);
+  assert.equal(v.def.halls.walls.windows.share, ARCOLOGY.halls.walls.windows.share, 'what is not changed is kept');
   assert.notEqual(viewFrag(12, v.arcology, true), before.glsl, 'the variant\'s shader differs');
   assert.notDeepEqual(sample(v.arcology), before.at, 'the variant\'s air differs');
   assert.equal(viewFrag(12, arcology, true), before.glsl, 'the world\'s shader is as it was');
   assert.deepEqual(sample(arcology), before.at, 'the world\'s air is as it was');
   assert.equal(viewFrag(12, halls, true), before.halls, 'the halls are as they were');
-  assert.notEqual(viewFrag(12, makeHalls({ low: 0.3 }).space, true), before.halls, 'a halls variant differs');
+  assert.notEqual(viewFrag(12, makeHalls({ rooms: { low: { share: 0.3 } } }).space, true), before.halls, 'a halls variant differs');
 });
 
 // Each part of the definition reaches what is made: a variant of any one of
@@ -107,7 +107,14 @@ test('the arcology\'s rooms are the halls\' where it lets them be', () => {
 // definition made cannot be changed after.
 test('a variant must be one the definition has', () => {
   assert.throws(() => makeArcology({ building: { roof: 3 } }), /there is no building\.roof \(there are building\.heights/);
-  assert.throws(() => makeArcology({ halls: { wall: { door: '0.6' } } }), /halls\.wall\.door is a number/);
+  assert.throws(() => makeArcology({ halls: { walls: { door: { share: '0.6' } } } }), /halls\.walls\.door\.share is a number/);
+  // (The halls' kinds: shares no more than all; the last takes the rest.)
+  assert.throws(() => makeHalls({ walls: { none: { share: 0.5 }, door: { share: 0.6 } } }), /halls: walls: shares adding up to 1\.42, more than all/);
+  assert.throws(() => makeHalls({ furniture: { piers: { share: -0.1 } } }), /halls: furniture: piers: a share of -0.1/);
+  // (And each kind's parts: what each holds, and furniture in its quarter.)
+  assert.throws(() => makeHalls({ furniture: { benches: { turn: 'bit(h, 5)' } } }), /benches: its turn, "bit\(h, 5\)", is not true or false/);
+  assert.throws(() => makeHalls({ walls: { door: { top: '1 < 2' } } }), /door: its top, "1 < 2", is not a whole number/);
+  assert.throws(() => makeHalls({ furniture: { piers: { at: [11, 7] } } }), /piers: quartered, at \[11,7\] reaches past the room's middle/);
   assert.throws(() => makeHalls({ furniture: 0.5 }), /furniture is a set of parts/);
   const up = ARCOLOGY.building.up.map((p) => p.slice()), v = makeArcology({ building: { up } });
   assert.throws(() => { v.def.halls.solid = 0.1; }, TypeError);

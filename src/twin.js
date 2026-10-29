@@ -4,14 +4,14 @@
 // catalogue). What a catalogue declares, its language:
 //
 //   name      for the messages ('town: ...')
-//   helpers   { name: { n, glsl } }: each helper's number of arguments, and
-//             how GLSL writes it, given its arguments written out
+//   helpers   { name: { n, glsl, js, checked } }: each helper's number of
+//             arguments; how GLSL writes it, given its arguments written
+//             out; its JavaScript, as a function; and, optionally, that as
+//             the tests have it (throwing where its numbers are out of its
+//             range)
 //   hashes    names that may appear only as the first argument of a hashed
 //             helper (the hashes: uint in GLSL)
 //   hashed    those helpers
-//
-// and each helper's JavaScript, as a function (js), and, optionally, as the
-// tests have it (checked: throwing where its numbers are out of its range).
 //
 // An expression may hold whole numbers, + - *, comparisons, && || !, ?: and
 // parentheses, the names it is given, and the language's helpers.
@@ -50,6 +50,9 @@ export function words(lang, e, names, where) {
   const bad = (what) => {
     throw new Error(`${lang.name}: ${what} in ${where}: ${e}`);
   };
+  // (Plain characters only: a space of another kind would pass for one here
+  // and not in GLSL.)
+  if (/[^\x20-\x7e\t\n]/.test(e)) bad('a character neither language takes');
   const tokens = e.match(TOKEN) ?? bad('nothing');
   // (Each parenthesis: a helper's, or not.)
   const helper = [];
@@ -57,7 +60,8 @@ export function words(lang, e, names, where) {
     if (t === '(') helper.push(isHelper(lang, tokens[i - 1]));
     else if (t === ')') helper.pop();
     else if (t === ',' && !helper.at(-1)) bad('a comma outside a helper');
-    const ok = /^\d+$/.test(t) || OPS.has(t) || names.has(t) || isHelper(lang, t) || lang.hashes.includes(t);
+    if (/^\d+$/.test(t) && !(/^(0|[1-9]\d*)$/.test(t) && +t < 2 ** 31)) bad(`the number ${t} (whole numbers under 2^31, no leading 0)`);
+    const ok = /^\d+$/.test(t) || OPS.has(t) || names.has(t) || (isHelper(lang, t) && tokens[i + 1] === '(') || lang.hashes.includes(t);
     if (!ok) bad(`'${t}'`);
   });
   let hs = 0;
@@ -99,25 +103,37 @@ export function jsHelpers(lang, checked = false) {
 
 // Helpers more than one catalogue has (each catalogue's language takes
 // those it wants): the bit n of hash h; h shifted down n bits, modulo m (m >
-// 0); a / b rounded down (a >= 0, b > 0); min and max. (lit: a whole number
-// as a uint literal, anything else converted.)
+// 0); a / b rounded down (a >= 0, b > 0); min and max. Each says the kinds of
+// its arguments ('hash', 'int') for check, which also takes, of a hashed
+// helper, every value it can give (from its other arguments' values). (lit:
+// a whole number as a uint literal, anything else converted.)
 const lit = (x) => (/^\d+$/.test(x) ? `${x}u` : `uint(${x})`);
 export const HELPERS = {
-  bit: { n: 2, glsl: ([h, n]) => `int((${h} >> ${lit(n)}) & 1u)`, js: '(x, n) => (x >>> n) & 1' },
+  bit: {
+    n: 2,
+    args: ['hash', 'int'],
+    all: () => [0, 1],
+    glsl: ([h, n]) => `int((${h} >> ${lit(n)}) & 1u)`,
+    js: '(x, n) => (x >>> n) & 1',
+    checked: "(x, n) => { if (!(n >= 0 && n < 32)) throw new Error('bit(' + n + ')'); return (x >>> n) & 1; }",
+  },
   field: {
     n: 3,
+    args: ['hash', 'int', 'int'],
+    all: (n, m) => Array.from({ length: m }, (_, i) => i),
     glsl: ([h, n, m]) => `int((${h} >> ${lit(n)}) % ${lit(m)})`,
     js: '(x, n, m) => (x >>> n) % m',
     checked: "(x, n, m) => { if (!(m > 0 && n >= 0 && n < 32)) throw new Error('field(' + n + ', ' + m + ')'); return (x >>> n) % m; }",
   },
   div: {
     n: 2,
+    args: ['int', 'int'],
     glsl: ([a, b]) => `((${a}) / (${b}))`,
     js: '(a, b) => Math.floor(a / b)',
     checked: "(a, b) => { if (!(b > 0 && a >= 0)) throw new Error('div(' + a + ', ' + b + ')'); return Math.floor(a / b); }",
   },
-  min: { n: 2, glsl: ([a, b]) => `min(${a}, ${b})`, js: 'Math.min' },
-  max: { n: 2, glsl: ([a, b]) => `max(${a}, ${b})`, js: 'Math.max' },
+  min: { n: 2, args: ['int', 'int'], glsl: ([a, b]) => `min(${a}, ${b})`, js: 'Math.min' },
+  max: { n: 2, args: ['int', 'int'], glsl: ([a, b]) => `max(${a}, ${b})`, js: 'Math.max' },
 };
 
 // What each of the names declared in vars ([[name, expression], ...]) holds,
@@ -147,7 +163,7 @@ export const GLSL_TAKEN = ['int', 'uint', 'bool', 'float', 'vec2', 'vec3', 'vec4
 // alike), f a name; an axis is 0, 1 or 2, or the name of one (a vec3 in GLSL,
 // its number in JavaScript); signs are 1, -1 or names. kind: 'air' or
 // 'solid'. Each plane's normal is worked out from its form, so it cannot
-// disagree with the plane.
+// disagree with the plane. (The JavaScript wants H2, root a half, in scope.)
 const AXES = ['EX', 'EY', 'EZ'];
 export function planes(js, kind, list) {
   const axis = (a) => (typeof a === 'number' ? (js ? String(a) : AXES[a]) : a);
@@ -172,10 +188,117 @@ export function planes(js, kind, list) {
     } else if (q.corners) {
       const [p, ca, cb, k] = q.corners, [a, b] = q.axes;
       out.push(js ? 'for (let j = 0; j < 4; j++) {' : 'for (int j = 0; j < 4; j++) {');
-      out.push(js ? '  const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;' : '  int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;');
-      out.push('  ' + plane(`diag(${p}, sx, sz, ${ca}, ${cb}, ${k})`, normal('sx', a, 'sz', b)));
+      out.push(js ? '  const sa = j & 1 ? 1 : -1, sb = j & 2 ? 1 : -1;' : '  int sa = (j & 1) == 1 ? 1 : -1, sb = (j & 2) == 2 ? 1 : -1;');
+      out.push('  ' + plane(`diag(${p}, sa, sb, ${ca}, ${cb}, ${k})`, normal('sa', a, 'sb', b)));
       out.push('}');
     } else throw new Error(`a plane of no form: ${JSON.stringify(q)}`);
   }
+  return out;
+}
+
+// Expression e, checked (see words), parsed, and its kind found: 'int' or
+// 'bool', each part of the kind GLSL wants there (names: { name: { kind,
+// value } }); and every value it can have, each hashed helper giving each of
+// its values in turn (independently, even where one is asked twice: so
+// perhaps more than it can have, never fewer), none 2^31 or more. Throws,
+// saying why, where it is not one both languages read alike.
+export function check(lang, e, names, where) {
+  const bad = (what) => {
+    throw new Error(`${lang.name}: ${what} in ${where}: ${e}`);
+  };
+  words(lang, e, new Set(Object.keys(names)), where);
+  const tokens = e.match(TOKEN);
+  let i = 0;
+  const peek = () => tokens[i], take = (t) => (tokens[i] === t ? (i++, true) : false);
+  const want = (t) => take(t) || bad(`${t} wanted at ${tokens.slice(i).join(' ') || 'its end'}`);
+  // (Each node: its kind, and its values.)
+  const MOST = 1 << 16;
+  const many = (xs) => {
+    const out = [...new Set(xs)];
+    if (!out.length) bad('no value at all');
+    if (out.length > MOST) bad('more values than can be checked');
+    for (const x of out) if (typeof x === 'number' && !(Math.abs(x) < 2 ** 31)) bad(`a number out of range (${x})`);
+    return out;
+  };
+  const of = (node, kind, what) => (node.kind === kind ? node : bad(`${what}: ${kind === 'int' ? 'a whole number' : 'true or false'} wanted`));
+  const pairs = (a, b, f) => many(a.values.flatMap((x) => b.values.map((y) => f(x, y))));
+  const ternary = () => {
+    const c = or();
+    if (!take('?')) return c;
+    of(c, 'bool', '?');
+    const a = ternary();
+    want(':');
+    const b = ternary();
+    if (a.kind !== b.kind) bad('the two sides of ?: of two kinds');
+    return { kind: a.kind, values: many([...(c.values.includes(true) ? a.values : []), ...(c.values.includes(false) ? b.values : [])]) };
+  };
+  const chain = (next, ops, f) => () => {
+    let a = next();
+    for (let op; ops.includes((op = peek())); ) i++, (a = f(op, a, next()));
+    return a;
+  };
+  const or = chain(() => and(), ['||'], (op, a, b) => ({ kind: 'bool', values: pairs(of(a, 'bool', op), of(b, 'bool', op), (x, y) => x || y) }));
+  const and = chain(() => same(), ['&&'], (op, a, b) => ({ kind: 'bool', values: pairs(of(a, 'bool', op), of(b, 'bool', op), (x, y) => x && y) }));
+  const same = chain(() => order(), ['==', '!='], (op, a, b) => {
+    if (a.kind !== b.kind) bad(`${op} between two kinds`);
+    return { kind: 'bool', values: pairs(a, b, (x, y) => (op === '==') === (x === y)) };
+  });
+  // (One comparison at most: a < b < c means something else in each.)
+  const order = () => {
+    const a = sum(), op = peek();
+    if (!['<', '>', '<=', '>='].includes(op)) return a;
+    i++;
+    const b = sum();
+    if (['<', '>', '<=', '>='].includes(peek())) bad('a comparison of a comparison');
+    const f = { '<': (x, y) => x < y, '>': (x, y) => x > y, '<=': (x, y) => x <= y, '>=': (x, y) => x >= y }[op];
+    return { kind: 'bool', values: pairs(of(a, 'int', op), of(b, 'int', op), f) };
+  };
+  const sum = chain(() => product(), ['+', '-'], (op, a, b) => ({ kind: 'int', values: pairs(of(a, 'int', op), of(b, 'int', op), op === '+' ? (x, y) => x + y : (x, y) => x - y) }));
+  const product = chain(() => unary(), ['*'], (op, a, b) => ({ kind: 'int', values: pairs(of(a, 'int', op), of(b, 'int', op), (x, y) => x * y) }));
+  const unary = () => {
+    if (take('!')) return { kind: 'bool', values: of(unary(), 'bool', '!').values.map((x) => !x) };
+    if (take('-')) return { kind: 'int', values: many(of(unary(), 'int', '-').values.map((x) => -x)) };
+    return primary();
+  };
+  const primary = () => {
+    const t = tokens[i++];
+    if (t === undefined) bad('it ends too soon');
+    if (t === '(') {
+      const a = ternary();
+      want(')');
+      return a;
+    }
+    if (/^\d+$/.test(t)) return { kind: 'int', values: [+t] };
+    if (Object.hasOwn(names, t)) return { kind: names[t].kind, values: [names[t].value] };
+    if (!Object.hasOwn(lang.helpers, t)) bad(`'${t}' out of place`);
+    const h = lang.helpers[t], args = [];
+    want('(');
+    for (let k = 0; k < h.n; k++) {
+      if (k) want(',');
+      if (h.args[k] === 'hash') {
+        const name = tokens[i++];
+        if (!lang.hashes.includes(name)) bad(`${t} of ${name}, not ${lang.hashes.join(' or ')}`);
+        args.push(null);
+      } else args.push(of(ternary(), 'int', t).values);
+    }
+    want(')');
+    // (Asked as the tests have it, with each of its arguments' values: where
+    // the two languages would differ (a division of a number below 0, a
+    // shift of 32 or more), it is refused. A hashed helper, for any hash,
+    // gives every value it can; another, what it gives.)
+    const f = new Function(`return ${h.checked ?? h.js};`)();
+    const at = (a) => {
+      try {
+        return f(...a);
+      } catch (err) {
+        return bad(`${t}: ${err.message}`);
+      }
+    };
+    const every = args.reduce((acc, xs) => acc.flatMap((a) => (xs ? xs.map((x) => [...a, x]) : [[...a, 0]])), [[]]);
+    every.forEach(at);
+    return { kind: 'int', values: many(h.all ? every.flatMap((a) => h.all(...a.slice(1))) : every.map(at)) };
+  };
+  const out = ternary();
+  if (i < tokens.length) bad(`${tokens.slice(i).join(' ')} left over`);
   return out;
 }
