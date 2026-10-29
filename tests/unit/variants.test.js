@@ -89,7 +89,7 @@ test('every part of a variant is made', () => {
   }
 });
 
-// The arcology's halls have rooms only where it lets them (see roomRule):
+// The arcology's halls have rooms only where it lets them (see spaceRoom):
 // on the city's row, away from the buildings, none, though the halls alone
 // would have some; and nowhere more than the halls alone.
 test('the arcology\'s rooms are the halls\' where it lets them be', () => {

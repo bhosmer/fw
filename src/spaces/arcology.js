@@ -220,11 +220,18 @@ export function makeArcology(set) {
     for (let a = Math.floor(lo[0] / R); a <= Math.floor((hi[0] - 1) / R); a++)
       for (let b = Math.floor(lo[2] / R); b <= Math.floor((hi[2] - 1) / R); b++) BUILT.add(`${a},${b}`);
   const BUILT_CELLS = [...BUILT].map((k) => k.split(',').map(Number));
-  // See nearBuilt in the shader (o: a city cell across from the middle one, x and z).
-  const nearBuilt = ([x, z]) => BUILT_CELLS.some(([a, b]) => Math.max(Math.abs(a - x), Math.abs(b - z)) <= 1);
-  // See spaceRoom in the shader.
-  const CITY_SEED = levelSeed(CITY);
-  const roomRule = (id, seed) => seed !== CITY_SEED || id[1] > ROW_ID || nearBuilt([id[0] - MID, id[2] - MID]);
+  // The city's own pieces in JavaScript (see cityPieces), and those made into
+  // functions here: where the middle city cell is, and where the halls may
+  // have rooms (the rest below, once what they read is made).
+  const CITY_JS = cityPieces(true);
+  const { fromMiddle, spaceRoom } = new Function(
+    'R', 'NBUILT', 'BUILT_CELLS',
+    `'use strict';\n${twin.AS_GLSL}\nconst max = Math.max;\n${CITY_JS.middle}\n${CITY_JS.nearBuilt}\n${CITY_JS.room}\nreturn { fromMiddle, spaceRoom };\n//# sourceURL=cityRooms.gen.js`,
+  )(R, BUILT_CELLS.length, BUILT_CELLS);
+  // A level-(CITY + 1) cell's place in its city cell (own: from the cell's
+  // id): its two forms, side by side, the same arithmetic.
+  const ownGlsl = (id) => `${id} - R * ivec3(floor((vec3(${id}) + 0.5) / float(R)))`;
+  const ownOf = (id) => id.map((x) => x - R * Math.floor((x + 0.5) / R));
 
   // For each city cell (across from the middle one) with any solid near it,
   // the solids that reach into the air it answers for (its plaza piece, see
@@ -1040,8 +1047,8 @@ export function makeArcology(set) {
       const v = [x, y, z];
       if (kind[at(v)] !== DEEP) continue;
       const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
-      if (!hallsRoom(id, seed, CITY + 1, roomRule)) continue;
-      for (const o of hallsOpenings(id, seed, CITY + 1, roomRule)) {
+      if (!hallsRoom(id, seed, CITY + 1, spaceRoom)) continue;
+      for (const o of hallsOpenings(id, seed, CITY + 1, spaceRoom)) {
         if (o.e[1] !== 0) continue;
         const u = v.map((q, a) => q + o.e[a]);
         if (within(u) && open[at(u)]) out.push({ id, e: o.e, at: o.at });
@@ -1089,23 +1096,45 @@ export function makeArcology(set) {
   const vrow = (type) => (r) => `${type}(${r.join(', ')})`;
 
   // The city's own pieces, in either language (js: true, or GLSL), written
-  // once: where the middle city cell is (fromMiddle); each of the
-  // building's solids from its planes (upright or along a slant: see
-  // PLANES), as solidN, and solid(k); the plaza's air (see plaza), from the
-  // solids' bounds and the near cells' lists (see NEAR); and the ground's
-  // cells (see groundCell). (The JavaScript's, made into functions below;
-  // the point along the slants, SL, as setPoint sets it.)
+  // once: where the middle city cell is (fromMiddle); where the halls may
+  // have rooms (nearBuilt, spaceRoom); each of the building's solids from its
+  // planes (upright or along a slant: see PLANES), as solidN, and solid(k);
+  // the plaza's air (see plaza), from the solids' bounds and the near cells'
+  // lists (see NEAR); and the ground's cells (see groundCell). (The
+  // JavaScript's made into functions: where the middle is and the rooms,
+  // early, as the table's construction asks; the rest below. The point along
+  // the slants, SL, as setPoint sets it.)
   function cityPieces(js) {
-    // (Where the languages differ: what twin.writer writes, the solids'
-    // dispatch (a switch, or a list), which of the near cells the cell is (a
-    // scan, or a lookup), the point along a slant, and the point q.
-    // Otherwise the text is both's: in JavaScript float, min and max are as
-    // GLSL has them, and points are arrays.)
+    // (Where the languages differ: what twin.writer writes, a loop's counter,
+    // a city cell's id from its corner (divided by R, a vector or each part),
+    // the solids' dispatch (a switch, or a list), which of the near cells the
+    // cell is (a scan, or a lookup), the point along a slant, and the point
+    // q. Otherwise the text is both's: in JavaScript float, abs, min and max
+    // are as GLSL has them, points are arrays, and whole numbers are as
+    // twin.unsigned makes them.)
     const { fn, decl, loop, num, vec3Arg, ivec3, D, NOTHING, RAY, X } = twin.writer(js);
     const middle = [
       '// Where the middle city cell is from this one, in lattice units.',
       fn('ivec3', 'fromMiddle', ['ivec3 id']),
       `  return ${ivec3([`(id.x - ${MID}) * R`, `(id.y - ${ROW_ID}) * R`, `(id.z - ${MID}) * R`])};`,
+      '}',
+    ];
+    // (Where the halls may have rooms at the city's level: see spaceRoom.)
+    const nearBuilt = [
+      "// (Is city cell o, across from the middle one, one of those or next to one?",
+      '// Cavities under the ground are only there: see spaceRoom.)',
+      fn('bool', 'nearBuilt', ['ivec3 o']),
+      `  for (${js ? 'let' : 'int'} k = 0; k < NBUILT; k++) if (max(abs(BUILT_CELLS[k].x - o.x), abs(BUILT_CELLS[k].y - o.z)) <= 1) return true;`,
+      '  return false;',
+      '}',
+    ];
+    const room = [
+      "// Where the halls may have rooms (see spaceRoom in halls.js): not in the",
+      "// ground away from the building (Basil, 2026-10-28): at the city's level, in",
+      "// the plaza's row and under it, only in the city cells by the building's",
+      '// (nearBuilt). Without rooms there, there are no light wells there either.',
+      fn('bool', 'spaceRoom', ['ivec3 id', 'uint seed']),
+      `  return seed != ${levelSeed(CITY)}u || id.y > ${ROW_ID} || nearBuilt(${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'});`,
       '}',
     ];
     // (A plane, from its offset as a whole number and the rest: times one
@@ -1188,8 +1217,8 @@ export function makeArcology(set) {
       '  return max(e, 0.0);',
       '}',
     ];
-    const text = (lines) => (js ? twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'own', 'up', 'VOL_LO', 'VOL_SIZE']) : lines.join('\n'));
-    return { middle: text(middle), solids: text([...solids, solid]), plaza: text(plaza), ground: text(ground) };
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'own', 'up', 'VOL_LO', 'VOL_SIZE'])) : lines.join('\n'));
+    return { middle: text(middle), nearBuilt: text(nearBuilt), room: text(room), solids: text([...solids, solid]), plaza: text(plaza), ground: text(ground) };
   }
   // The openings, in either language (js: true, or GLSL), written once from
   // their tables (OPEN_ROWS): which sides a cell's openings run on across
@@ -1507,12 +1536,7 @@ const int NEAR_START[NNEAR + 1] = int[NNEAR + 1](${NEAR_START.join(', ')});
 const int NEAR_BLOCKS[${NEAR_BLOCKS.length}] = int[${NEAR_BLOCKS.length}](${NEAR_BLOCKS.join(', ')});
 const int NBUILT = ${BUILT_CELLS.length};
 const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `ivec2(${a}, ${b})`).join(', ')});
-// (Is city cell o, across from the middle one, one of those or next to one?
-// Cavities under the ground are only there: see spaceRoom.)
-bool nearBuilt(ivec3 o) {
-  for (int k = 0; k < NBUILT; k++) if (max(abs(BUILT_CELLS[k].x - o.x), abs(BUILT_CELLS[k].y - o.z)) <= 1) return true;
-  return false;
-}
+${CITY_GLSL.nearBuilt}
 
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
@@ -1632,13 +1656,7 @@ ${table('int', 'WFIRST', SOLIDS.length, String)}
 ${OPEN_GLSL.solidOut}
 
 ${CITY_GLSL.middle}
-// Where the halls may have rooms (see spaceRoom in halls.js): not in the
-// ground away from the building (Basil, 2026-10-28): at the city's level, in
-// the plaza's row and under it, only in the city cells by the building's
-// (nearBuilt). Without rooms there, there are no light wells there either.
-bool spaceRoom(ivec3 id, uint seed) {
-  return seed != ${levelSeed(CITY)}u || id.y > ${ROW_ID} || nearBuilt(fromMiddle(id) / R);
-}
+${CITY_GLSL.room}
 
 // What the table says of the level-(CITY + 1) cell id, in a city cell
 // (whose id is up): nothing, if it is not in the table. gCellB is set to the
@@ -1646,7 +1664,7 @@ bool spaceRoom(ivec3 id, uint seed) {
 ivec3 gCellB;
 uvec4 relief(ivec3 id, ivec3 up) {
   if (up.y < ${ROW_ID} || up.y >= ${ROW_ID + ROWS}) return uvec4(0u);
-  ivec3 own = id - R * ivec3(floor((vec3(id) + 0.5) / float(R)));
+  ivec3 own = ${ownGlsl('id')};
   ivec3 v = fromMiddle(up) + own - VOL_LO;
   if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, VOL_SIZE))) return uvec4(0u);
   gCellB = v + VOL_LO - ORIGIN;
@@ -1654,7 +1672,6 @@ uvec4 relief(ivec3 id, ivec3 up) {
 }
 
 int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); } // floor, b > 0
-int cdiv(int a, int b) { return -fdiv(-a, b); } // ceiling, b > 0
 
 ${CITY_GLSL.ground}
 
@@ -2256,7 +2273,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     uint kind = m.x & 3u;
     reach = -1.0;
     nrm = vec3(0.0);
-    ivec3 own = id - R * ivec3(floor((vec3(id) + 0.5) / float(R)));
+    ivec3 own = ${ownGlsl('id')};
     if (level == ${CITY + 1} && m.x == 0u && groundCell(own, gUp)) d = groundAir(L, f);
     else if (m.x == 0u || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, level, reach, nrm);
     if (m.x != 0u) d = reliefCell(L, f, id, seed, m, d, reach, nrm);
@@ -2309,14 +2326,13 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // written below, made into functions, as by the rest.)
   const SL = { Ls: null, Fs: null };
 
-  // The city's own pieces in JavaScript (see cityPieces), made into
-  // functions.
+  // The rest of the city's own pieces in JavaScript (see cityPieces), made
+  // into functions.
   const NEAR_AT = new Map(NEAR_CELLS.map((c, n) => [c.join(), n]));
-  const CITY_JS = cityPieces(true);
-  const { fromMiddle, plaza, groundCell, groundAir } = new Function(
-    'P', 'SL', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE',
-    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${CITY_JS.middle}\n${CITY_JS.solids}\n${CITY_JS.plaza}\n${CITY_JS.ground}\nreturn { fromMiddle, plaza, groundCell, groundAir };\n//# sourceURL=cityPieces.gen.js`,
-  )(P, SL, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size);
+  const { plaza, groundCell, groundAir } = new Function(
+    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE',
+    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${CITY_JS.solids}\n${CITY_JS.plaza}\n${CITY_JS.ground}\nreturn { plaza, groundCell, groundAir };\n//# sourceURL=cityPieces.gen.js`,
+  )(P, SL, fromMiddle, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size);
 
   // The point along the diagonals (the shared pieces', see pieces.at), and
   // along the slants (from dg, or else from L and f).
@@ -2335,7 +2351,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // width), and its air (a piece: for a ray too).
   function wellOf(id, seed) {
     const below = wrapId([id[0], id[1] - 1, id[2]]);
-    if (!(built(below, seed, CITY, roomRule) || built(id, seed, CITY, roomRule))) return null;
+    if (!(built(below, seed, CITY, spaceRoom) || built(id, seed, CITY, spaceRoom))) return null;
     if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
     const h = hashCell(below, seed ^ HALLS.salt.slab), w = slabHalf(h, CITY);
     return w === null ? null : { h, w };
@@ -2366,7 +2382,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   }
   function relief(id, up) {
     if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0, 0, 0];
-    const o = fromMiddle(up), v = [0, 1, 2].map((a) => o[a] + (((id[a] % R) + R) % R) - VOLUME.lo[a]);
+    const o = fromMiddle(up), own = ownOf(id), v = [0, 1, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
     if (v.some((x, a) => x < 0 || x >= VOLUME.size[a])) return [0, 0, 0, 0];
     CELL.b = v.map((x, a) => x + VOLUME.lo[a] - ORIGIN[a]);
     const i = WORDS * (v[0] + VOLUME.size[0] * (v[1] + VOLUME.size[1] * v[2]));
@@ -2734,17 +2750,17 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       const m = relief(id, up);
       if (m[0]) {
         // (The halls only in deep cells, as the shader has them.)
-        const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, level, roomRule, ray) : NONE;
+        const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, level, spaceRoom, ray) : NONE;
         setPoint(L, f, dg);
         return reliefCell(L, f, id, seed, m, d, ray);
       }
     }
     if (level === CITY + 1 && up) {
-      const own = id.map((x) => x - R * Math.floor((x + 0.5) / R));
+      const own = ownOf(id);
       if (groundCell(own, up)) return solid(groundAir(L, f));
     }
     if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
-    if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, level, roomRule, ray);
+    if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, level, spaceRoom, ray);
     // (The city's: its plaza's air and its well's, and for a ray the further
     // of the pieces the point is in; then its pockets.)
     setPoint(L, f, dg);
@@ -2775,8 +2791,8 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     glsl: hallsGlsl + glsl,
     cellAir,
     // (Its rooms and their openings as the halls', where it lets them be.)
-    room: (id, seed, level) => hallsRoom(id, seed, level, roomRule),
-    openings: (id, seed, level) => hallsOpenings(id, seed, level, roomRule),
+    room: (id, seed, level) => hallsRoom(id, seed, level, spaceRoom),
+    openings: (id, seed, level) => hallsOpenings(id, seed, level, spaceRoom),
     volume: VOLUME,
     // What fraction of a surface opens at a level (see the detail asked after
     // in main, shaders.js):
@@ -2791,7 +2807,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   uint kind = m.x & 3u;
   // (Nothing of this level opens in the ground away from the building (see
   // groundCell), but finer levels do: -1.)
-  if (m.x == 0u && groundCell(id - R * ivec3(floor((vec3(id) + 0.5) / float(R))), up)) return -1.0;
+  if (m.x == 0u && groundCell(${ownGlsl('id')}, up)) return -1.0;
   if (m.x == 0u || kind == ${DEEP}u) return OPEN_AREA;
   gOwnInk = true;
   return (kind == ${SKIN}u && skin) || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;
