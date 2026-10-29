@@ -367,7 +367,7 @@ void main() {
 // JavaScript agree in it too (round the camera, and about rays), and a link
 // to a part of its definition there is not, or a world there is not, says so.
 check('a variant in a link is made, and the shader and the JavaScript agree in it', async () => {
-  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&rooms.low.share=0.3', 'halls&solid=0.4&walls.none.share=0.1&walls.door.share=0.42&slabs.solid.share=0.4&slabs.oculus.share=0.48&furniture.none.share=0.1&furniture.piers.share=0.52']) {
+  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&rooms.low.share=0.3', 'halls&byLevel.0.solid=0.4&byLevel.0.walls.none.share=0.05&byLevel.1.furniture.none.share=0.05&byLevel.1.slabs.solid.share=0.3', 'arcology&halls.byLevel.-1.solid=0.8&halls.byLevel.-1.furniture.none.share=0.1&halls.byLevel.0.walls.door.share=0.4', 'halls&solid=0.4&walls.none.share=0.1&walls.door.share=0.42&slabs.solid.share=0.4&slabs.oculus.share=0.48&furniture.none.share=0.1&furniture.piers.share=0.52']) {
     await load('start', 'alhambra', false, variant);
     const shown = await page.eval(`document.querySelector('.world')?.textContent ?? ''`);
     assert(shown.startsWith(variant.split('&')[0]), `the legend says ${shown}`);

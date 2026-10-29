@@ -50,21 +50,38 @@ export const hexu = (x) => `0x${(x >>> 0).toString(16).padStart(8, '0')}u`;
 // changes. Objects are changed part by part; anything else (numbers,
 // strings, arrays, functions) is replaced whole, by a copy (so that what is
 // given is left as it was). A part the defaults do not have, or of another
-// kind, is refused, saying where and what there is.
+// kind, is refused, saying where and what there is. A part made by keyed
+// holds, for each whole number it is given (by default, none), the parts
+// around it as defined, all but except, with that number's changes.
 const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const kind = (x) => (Array.isArray(x) ? 'array' : x === null ? 'nothing' : Number.isNaN(x) ? 'NaN' : typeof x);
 const copy = (x) => (Array.isArray(x) ? x.map(copy) : plain(x) ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, copy(v)])) : x);
+const KEYED = Symbol('keyed');
+export const keyed = (except = []) => ({ [KEYED]: except });
+const isKeyed = (x) => plain(x) && KEYED in x;
+const keyedIn = (x) => plain(x) && (isKeyed(x) || Object.values(x).some(keyedIn));
 export function define(defaults, set, path = '') {
-  if (set === undefined) return defaults;
+  if (isKeyed(defaults)) throw new Error(`definition: ${path.slice(0, -1) || 'it'}: a keyed part is a part of something`);
+  // (Nothing changed: the defaults as they are, but with keyed parts empty.)
+  if (set === undefined) return keyedIn(defaults) ? define(defaults, {}, path) : defaults;
   const k0 = kind(defaults), k1 = kind(set);
   if (k1 !== k0) throw new Error(`definition: ${path.slice(0, -1) || 'it'} is ${k0 === 'object' ? 'a set of parts' : k0 === 'nothing' ? 'nothing' : `${/^[aeiou]/.test(k0) ? 'an' : 'a'} ${k0}`}, not ${k1 === 'function' ? 'a function' : JSON.stringify(set) ?? String(set)}`);
   if (!plain(defaults)) return copy(set);
-  const out = { ...defaults };
-  for (const [k, v] of Object.entries(set)) {
-    if (!Object.hasOwn(defaults, k)) throw new Error(`definition: there is no ${path}${k} (there are ${Object.keys(defaults).map((x) => path + x).join(', ')})`);
-    out[k] = define(defaults[k], v, `${path}${k}.`);
+  for (const k of Object.keys(set)) if (!Object.hasOwn(defaults, k)) throw new Error(`definition: there is no ${path}${k} (there are ${Object.keys(defaults).map((x) => path + x).join(', ')})`);
+  // (The other parts first: a keyed part's entries start from them.)
+  const out = {};
+  for (const [k, v] of Object.entries(defaults)) if (!isKeyed(v)) out[k] = define(v, set[k], `${path}${k}.`);
+  for (const [k, v] of Object.entries(defaults)) {
+    if (!isKeyed(v)) continue;
+    const here = `${path}${k}`, given = set[k] ?? {};
+    if (!plain(given)) throw new Error(`definition: ${here} is a set of parts, one for each of some whole numbers, not ${JSON.stringify(given)}`);
+    const template = Object.fromEntries(Object.entries(out).filter(([p]) => !v[KEYED].includes(p)));
+    out[k] = Object.fromEntries(Object.entries(given).map(([n, w]) => {
+      if (!(/^-?(0|[1-9]\d*)$/.test(n) && n !== '-0' && Math.abs(+n) < 2 ** 31)) throw new Error(`definition: ${here}.${n}: there are parts only for whole numbers`);
+      return [n, define(template, w, `${here}.${n}.`)];
+    }));
   }
-  return out;
+  return Object.fromEntries(Object.keys(defaults).map((k) => [k, out[k]]));
 }
 // Changes given by dotted paths ({ 'town.density': [10, 30, 60] }, as from
 // a link) as the nested object define takes, the values copied. (No part may

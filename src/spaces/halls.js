@@ -79,7 +79,7 @@
 //   - a tunnel may run on into the next cell, where that cell's own
 //     description of it must agree
 
-import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
+import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, keyed, frozen } from '../util.js';
 import * as P from '../pieces.js';
 import * as twin from '../twin.js';
 
@@ -155,6 +155,12 @@ export const HALLS = {
     kiosk: { upTo: { under: 'solid', over: 'well' }, at: ['C', 'C'], quartered: false, turn: 'false', box: [[-2, 2], [-2, 2], [-1, 3]], blocks: false },
   },
 };
+// And what is otherwise at some levels: for each level given (as a whole
+// number, written: '-1'), changes there to any of the above but the salts,
+// to the halls as defined (byLevel: { '-1': { solid: 0.8 } }). Levels are
+// the world's own (in the arcology, -1 is the building's cells).
+HALLS.byLevel = keyed(['salt']);
+frozen(HALLS);
 const FAR = 1000;
 
 // The words the kinds are written in (see twin.js): the shared helpers, and
@@ -328,8 +334,9 @@ function families(spec) {
 // (which opening a wall has: its middle, half width, sill, rise and top),
 // wallOpening, slabOpening, furniture and roomAir, the pieces; the cell
 // (hallsCell in GLSL, hallsAir in JavaScript); and, in JavaScript,
-// furnitureKind (for the planner).
-function pieces(js, kinds, salt) {
+// furnitureKind (for the planner). levels: the kinds at each level (null: at
+// any level not given its own).
+function pieces(js, levels, salt) {
   // (An expression (checked: see families), in the language.)
   const e = (x) => (js || typeof x === 'number' ? String(x) : twin.glsl(LANG, x));
   const num = (x) => (js ? String(x) : glf(x));
@@ -346,14 +353,22 @@ function pieces(js, kinds, salt) {
     ...(none ? [`if (t < ${num(list[0].to)}) return ${none};`] : []),
     ...(none ? list.slice(1) : list).flatMap((k, i) => [`${i ? '} else ' : ''}${k.to === null ? '{' : `if (t < ${num(k.to)}) {`}`, ...give(k).map((l) => '  ' + l), ...(k.to === null ? ['}'] : [])]),
   ].map((l) => '  ' + l);
+  // (What write(kinds) writes, for the level asked at: each level's own,
+  // where its kinds write other lines than the rest, else the default's.)
+  const atLevel = (write) => {
+    const base = write(levels.get(null));
+    const own = [...levels].filter(([l]) => l !== null).map(([l, kinds]) => [l, write(kinds)]).filter(([, lines]) => lines.join('\n') !== base.join('\n'));
+    if (!own.length) return base;
+    return [...own.flatMap(([l, lines], i) => [`  ${i ? '} else ' : ''}if (level == ${l}) {`, ...lines.map((x) => '  ' + x)]), '  } else {', ...base.map((x) => '  ' + x), '  }'];
+  };
   const out = [];
 
   // A room's height.
-  out.push(fn('int', 'roomHigh', ['uint h']), ...choose(kinds.rooms, (k) => [`return ${e(k.high)};`]), '}');
+  out.push(fn('int', 'roomHigh', ['uint h', 'int level']), ...atLevel((kinds) => choose(kinds.rooms, (k) => [`return ${e(k.high)};`])), '}');
 
   // Which of n equal bays across the wall holds u (integer division is
   // slow), for each n a row has.
-  for (const n of new Set(kinds.walls.slice(1).filter((k) => k.bays > 1).map((k) => k.bays))) {
+  for (const n of new Set([...levels.values()].flatMap((kinds) => kinds.walls.slice(1).filter((k) => k.bays > 1).map((k) => k.bays)))) {
     const pitch = (R - 2 * M) / n;
     out.push(js
       ? `const bay${n} = (u, fu) => Math.min(${n - 1}, Math.max(0, Math.floor((u - M + fu) / ${pitch})));`
@@ -363,27 +378,27 @@ function pieces(js, kinds, salt) {
   // The opening, if any, through the wall on one horizontal side of the
   // cell. Faces are shared, so the two cells either side hash the same
   // owner (h) and agree on what is there.
-  out.push(js ? 'function wallShape(h, u, fu) {' : 'bool wallShape(uint h, int u, float fu, out int cu, out int hw, out int y0, out int sp, out int top) {');
-  out.push(...choose(kinds.walls, (k) => {
+  out.push(js ? 'function wallShape(h, u, fu, level) {' : 'bool wallShape(uint h, int u, float fu, int level, out int cu, out int hw, out int y0, out int sp, out int top) {');
+  out.push(...atLevel((kinds) => choose(kinds.walls, (k) => {
     // (Its middle: a row's in the middle of the bay the point is across from,
     // one alone at so far from the wall's.)
     const pitch = (R - 2 * M) / k.bays, at = k.bays > 1 ? `M + ${pitch / 2} + ${pitch} * bay${k.bays}(u, fu)` : k.at === 0 ? 'C' : `C + (${e(k.at)})`;
     const v = [at, ...['half', 'sill', 'rise', 'top'].map((f) => e(k[f]))];
     return [js ? `return { cu: ${v[0]}, hw: ${v[1]}, y0: ${v[2]}, sp: ${v[3]}, top: ${v[4]} };` : `cu = ${v[0]}; hw = ${v[1]}; y0 = ${v[2]}; sp = ${v[3]}; top = ${v[4]}; return true;`];
-  }, js ? 'null' : 'false'));
+  }, js ? 'null' : 'false')));
   out.push('}');
 
   // That opening as a piece of air (see TUNNEL).
-  out.push(fn('float', 'wallOpening', ['int p', 'int a', 'float fa', 'int u', 'float fu', 'int y', 'float fy', 'bool high', 'uint h', 'vec3 ea', 'vec3 eu']));
+  out.push(fn('float', 'wallOpening', ['int p', 'int a', 'float fa', 'int u', 'float fu', 'int y', 'float fy', 'bool high', 'uint h', 'vec3 ea', 'vec3 eu', 'int level']));
   out.push(...(js
-    ? ['  const s = wallShape(h, u, fu);', '  if (!s) return NONE;', '  const { cu, hw, y0, sp, top } = s;']
-    : ['  int cu, hw, y0, sp, top;', '  if (!wallShape(h, u, fu, cu, hw, y0, sp, top)) return 1e9;']));
+    ? ['  const s = wallShape(h, u, fu, level);', '  if (!s) return NONE;', '  const { cu, hw, y0, sp, top } = s;']
+    : ['  int cu, hw, y0, sp, top;', '  if (!wallShape(h, u, fu, level, cu, hw, y0, sp, top)) return 1e9;']));
   out.push('  ' + decl('int', 'x = u - cu, yy = y - M - y0'), '  airPiece();', ...twin.planes(js, 'air', TUNNEL).map((l) => '  ' + l), `  return ${D};`, '}');
 
   // An opening through the slab above (up) or below the room (see HOLE).
-  out.push(fn('float', 'slabOpening', ['ivec3 L', 'vec3 f', 'bool up', 'int H', 'uint h']));
+  out.push(fn('float', 'slabOpening', ['ivec3 L', 'vec3 f', 'bool up', 'int H', 'uint h', 'int level']));
   out.push('  ' + decl('int', 'w, dg', true));
-  out.push(...choose(kinds.slabs, (k) => [`w = ${e(k.half)}; dg = ${e(k.cut)};`], NOTHING));
+  out.push(...atLevel((kinds) => choose(kinds.slabs, (k) => [`w = ${e(k.half)}; dg = ${e(k.cut)};`], NOTHING)));
   out.push('  ' + decl('int', 'y0 = up ? M + H - 1 : -M, y1 = up ? R + M : M + 1'));
   out.push('  airPiece();', ...twin.planes(js, 'air', HOLE).map((l) => '  ' + l), `  return ${D};`, '}');
 
@@ -394,13 +409,16 @@ function pieces(js, kinds, salt) {
   // a skin where they meet.) A ray may strike any of a set of them, so then
   // all are asked; otherwise the one in our quarter of the room is the
   // nearest.
-  const slab = (name) => kinds.slabs.find((s) => s.name === name).to;
-  // (What a kind must have under and over it: no slab more open than upTo's.)
-  const allowed = (k) => Object.entries(k.upTo).filter(([, most]) => slab(most) !== null).map(([side, most]) => `${side} >= ${num(slab(most))}`);
-  out.push(fn('float', 'furniture', ['ivec3 L', 'vec3 f', 'uint h', 'float under', 'float over']));
-  out.push(...choose(kinds.furniture, (k) => {
+  // (What a kind must have under and over it: no slab more open than upTo's,
+  // of the slabs of its level.)
+  const allowed = (k, kinds) => {
+    const slab = (name) => kinds.slabs.find((s) => s.name === name).to;
+    return Object.entries(k.upTo).filter(([, most]) => slab(most) !== null).map(([side, most]) => `${side} >= ${num(slab(most))}`);
+  };
+  out.push(fn('float', 'furniture', ['ivec3 L', 'vec3 f', 'uint h', 'float under', 'float over', 'int level']));
+  out.push(...atLevel((kinds) => choose(kinds.furniture, (k) => {
     const body = [], diamond = 'diamond' in k;
-    const not = allowed(k);
+    const not = allowed(k, kinds);
     if (not.length) body.push(`if (${not.join(' || ')}) return ${NOTHING};`);
     // (Along the floor, p and q: x and z, or z and x where it turns.)
     const turns = values(k.turn, `furniture.${k.name}`).values.includes(true);
@@ -438,21 +456,21 @@ function pieces(js, kinds, salt) {
       '}',
       'return d;',
     ];
-  }, NOTHING));
+  }, NOTHING)));
   out.push('}');
 
   // The room: a box, less whatever stands in it.
-  out.push(fn('float', 'roomAir', ['ivec3 L', 'vec3 f', 'int H', 'uint h', 'float under', 'float over']));
+  out.push(fn('float', 'roomAir', ['ivec3 L', 'vec3 f', 'int H', 'uint h', 'float under', 'float over', 'int level']));
   out.push('  airPiece();', ...twin.planes(js, 'air', ROOM).map((l) => '  ' + l));
-  out.push('  ' + decl('float', `box = ${D}`), `  return ${js ? 'Math.max' : 'max'}(box, -furniture(L, f, h, under, over));`, '}');
+  out.push('  ' + decl('float', `box = ${D}`), `  return ${js ? 'Math.max' : 'max'}(box, -furniture(L, f, h, under, over, level));`, '}');
 
   // The kind of furniture a room has (for the planner), or none.
   if (js) {
-    out.push('function furnitureKind(h, under, over) {');
-    out.push(...choose(kinds.furniture, (k) => {
-      const not = allowed(k);
+    out.push('function furnitureKind(h, under, over, level) {');
+    out.push(...atLevel((kinds) => choose(kinds.furniture, (k) => {
+      const not = allowed(k, kinds);
       return [...(not.length ? [`if (${not.join(' || ')}) return null;`] : []), `return '${k.name}';`];
-    }, 'null'), '}');
+    }, 'null')), '}');
   }
   // The halls cell: its room, and of the
   // openings in its faces, those in the nearer face on each axis. Of the
@@ -467,24 +485,24 @@ function pieces(js, kinds, salt) {
   // has them, min and max the language's own, and a whole number is halved
   // by div.)
   const hash = (id, s) => `hashCell(${id}, ${s === undefined ? 'seed' : `seed ^ ${js ? `0x${(s >>> 0).toString(16)}` : hexu(s)}`})`;
-  const hasRoom = (id) => (js ? `built(${id}, seed, rule)` : `built(${id}, seed)`);
+  const hasRoom = (id) => (js ? `built(${id}, seed, level, rule)` : `built(${id}, seed, level)`);
   const next = (d) => (js ? `wrapId([${d.map((x, a) => (x === 0 ? `id[${a}]` : `id[${a}] + (${x})`)).join(', ')}])` : `wrapId(id + ivec3(${d.join(', ')}))`);
   const most = (f, xs) => xs.reduce((a, x) => `${f}(${a}, ${x})`);
   const half = (x) => (js ? `div(${x}, 2)` : twin.HELPERS.div.glsl([x, '2']));
   const through = (d, ask) => (js ? [`through(ray, ${d}, () => ${ask});`] : [`if (ray && ${d} + gO <= 0.0) {`, '  gRay = true;', `  ${ask};`, '  gRay = false;', '  if (gX > reach) { reach = gX; nrm = gN; }', '}']);
   const wall = (x) => (x
-    ? `wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, ${js ? '0, 2' : 'EX, EZ'})`
-    : `wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, ${js ? '2, 0' : 'EZ, EX'})`);
-  const slabIn = 'slabOpening(L, f, hy, H, hwy)', roomIn = 'roomAir(L, f, H, hf, h01(hdn), h01(hup))';
+    ? `wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, ${js ? '0, 2' : 'EX, EZ'}, level)`
+    : `wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, ${js ? '2, 0' : 'EZ, EX'}, level)`);
+  const slabIn = 'slabOpening(L, f, hy, H, hwy, level)', roomIn = 'roomAir(L, f, H, hf, h01(hdn), h01(hup), level)';
   // (In GLSL, the cell asks its pieces with gRay clear but where it says,
   // and gives it back as it was: see hallsCell below.)
-  out.push(js ? 'function hallsAir(L, f, id, seed, dg, rule, ray) {' : 'float hallsCellIn(ivec3 L, vec3 f, ivec3 id, uint seed, bool ray, out float reach, out vec3 nrm) {');
-  out.push(...(js ? ['at(L, f, dg);', 'if (ray) aim(ray);'] : ['reach = -1.0;', 'nrm = vec3(0.0);']).map((l) => '  ' + l));
+  out.push(js ? 'function hallsAir(L, f, id, seed, dg, level, rule, ray) {' : 'float hallsCellIn(ivec3 L, vec3 f, ivec3 id, uint seed, int level, bool ray, out float reach, out vec3 nrm) {');
+  out.push(...(js ? ["if (!Number.isInteger(level)) throw new Error('halls: a cell asked at no level');", 'at(L, f, dg);', 'if (ray) aim(ray);'] : ['reach = -1.0;', 'nrm = vec3(0.0);']).map((l) => '  ' + l));
   out.push(
     ...[
       decl('bool', `here = ${hasRoom('id')}`),
       // (A cell with no room is measured as a room filling it.)
-      decl('int', `H = here ? roomHigh(${hash('id')}) : HHI`),
+      decl('int', `H = here ? roomHigh(${hash('id')}, level) : HHI`),
       decl('uint', `hup = ${hash('id', salt.slab)}`),
       decl('uint', `hdn = ${hash(next([0, -1, 0]), salt.slab)}`),
       decl('uint', `hf = ${hash('id', salt.furniture)}`),
@@ -530,10 +548,10 @@ function pieces(js, kinds, salt) {
   );
   if (!js)
     out.push(
-      'float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {',
+      'float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {',
       '  bool ray = gRay;',
       '  gRay = false;',
-      '  float d = hallsCellIn(L, f, id, seed, ray, reach, nrm);',
+      '  float d = hallsCellIn(L, f, id, seed, level, ray, reach, nrm);',
       '  gRay = ray;',
       '  return d;',
       '}',
@@ -551,14 +569,23 @@ export function makeHalls(set) {
   const spec = frozen(define(HALLS, set));
   const { salt } = spec;
 
-  const kinds = families(spec);
-  // (Below which number a part's kind name, or one before it, is chosen: none, the last.)
-  const to = (part, name) => kinds[part].find((k) => k.name === name).to;
+  // (The halls at each level: their definition and kinds, the default's at
+  // any level not given its own.)
+  const specAt = (level) => spec.byLevel[level] ?? spec;
+  const levels = new Map([[null, families(spec)], ...Object.entries(spec.byLevel).map(([l, s]) => [+l, families(s)])]);
+  const kindsAt = (level) => levels.get(level) ?? levels.get(null);
+  // (Below which number a part's kind name, or one before it, is chosen at a
+  // level: none, the last.)
+  const wholeLevel = (level) => {
+    if (!Number.isInteger(level)) throw new Error('halls: asked at no level');
+    return level;
+  };
+  const to = (part, name, level) => kindsAt(wholeLevel(level))[part].find((k) => k.name === name).to;
   const C = R / 2;
   const HHI = R - 2 * M;
   // Does this cell have a room in it? (rule: where the space allows a room,
   // as spaceRoom in the GLSL; none, everywhere.)
-  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= threshold(spec.solid);
+  const built = (id, seed, level, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= threshold(specAt(wholeLevel(level)).solid);
   // The halls in JavaScript, made into functions (the flight asks the cell
   // every frame: asking the GPU would mean waiting for it; the tests compare
   // the two languages); and of them, hallsAir:
@@ -570,7 +597,7 @@ export function makeHalls(set) {
   // nz); known says whether the cell answers that (here, always).
   const { roomHigh, wallShape, furnitureKind, hallsAir } = new Function(
     'P', 'C', 'M', 'R', 'HLO', 'HHI', 'FAR', 'H2', 'hashCell', 'wrapId', 'built',
-    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\nconst float = (x) => x, abs = Math.abs;\n${twin.jsHelpers(LANG)}\n${pieces(true, kinds, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
+    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\nconst float = (x) => x, abs = Math.abs;\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
   )(P, C, M, R, HLO, HHI, FAR, Math.SQRT1_2, hashCell, wrapId, built);
 
   // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
@@ -590,13 +617,13 @@ float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 // (And only where the space allows a room: spaceRoom, which each space
 // defines; the halls everywhere.)
 bool spaceRoom(ivec3 id, uint seed);
-bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(threshold(spec.solid))}; }
+bool built(ivec3 id, uint seed, int level) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= (${[...Object.entries(spec.byLevel).filter(([, s]) => s.solid !== spec.solid).map(([l, s]) => `level == ${l} ? ${glf(threshold(s.solid))} : `), glf(threshold(spec.solid))].join('')}); }
 
 // Is the point x + f on the upper side of c? (L alone is rounded, and can
 // put a point half a unit on the wrong side.)
 bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 
-${pieces(false, kinds, salt)}
+${pieces(false, levels, salt)}
 
 `;
 
@@ -609,31 +636,31 @@ ${pieces(false, kinds, salt)}
   // the middle of where it crosses the face, the way across it (e), and the
   // cell on the other side. (Of a row of openings, the one at the wall's
   // middle.) The same hashes as above.
-  function hallsRoom(id, seed, rule) {
-    if (!built(id, seed, rule)) return null;
-    const H = roomHigh(hashCell(id, seed));
+  function hallsRoom(id, seed, level, rule) {
+    if (!built(id, seed, level, rule)) return null;
+    const H = roomHigh(hashCell(id, seed), level);
     // (What stands in it, as furniture has it: whether it is in a way
     // across the room's middle.)
     const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab)), over = h01(hashCell(id, seed ^ salt.slab));
-    const stands = furnitureKind(hashCell(id, seed ^ salt.furniture), under, over);
-    return { H, middle: [C, M + (H >> 1), C], piers: !!stands && !!spec.furniture[stands].blocks };
+    const stands = furnitureKind(hashCell(id, seed ^ salt.furniture), under, over, level);
+    return { H, middle: [C, M + (H >> 1), C], piers: !!stands && !!specAt(level).furniture[stands].blocks };
   }
-  function hallsOpenings(id, seed, rule) {
-    const here = built(id, seed, rule);
+  function hallsOpenings(id, seed, level, rule) {
+    const here = built(id, seed, level, rule);
     const out = [];
     for (const [a, sign] of [[0, 1], [0, -1], [2, 1], [2, -1], [1, 1], [1, -1]]) {
       const e = [0, 0, 0];
       e[a] = sign;
       const nb = wrapId(id.map((x, b) => x + e[b]));
-      if (!here && !built(nb, seed, rule)) continue;
+      if (!here && !built(nb, seed, level, rule)) continue;
       // A face belongs to the cell on its lower side.
       const owner = sign > 0 ? id : nb;
       const at = [C, 0, C];
       at[a] = sign > 0 ? R : 0;
       if (a === 1) {
-        if (h01(hashCell(owner, seed ^ salt.slab)) < to('slabs', 'solid')) continue;
+        if (h01(hashCell(owner, seed ^ salt.slab)) < to('slabs', 'solid', level)) continue;
       } else {
-        const s = wallShape(hashCell(owner, seed ^ (a === 0 ? salt.wallX : salt.wallZ)), C, 0);
+        const s = wallShape(hashCell(owner, seed ^ (a === 0 ? salt.wallX : salt.wallZ)), C, 0, level);
         if (!s) continue;
         at[a === 0 ? 2 : 0] = s.cu;
         at[1] = M + s.y0 + Math.min(s.top, s.sp + s.hw) / 2;
@@ -649,10 +676,10 @@ ${pieces(false, kinds, salt)}
     glsl: hallsGlsl + /* glsl */ `
 bool spaceRoom(ivec3 id, uint seed) { return true; }
 float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {
-  return hallsCell(L, f, id, seed, reach, nrm);
+  return hallsCell(L, f, id, seed, level, reach, nrm);
 }
 `,
-    cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, null, ray),
+    cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, level, null, ray),
     maxInterior: 0.375,
     longestWay: 1.4,
     close: 0.3,
@@ -683,7 +710,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
           const y = M + HLO + ((h >>> 16) % (R - 2 * M - HLO));
           const depth = g & 2 ? M - 1 : R - M;
           d = g & 1 ? [depth, y, across] : [across, y, depth];
-          if (!inner || k > 60 || built(inner.map((x, a) => x + R * d[a]), levelSeed(j + 1))) break;
+          if (!inner || k > 60 || built(inner.map((x, a) => x + R * d[a]), levelSeed(j + 1), j + 1)) break;
         }
         ancestors.set(j, d);
       }
@@ -711,12 +738,13 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     },
     fogK: 250, // visibility, in cells of the room we are in
     // For finding ways (see planner.js): its rooms' walls, half their
-    // thickness; a cell's room and its openings.
+    // thickness; a cell's room and its openings (the cell's id, seed and
+    // level).
     halfWall: M,
-    room: (id, seed) => hallsRoom(id, seed),
-    openings: (id, seed) => hallsOpenings(id, seed),
+    room: (id, seed, level) => hallsRoom(id, seed, level),
+    openings: (id, seed, level) => hallsOpenings(id, seed, level),
   };
-  return { space: halls, spec, kinds, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built };
+  return { space: halls, spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built };
 }
 
 // The halls as they are (and their parts, for the spaces built on them).

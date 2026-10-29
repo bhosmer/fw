@@ -95,6 +95,9 @@ function check(def) {
   if (!city.depths.every((d) => Number.isInteger(d * 4) && d >= 0)) bad('relief.city: depths in quarters of a cell');
   if (!finer.depths.every((d) => Number.isInteger(d / 2) && d >= 0)) bad('relief.finer: depths in twelfths of a cell (even numbers)');
   if (finer.min < 3) bad('relief.finer: min under 3 (the shader looks under no more than six ridge rows)');
+  // (The halls by level: only where there are halls, at the city's level
+  // (under the plaza, by the building) and finer.)
+  for (const l of Object.keys(def.halls.byLevel)) if (+l < CITY) bad(`halls.byLevel.${l}: there are no halls coarser than the city's level (${CITY})`);
   const t = def.town;
   // (A building stands a unit inside its lot (see PREAMBLE in town.js): the
   // margin may be no more.)
@@ -122,12 +125,12 @@ function check(def) {
 // checks its table and its parts (_V2).
 export function makeArcology(set) {
   const def = check(frozen(define(ARCOLOGY, set)));
-  const { space: halls, spec: HALLS, kinds: hallsKinds, to: hallsTo, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = makeHalls(def.halls);
+  const { space: halls, spec: HALLS, kindsAt: hallsKindsAt, to: hallsTo, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = makeHalls(def.halls);
   // (Below which a slab is solid, and an opening through it an oculus: see
   // well. The well's shapes are the halls' own, as yet written again here:
   // so they must be the ones it writes.)
-  const slabTo = (name) => hallsTo('slabs', name);
-  if (JSON.stringify(hallsKinds.slabs.map(({ name, half, cut }) => [name, half, cut])) !== JSON.stringify([['solid', undefined, undefined], ['oculus', 3, 4], ['well', 6, 'FAR']]))
+  const slabTo = (name) => hallsTo('slabs', name, CITY);
+  if (JSON.stringify(hallsKindsAt(CITY).slabs.map(({ name, half, cut }) => [name, half, cut])) !== JSON.stringify([['solid', undefined, undefined], ['oculus', 3, 4], ['well', 6, 'FAR']]))
     throw new Error('arcology: the light wells are written for the halls\' slabs as they are (solid, oculus 3 and 4, well 6), not as changed');
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
@@ -1017,8 +1020,8 @@ export function makeArcology(set) {
       const v = [x, y, z];
       if (kind[at(v)] !== DEEP) continue;
       const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
-      if (!hallsRoom(id, seed, roomRule)) continue;
-      for (const o of hallsOpenings(id, seed, roomRule)) {
+      if (!hallsRoom(id, seed, CITY + 1, roomRule)) continue;
+      for (const o of hallsOpenings(id, seed, CITY + 1, roomRule)) {
         if (o.e[1] !== 0) continue;
         const u = v.map((q, a) => q + o.e[a]);
         if (within(u) && open[at(u)]) out.push({ id, e: o.e, at: o.at });
@@ -1969,7 +1972,7 @@ float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   ivec3 below = wrapId(id - ivec3(0, 1, 0));
   uint h = hashCell(below, seed ^ ${hexu(HALLS.salt.slab)});
   float t = h01(h);
-  if (t < ${glf(slabTo('solid'))} || !(built(below, seed) || built(id, seed))) return 1e9;
+  if (t < ${glf(slabTo('solid'))} || !(built(below, seed, ${CITY}) || built(id, seed, ${CITY}))) return 1e9;
   ivec3 o = fromMiddle(id) / R;
   for (int k = 0; k < NBUILT; k++) if (BUILT_CELLS[k] == o.xz) return 1e9;
   bool oculus = t < ${glf(slabTo('oculus'))};
@@ -2078,7 +2081,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     nrm = vec3(0.0);
     ivec3 own = id - R * ivec3(floor((vec3(id) + 0.5) / float(R)));
     if (level == ${CITY + 1} && m.x == 0u && groundCell(own, gUp)) d = groundAir(L, f, own);
-    else if (m.x == 0u || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, reach, nrm);
+    else if (m.x == 0u || kind == ${DEEP}u) d = hallsCell(L, f, id, seed, level, reach, nrm);
     if (m.x != 0u) d = reliefCell(L, f, id, seed, m, d, reach, nrm);
   }
   // (The buildings' relief, asked after in one place only, as the halls are.)
@@ -2158,7 +2161,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   function wellOf(id, seed) {
     const below = wrapId([id[0], id[1] - 1, id[2]]);
     const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
-    if (t < slabTo('solid') || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return null;
+    if (t < slabTo('solid') || !(built(below, seed, CITY, roomRule) || built(id, seed, CITY, roomRule))) return null;
     if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
     const oculus = t < slabTo('oculus');
     return { w: oculus ? 3 : 6, dg: oculus ? 4 : 1000 };
@@ -2729,7 +2732,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       const m = relief(id, up);
       if (m[0]) {
         // (The halls only in deep cells, as the shader has them.)
-        const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, roomRule, ray) : NONE;
+        const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, level, roomRule, ray) : NONE;
         setPoint(L, f, dg);
         return reliefCell(L, f, id, seed, m, d, ray);
       }
@@ -2739,7 +2742,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       if (groundCell(own, up)) return solid(groundAir(L, f, own));
     }
     if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
-    if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule, ray);
+    if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, level, roomRule, ray);
     // (The city's: its plaza's air and its well's, and for a ray the further
     // of the pieces the point is in; then its pockets.)
     setPoint(L, f, dg);
@@ -2770,8 +2773,8 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     glsl: hallsGlsl + glsl,
     cellAir,
     // (Its rooms and their openings as the halls', where it lets them be.)
-    room: (id, seed) => hallsRoom(id, seed, roomRule),
-    openings: (id, seed) => hallsOpenings(id, seed, roomRule),
+    room: (id, seed, level) => hallsRoom(id, seed, level, roomRule),
+    openings: (id, seed, level) => hallsOpenings(id, seed, level, roomRule),
     volume: VOLUME,
     // What fraction of a surface opens at a level (see the detail asked after
     // in main, shaders.js):
