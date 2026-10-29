@@ -115,6 +115,12 @@ test('a variant must be one the definition has', () => {
   assert.throws(() => makeHalls({ furniture: { benches: { turn: 'bit(h, 5)' } } }), /benches: its turn, "bit\(h, 5\)", is not true or false/);
   assert.throws(() => makeHalls({ walls: { door: { top: '1 < 2' } } }), /door: its top, "1 < 2", is not a whole number/);
   assert.throws(() => makeHalls({ furniture: { piers: { at: [11, 7] } } }), /piers: quartered, at \[11,7\] reaches past the room's middle/);
+  // (And what the cell's own reckoning relies on: furniture clear of the
+  // openings' reach into the room, and of where a visit starts.)
+  assert.throws(() => makeHalls({ furniture: { piers: { at: [3, 3] } } }), /piers: it stands within a unit of a wall/);
+  assert.throws(() => makeHalls({ furniture: { kiosk: { box: [[-2, 2], [-2, 2], [-1, 6]] } } }), /kiosk: it stands where a visit starts/);
+  assert.throws(() => makeHalls({ furniture: { benches: { upTo: { under: 'well', over: 'well' } } } }), /benches: it stands over an opening it may have there \(well\)/);
+  assert.throws(() => makeHalls({ byLevel: { 2: { furniture: { piers: { upTo: { under: 'oculus', over: 'well' } } } } } }), /piers: it stands under an opening it may have there \(well\)/);
   assert.throws(() => makeHalls({ furniture: 0.5 }), /furniture is a set of parts/);
   const up = ARCOLOGY.building.up.map((p) => p.slice()), v = makeArcology({ building: { up } });
   assert.throws(() => { v.def.halls.solid = 0.1; }, TypeError);

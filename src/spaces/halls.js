@@ -162,6 +162,10 @@ export const HALLS = {
 HALLS.byLevel = keyed(['salt']);
 frozen(HALLS);
 const FAR = 1000;
+// The longest way through any one piece of a cell's air, and the largest
+// clearance in it (see the space's longestWay and maxInterior; families
+// checks the kinds keep to them).
+const LONGEST_WAY = 1.4, MAX_INTERIOR = 0.375;
 
 // The words the kinds are written in (see twin.js): the shared helpers, and
 // among; and the names they may use, with their values.
@@ -326,6 +330,62 @@ function families(spec) {
     const far = 'diamond' in k ? [r, r] : [k.box[0][1], k.box[1][1]];
     if (!k.at.every((c, a) => c + far[a] <= R / 2)) throw new Error(`halls: furniture: ${k.name}: quartered, at ${JSON.stringify(k.at)} reaches past the room's middle`);
   }
+  // (What stands in a room keeps clear of the openings, which reach a unit
+  // into it, so that solid never stands in their air: of the walls', a unit
+  // in from each; of the slabs', any it may stand under or over, where it
+  // reaches the floor or the ceiling; and of where a visit starts, in the
+  // room's middle (see start).)
+  const placed = (k) => {
+    const where = `furniture.${k.name}`, all = (x) => values(x, where).values;
+    const list = [];
+    for (const turn of all(k.turn))
+      for (const ax of all(k.at[0]))
+        for (const az of all(k.at[1])) {
+          const places = k.quartered ? [ax, 'diamond' in k ? R - ax : R - ax - k.box[0][0] - k.box[0][1]].flatMap((x) => [az, 'diamond' in k ? R - az : R - az - k.box[1][0] - k.box[1][1]].map((z) => [x, z])) : [[ax, az]];
+          for (const [p, q] of places) {
+            // (Along x and z: p and q, or q and p, turned.)
+            const piece = 'diamond' in k
+              ? { diamond: Math.max(...all(k.diamond)), x: turn ? q : p, z: turn ? p : q, y: [M, R] }
+              : { x: [p + k.box[0][0], p + k.box[0][1]], z: [q + k.box[1][0], q + k.box[1][1]], y: [M + k.box[2][0], M + k.box[2][1]] };
+            if (!piece.diamond && turn) [piece.x, piece.z] = [piece.z, piece.x];
+            list.push(piece);
+          }
+        }
+    return list;
+  };
+  // (Strictly inside, at (x, z), seen from above.)
+  const inside = (c, x, z) => (c.diamond ? Math.abs(x - c.x) + Math.abs(z - c.z) < c.diamond : x > c.x[0] && x < c.x[1] && z > c.z[0] && z < c.z[1]);
+  const lowRoom = Math.min(...out.rooms.flatMap((k) => values(k.high, `rooms.${k.name}`).values));
+  for (const k of out.furniture.slice(1)) {
+    const bad = (what) => {
+      throw new Error(`halls: furniture: ${k.name}: ${what}`);
+    };
+    for (const c of placed(k)) {
+      const [x0, x1, z0, z1] = c.diamond ? [c.x - c.diamond, c.x + c.diamond, c.z - c.diamond, c.z + c.diamond] : [...c.x, ...c.z];
+      if (Math.min(x0, z0) < M + 1 || Math.max(x1, z1) > R - M - 1) bad('it stands within a unit of a wall, where the walls\' openings reach into the room');
+      if (inside(c, R / 2, R / 2) && c.y[0] < M + 4.5 && c.y[1] > M + 4.5) bad('it stands where a visit starts, in the room\'s middle');
+      // (Each kind of slab opening it may have under it, if it stands on the
+      // floor; over it, if it reaches the lowest ceiling's last unit.)
+      for (const [side, near] of [['under', c.y[0] < M + 1], ['over', c.y[1] > M + lowRoom - 1]]) {
+        if (!near) continue;
+        const most = out.slabs.findIndex((s) => s.name === k.upTo[side]);
+        for (const s of out.slabs.slice(1, most + 1)) {
+          const w = Math.max(...values(s.half, `slabs.${s.name}`).values), dg = Math.max(...values(s.cut, `slabs.${s.name}`).values);
+          for (let x = 1 / 8; x < R; x += 1 / 4)
+            for (let z = 1 / 8; z < R; z += 1 / 4)
+              if (inside(c, x, z) && Math.abs(x - R / 2) < w && Math.abs(z - R / 2) < w && Math.abs(x - R / 2) + Math.abs(z - R / 2) < dg) bad(`it stands ${side === 'under' ? 'over' : 'under'} an opening it may have there (${s.name})`);
+        }
+      }
+    }
+  }
+  // (The space's longest way through a piece of air, and largest clearance
+  // (see longestWay and maxInterior), hold: a room fills at most its cell
+  // less the walls; a wall's opening reaches a unit into the room, within
+  // the wall, no higher than a low room; a slab's, from the room's ceiling
+  // through the slab, within the room. As R and M are, the rooms' heights
+  // checked above keep them so; this says so, should those change.)
+  const highest = Math.max(...out.rooms.flatMap((k) => values(k.high, `rooms.${k.name}`).values));
+  if (Math.hypot(R - 2 * M, R - 2 * M, highest) / R > LONGEST_WAY || highest / 2 / R > MAX_INTERIOR) throw new Error('halls: rooms: higher than the space allows for');
   return out;
 }
 
@@ -686,8 +746,8 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
 }
 `,
     cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, level, null, ray),
-    maxInterior: 0.375,
-    longestWay: 1.4,
+    maxInterior: MAX_INTERIOR,
+    longestWay: LONGEST_WAY,
     close: 0.3,
     openArea: 0.07,
 
