@@ -1,29 +1,52 @@
 // Colour and lighting schemes: L cycles through them, and the choice is
-// remembered. Anything a scheme leaves out is as in DEFAULTS, or for colours,
-// as the space has them.
-//   fill     a light from the sun's direction that reaches everywhere, sun or
-//            no sun (it gives indoor surfaces their shape)
-//   sun      direct sunlight, only where a ray toward the sun reaches the sky
-//   sunCol   the colour of sunlight
-//   ambient  how much light comes from the sky (the haze) all round
-//   lamp     a soft light carried with us, falling off lampReach clearances out
-//   fog      visibility, relative to the space's own
-//   sky      the haze, and the colour of the light from it; zenith is the
-//            sky overhead, ground the ground seen from above
-//   sunDir   toward the sun (need not be of unit length)
-//   disc     how bright the sun's disc is in the sky; clouds, how much cloud;
-//            stars, how bright the stars are
-//   inlay    how strongly finer levels show as coloured inlay, before they
-//            open up (else they show as shadowed recesses)
-//   stone    level => { wall, floor }: the colours of each level, or none
-//            to keep the space's palette
+// remembered.
 import { hash32, hsv } from './util.js';
 
-const DEFAULTS = {
-  fill: 0.25, sun: 1.0, sunCol: [1.0, 0.88, 0.7], sunDir: [0.4657, 0.8279, 0.3105],
-  ambient: 1, lamp: 0.35, lampReach: 8, fog: 1,
-  disc: 1, clouds: 1, stars: 0, inlay: 0,
+// What a scheme may say, a row each. is: what it is where a scheme says
+// nothing, a value or the space's own (a function of the space). light: for
+// a light, its uniform's GLSL type; the uniform is named u + Name (uFill
+// for fill) and declared from this table (see lightGlsl).
+export const SCHEME = {
+  // A light from the sun's direction that reaches everywhere, sun or no
+  // sun (it gives indoor surfaces their shape).
+  fill: { is: 0.25, light: 'float' },
+  // Direct sunlight, only where a ray toward the sun reaches the sky; its
+  // colour; and toward the sun (made of unit length, whatever is given).
+  sun: { is: 1.0, light: 'float' },
+  sunCol: { is: [1.0, 0.88, 0.7], light: 'vec3' },
+  sunDir: { is: [0.4657, 0.8279, 0.3105], light: 'vec3' },
+  // How much light comes from the sky (the haze) all round.
+  ambient: { is: 1, light: 'float' },
+  // A soft light carried with us, falling off lampReach clearances out.
+  lamp: { is: 0.35, light: 'float' },
+  lampReach: { is: 8, light: 'float' },
+  // How bright the sun's disc is in the sky; how much cloud; how bright the
+  // stars are.
+  disc: { is: 1, light: 'float' },
+  clouds: { is: 1, light: 'float' },
+  stars: { is: 0, light: 'float' },
+  // How strongly finer levels show as coloured inlay, before they open up
+  // (else they show as shadowed recesses).
+  inlay: { is: 0, light: 'float' },
+  // The haze, and the colour of the light from it; the sky overhead; the
+  // ground seen from above (the space's roof: space.ground is already the
+  // height of its top).
+  sky: { is: (space) => space.sky, light: 'vec3' },
+  zenith: { is: (space) => space.zenith, light: 'vec3' },
+  ground: { is: (space) => space.roof, light: 'vec3' },
+  // Visibility, relative to the space's own.
+  fog: { is: 1 },
+  // level => { wall, floor }: the colours of each level, or none to keep
+  // the space's palette.
+  stone: { is: null },
 };
+
+// The lights' uniforms in GLSL; and each one's value in a scheme (made
+// below, with every default but the space's own), for a space.
+const uniform = (name) => 'u' + name[0].toUpperCase() + name.slice(1);
+export const LIGHTS = Object.entries(SCHEME).filter(([, r]) => r.light).map(([name, r]) => ({ name, uniform: uniform(name), type: r.light }));
+export const lightGlsl = () => LIGHTS.map((l) => `uniform ${l.type} ${l.uniform};`).join('\n');
+export const lightOf = (scheme, name, space) => scheme[name] ?? SCHEME[name].is(space);
 
 const jitter = (level, k) => ((hash32(level * 7 + k) & 0xffff) / 0xffff) * 2 - 1;
 
@@ -82,7 +105,13 @@ export const SCHEMES = [
     inlay: 1,
     stone: turn([hsv(0.6, 0.6, 0.72), hsv(0.12, 0.12, 0.93), hsv(0.42, 0.5, 0.62), hsv(0.11, 0.55, 0.86), hsv(0.5, 0.5, 0.75), hsv(0.03, 0.55, 0.72)], 0.75),
   },
-].map((s) => ({ ...DEFAULTS, ...s }));
+].map((s) => {
+  // (A scheme as given, with what it leaves out as the table has it, but
+  // for the space's own; the sun's direction of unit length.)
+  const out = { ...Object.fromEntries(Object.entries(SCHEME).filter(([, r]) => typeof r.is !== 'function').map(([k, r]) => [k, r.is])), ...s };
+  const d = Math.hypot(...out.sunDir);
+  return { ...out, sunDir: out.sunDir.map((x) => x / d) };
+});
 
 const KEY = 'fw.scheme';
 

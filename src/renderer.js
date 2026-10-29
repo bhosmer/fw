@@ -3,6 +3,7 @@ import { levelSeed } from './util.js';
 import { begin, finish, link, bindSampler } from './gl.js';
 import { Frame } from './frame.js';
 import { Look } from './look.js';
+import { LIGHTS, lightOf } from './schemes.js';
 
 // The drawing: each space's programs (the view, and the older way of
 // drawing and the probe, made when asked for) and its tables; the levels
@@ -296,23 +297,14 @@ export class Renderer {
     gl.uniform1f(p.u.uFogLen, view.fogLen);
     gl.uniform1f(p.u.uMaxT, view.maxT);
     gl.uniform1f(p.u.uFogK, view.fogK);
-    gl.uniform3fv(p.u.uSky, sc.sky ?? this.space.sky);
     gl.uniform1f(p.u.uSkyH, view.sky);
     gl.uniform1f(p.u.uSunReach, view.sunReach);
-    gl.uniform3fv(p.u.uZenith, sc.zenith ?? this.space.zenith);
-    gl.uniform3fv(p.u.uGround, sc.ground ?? this.space.roof);
-    gl.uniform1f(p.u.uFill, sc.fill);
-    gl.uniform1f(p.u.uSunK, sc.sun);
-    gl.uniform3fv(p.u.uSunCol, sc.sunCol);
-    gl.uniform1f(p.u.uAmbient, sc.ambient);
-    gl.uniform1f(p.u.uLamp, sc.lamp);
-    gl.uniform1f(p.u.uLampReach, sc.lampReach);
-    gl.uniform1f(p.u.uDisc, sc.disc);
-    gl.uniform1f(p.u.uClouds, sc.clouds);
-    gl.uniform1f(p.u.uStars, sc.stars);
-    gl.uniform1f(p.u.uInlay, sc.inlay);
-    const d = Math.hypot(...sc.sunDir);
-    gl.uniform3fv(p.u.uSun, sc.sunDir.map((x) => x / d));
+    // (The scheme's lights, as SCHEME has them.)
+    for (const l of LIGHTS) {
+      const v = lightOf(sc, l.name, this.space);
+      if (l.type === 'float') gl.uniform1f(p.u[l.uniform], v);
+      else gl.uniform3fv(p.u[l.uniform], v);
+    }
     // (The outer plane, if any, and its colours; with none, off, and no
     // colours left from a frame before.)
     const outer = view.outer ? colours(view.outer.level) : { wall: [0, 0, 0], floor: [0, 0, 0] };

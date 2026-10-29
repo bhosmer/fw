@@ -1121,8 +1121,8 @@ ${(() => {
     return `const int FCAPS[${caps.length}] = int[${caps.length}](${caps.join(', ')});
 const ivec3 FCR[NF] = ivec3[NF](${fr.join(', ')});`;
   })()}
-// The ridges' rows (RIDGE_ROWS in the JS): from RR_FROM, RR_N of them.
-uniform highp isampler2D uRidgeRows;
+// The ridges' rows (RIDGE_ROWS in the JS, the table uRidgeRows): from
+// RR_FROM, RR_N of them.
 const int RR_FROM[2] = int[2](${RR_FROM.join(', ')}), RR_N[2] = int[2](${RR_N.join(', ')});
 const int FOUR = ${FOUR.k};
 // Each level's depths (its own units).

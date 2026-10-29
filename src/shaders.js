@@ -1,4 +1,5 @@
 import { glf } from './util.js';
+import { lightGlsl } from './schemes.js';
 
 
 // Lattice units of margin on "this level is solid for at least this far"
@@ -66,6 +67,7 @@ uniform vec3 uFr[NLEV];
 uniform ivec3 uId[NLEV];
 uniform ivec3 uPid[NLEV];  // the id of the cell's parent
 ${space.volume ? '// The space\'s table (see volume in spaces/halls.js).\nuniform highp usampler3D uVolume;' : ''}
+${(space.tables ?? []).map((t) => `// The space's table ${t.name} (see tables in spaces/halls.js).\nuniform highp isampler2D ${t.name};`).join('\n')}
 uniform uint uSeed[NLEV];
 uniform int uLevel[NLEV];
 uniform float uSig[NLEV];
@@ -306,14 +308,13 @@ uniform vec3 uWall[NLEV];
 uniform vec3 uFloor[NLEV];
 uniform vec2 uRes;
 uniform float uLodH;       // pixels down the picture that detail is sized for (see lodH in main.js)
-uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAAU_FRAG)
+uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAAU_FRAG in frame.js)
 uniform mat3 uCam;
 uniform float uTan;        // tan(fov / 2)
 uniform float uScale;      // our clearance, smoothed
 uniform float uFogLen;
 uniform float uMaxT;
 uniform float uFogK;       // how far we see inside a level's air, over its uSig
-uniform vec3 uSky;
 // The air we are in may belong to a level too coarse to draw (we are very
 // close to one of its surfaces, which has not opened for many levels). Then
 // this stands in for it: the surface as a plane, air on the side its normal
@@ -325,24 +326,14 @@ uniform float uSkyH;
 // How far under that plane sunlight can come in whatever we see from (see
 // sunReach in spaces/halls.js).
 uniform float uSunReach;
-uniform vec3 uZenith;
-uniform vec3 uGround;
-uniform float uFill;       // lighting scheme: see schemes.js
-uniform float uSunK;
-uniform vec3 uSunCol;
-uniform float uAmbient;
-uniform float uLamp;
-uniform float uLampReach;
-uniform float uDisc;
-uniform float uClouds;
-uniform float uStars;
-uniform float uInlay;
-uniform vec3 uSun;         // toward the sun
+// The scheme's lights (see SCHEME in schemes.js): uSun, the sun's strength;
+// uSunDir, toward it.
+${lightGlsl()}
 uniform vec3 uOuterWall;
 uniform vec3 uOuterFloor;
 uniform int uDebug;       // 1: steps per pixel; 2: skip nothing; 3: levels; 4: distance; 5: the distance's log2, whole part and rest (the tour's look)
 uniform float uStride;     // draw only every this many pixels (see Renderer.look)
-uniform vec2 uToOut;       // the picture's pixels per pixel drawn, each way (temporal upscaling: see TAAU_FRAG)
+uniform vec2 uToOut;       // the picture's pixels per pixel drawn, each way (temporal upscaling: see TAAU_FRAG in frame.js)
 
 out vec4 outColor;
 
@@ -552,7 +543,7 @@ float fbm(vec2 p) {
 vec3 openSky(vec3 col, vec3 rd) {
   float up = max(rd.y, 0.0);
   col = mix(col, uZenith, pow(up, 0.55));
-  float sun = max(dot(rd, uSun), 0.0);
+  float sun = max(dot(rd, uSunDir), 0.0);
   col += uSunCol * (0.3 * pow(sun, 16.0) + 6.0 * pow(sun, 1500.0)) * uDisc;
 
   // Stars: a few of the cells of a fine grid of directions hold one.
@@ -569,7 +560,7 @@ vec3 openSky(vec3 col, vec3 rd) {
     vec2 q = rd.xz / (up + 0.06) * 0.9;
     float c = fbm(q + vec2(3.1, 7.7));
     float cover = smoothstep(0.52 - 0.1 * max(uClouds - 1.0, 0.0), 0.78, c) * smoothstep(0.02, 0.25, up);
-    float shade = smoothstep(0.5, 0.9, fbm(q * 1.7 + vec2(0.4, 2.3) + 0.6 * uSun.xz));
+    float shade = smoothstep(0.5, 0.9, fbm(q * 1.7 + vec2(0.4, 2.3) + 0.6 * uSunDir.xz));
     vec3 cloud = mix(vec3(1.0, 0.98, 0.95) * (0.5 + 0.5 * min(uDisc, 1.0)), mix(uSky, uZenith, 0.3) * 0.95, 0.55 * shade);
     col = mix(col, cloud, min(0.85 * uClouds, 0.95) * cover);
   }
@@ -577,7 +568,7 @@ vec3 openSky(vec3 col, vec3 rd) {
   // Hills: two ranges, the further one higher and paler. Sampled round a
   // circle so that they join up behind us.
   vec2 ring = normalize(rd.xz + vec2(1e-6, 0.0));
-  float lit = 0.5 + 0.5 * dot(ring, normalize(uSun.xz));
+  float lit = 0.5 + 0.5 * dot(ring, normalize(uSunDir.xz));
   float far = 0.012 + 0.07 * smoothstep(0.38, 0.8, fbm(ring * 2.6 + vec2(11.0, 4.0)));
   float near = 0.004 + 0.035 * smoothstep(0.35, 0.85, fbm(ring * 6.0 + vec2(3.0, 8.0)));
   vec3 farCol = mix(uSky, uZenith, 0.5) * mix(0.82, 0.95, lit);
@@ -608,11 +599,11 @@ vec3 surfaceColour(int slot, vec3 n) {
 // we carry, and the sun, as much as reaches it (sunlit), before any haze.
 vec3 litBy(vec3 base, vec3 n, vec3 rd, float t, float ao, float sunlit) {
   float hemi = 0.5 + 0.5 * n.y;
-  float key = max(dot(n, uSun), 0.0);
+  float key = max(dot(n, uSunDir), 0.0);
   float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uLampReach * uScale), 2.0));
   vec3 light = (0.15 + 0.85 * ao) * (uSky * uAmbient * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * uFill)
              + vec3(1.0, 0.9, 0.75) * lamp * uLamp
-             + uSunCol * uSunK * key * sunlit;
+             + uSunCol * uSun * key * sunlit;
   // Where sunlight adds to what was already bright, roll off gently
   // instead of clipping (nothing under 0.8 changes).
   vec3 lit = base * light;
@@ -755,7 +746,7 @@ void main() {
       ao = clamp(ao / 0.96, 0.0, 1.0);
       if (!sunTried) break;
       for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
-      o = p + n * foot; dir = uSun; t0 = t; far = 1e30; most = SUN_STEPS;
+      o = p + n * foot; dir = uSunDir; t0 = t; far = 1e30; most = SUN_STEPS;
     }
     bool rh, ro;
     int rs = slot, rst = 0;
@@ -811,8 +802,8 @@ void main() {
     // come in: further than the space lets sunlight reach, and further than
     // we see from here. Going by how far we see alone, where the space is
     // open well under the ground, shadows came and went as that changed.)
-    float key = max(dot(n, uSun), 0.0), below = -(p.y + uSkyH);
-    sunTried = uSunK > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach);
+    float key = max(dot(n, uSunDir), 0.0), below = -(p.y + uSkyH);
+    sunTried = uSun > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach);
     phases = 2;
   }
 
@@ -851,7 +842,7 @@ void main() {
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
   col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
   // (And how far off what it saw is, for the next frame to find it again:
-  // see TAAU_FRAG.)
+  // see TAAU_FRAG in frame.js.)
   outColor = vec4(col, hit ? log2(max(t, 1e-30)) : 1e4);
 }`
   );
