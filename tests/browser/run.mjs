@@ -149,8 +149,7 @@ check('the shader and the JavaScript agree about rays', async () => {
 // cells, the camera put there, every level asked about; and about rays, there
 // and in the plain cells' openings and the town.
 check('the shader and the JavaScript agree in the arcology\'s skin', async () => {
-  const off = await agreeInSkin('arcology', await import(join(ROOT, 'src', 'spaces', 'arcology.js')), { skin: 1000, openings: 1000, overlaps: 1000, town: 400, inAir: 100 });
-  assert(!off.length, off.join('\n'));
+  await agreeInSkin('arcology', await import(join(ROOT, 'src', 'spaces', 'arcology.js')), { skin: 1000, openings: 1000, overlaps: 1000, town: 400, inAir: 100 });
 });
 
 // And so at the edges of the plate and the roof band, in the edge the
@@ -160,13 +159,11 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
 check('the shader and the JavaScript agree at the edges, whichever edge', async () => {
   const { VARIANTS } = await import(join(ROOT, 'src', 'worlds.js')), { makeArcology } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
   const { shape } = await import(join(ROOT, 'src', 'spaces', 'hexahedron.js'));
-  const off = [];
   for (const [name, set] of [['arcology', undefined], ...Object.entries(VARIANTS).map(([v, { set }]) => [v, set])]) {
     const made = makeArcology(set), { heights } = shape(made.def.building), y0 = made._V2.ORIGIN[1];
     const band = (y) => y - y0 >= Math.floor(heights.roofLo) - 1 && y - y0 <= Math.ceil(heights.plateHi);
-    off.push(...(await agreeInSkin(name, made, { skin: 200, openings: 300, overlaps: 300, inAir: 20 }, band)));
+    await agreeInSkin(name, made, { skin: 200, openings: 300, overlaps: 300, inAir: 20 }, band);
   }
-  known(!off.length, off.join('\n'), 'B23: the shader meets the building\'s faces at the relief\'s level a little off (the faces\' whole numbers in single precision: already their least; see the ledger)');
 });
 
 // The shader and the JavaScript compared in the world named (made: its table
@@ -174,9 +171,7 @@ check('the shader and the JavaScript agree at the edges, whichever edge', async 
 // cells, every level's distance, the camera put there; and rays from there,
 // and from its plain cells' openings, where two solids' openings are, and its
 // town (n: how many points of each, and at least how many rays of each
-// group must be in the relief's air; keep: of cells at what height). Rays
-// at the relief's level that differ only as ledger B23 says, by less than
-// two and a half times compareRays' tolerance, are returned, not failed.
+// group must be in the relief's air; keep: of cells at what height).
 async function agreeInSkin(world, { VOLUME, _V2 }, n, keep = () => true) {
   const { lo, size, kind, data, words, at: cellAt } = VOLUME, { TOWN_AT, SKIN, PLAIN, WIN_AT, SOLID_BITS } = _V2.BITS;
   const groups = { skin: [], openings: [], overlaps: [], town: [] };
@@ -198,7 +193,7 @@ async function agreeInSkin(world, { VOLUME, _V2 }, n, keep = () => true) {
     assert(cells.length, `${world}: no ${name} cells to look in`);
     return Array.from({ length: n }, () => cells[Math.floor(rnd() * cells.length)].map((x) => (12 + (x - 0.5 + 2 * rnd()) / 24) / 24));
   };
-  const points = pick('skin', n.skin), off = [];
+  const points = pick('skin', n.skin);
   await load('start', 'alhambra', false, world);
   const worst = await page.eval(`(() => {
     let worst = { diff: 0 };
@@ -215,32 +210,27 @@ async function agreeInSkin(world, { VOLUME, _V2 }, n, keep = () => true) {
   assert(worst.diff < 1e-3, `${world}: they differ by ${JSON.stringify(worst)}`);
   // (And about rays, where the JavaScript answers them, from the same points,
   // and from others in the plain cells' openings (mostly solid: more of them),
-  // where two solids' openings meet, and in the town: the relief's level
-  // apart from the rest.)
+  // where two solids' openings meet, and in the town.)
   for (const [name, at] of [['skin', points], ...['openings', 'overlaps', 'town'].filter((g) => n[g]).map((g) => [g, pick(g, n[g])])]) {
-    const { relief, rest } = await page.eval(`(() => {
-      const sum = () => ({ ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} }), relief = sum(), rest = sum();
+    const sum = await page.eval(`(() => {
+      const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
       let k = 0;
       for (const frac of ${JSON.stringify(at)}) {
         fw.pos.F = -3; fw.pos.frac = frac; fw.pos.digits = new Map();
         const recs = fw.pos.levels(-3, 0);
         for (let j = 0; j < 3; j++) {
           const a = (k++ * 2.399963) % 6.283, z = ((k * 0.618034) % 1) * 2 - 1, c = Math.sqrt(1 - z * z), d = [c * Math.cos(a), z, c * Math.sin(a)];
-          fw.compareRays(recs.filter((r) => r.level === -1), [[0, 0, 0]], d, relief);
-          fw.compareRays(recs.filter((r) => r.level !== -1), [[0, 0, 0]], d, rest);
+          fw.compareRays(recs, [[0, 0, 0]], d, sum);
         }
       }
-      return { relief, rest };
+      return sum;
     })()`);
-    if (process.env.VERBOSE) console.log(`  ${world}, ${name}: ${at.length} points, ${relief.compared + rest.compared} rays compared, in air by level ${JSON.stringify({ ...rest.inAir, ...relief.inAir })}`);
-    assert(rest.ratio < 1 && rest.apart === 0 && rest.facing === 0, `${world}, ${name}: about rays they differ: ${JSON.stringify(rest)}`);
-    assert(relief.ratio < 2.5 && relief.apart === 0 && relief.facing === 0, `${world}, ${name}: about rays at the relief's level they differ: ${JSON.stringify(relief)}`);
-    if (relief.ratio >= 1) off.push(`${world}, ${name}: about rays at the relief's level they differ: ${JSON.stringify(relief)}`);
+    if (process.env.VERBOSE) console.log(`  ${world}, ${name}: ${at.length} points, ${sum.compared} rays compared, in air by level ${JSON.stringify(sum.inAir)}`);
+    assert(sum.ratio < 1 && sum.apart === 0 && sum.facing === 0, `${world}, ${name}: about rays they differ: ${JSON.stringify(sum)}`);
     // (Rays in the relief's own air, one level finer than the city, not
     // only where all is solid.)
-    assert((relief.inAir[-1] ?? 0) > n.inAir, `${world}, ${name}: only ${relief.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(relief.inAir)}`);
+    assert((sum.inAir[-1] ?? 0) > n.inAir, `${world}, ${name}: only ${sum.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(sum.inAir)}`);
   }
-  return off;
 }
 
 // At the city's level (fw.check seldom flies there): in the plaza's air

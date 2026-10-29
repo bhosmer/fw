@@ -1071,11 +1071,19 @@ export function makeArcology(set) {
     GVB: rowsOf(GRIDS, { varyB: [0, 0, 0, 0] }, (g) => g.varyB),
     GSCALE: rowsOf(GRIDS, { scale: 1 }, (g) => g.scale),
     SOLID_PL: SOLID_PL.flat(),
+    // (And exactly, in whole numbers, one level finer: n and R K, from the
+    // building's origin; and one over n's length. See planeAt.)
+    SOLID_PI: SOLIDS.flatMap((s) => s.planes.map(({ n, K }) => [...n, R * K])),
+    SOLID_INV: SOLIDS.flatMap((s) => s.planes.map(({ n }) => 1 / Math.hypot(...n))),
     SOLID_AT: SOLID_PL.map((pl, i) => [SOLID_PL.slice(0, i).flat().length, pl.length]),
     SOLID_YIELDS: YIELDS,
     SOLID_KEEP: SOLIDS.map((s) => s.keep ?? 0),
     WFIRST: SOLIDS.map((s) => s.wfirst ?? 0),
   };
+  // (planeAt's whole numbers stay under 2^31 in every cell of the table: n
+  // times the point, from the building's origin one level finer, less R K.)
+  const FROM = [0, 1, 2].map((a) => R * (1 + Math.max(Math.abs(VOLUME.lo[a] - ORIGIN[a]), Math.abs(VOLUME.lo[a] + VOLUME.size[a] - 1 - ORIGIN[a]))));
+  if (OPEN_ROWS.SOLID_PI.some((p) => p.slice(0, 3).reduce((t, x, a) => t + Math.abs(x) * FROM[a], 0) + Math.abs(p[3]) >= 2 ** 31)) throw new Error('arcology: a solid too fine for the openings\' whole numbers (planeAt): another slope (see slopes in hexahedron.js)');
   // (A table's GLSL declaration: its type, and each row's.)
   const table = (type, name, n, row) => `const ${type} ${name}[${n}] = ${type}[${n}](${OPEN_ROWS[name].map(row).join(', ')});`;
   const vrow = (type) => (r) => `${type}(${r.join(', ')})`;
@@ -1185,8 +1193,10 @@ export function makeArcology(set) {
   }
   // The openings, in either language (js: true, or GLSL), written once from
   // their tables (OPEN_ROWS): which sides a cell's openings run on across
-  // (runsOn, openLo, openHi), how far outside a solid the point is
-  // (solidOut), one face's openings (windowAir), and a cell's (openings).
+  // (runsOn, openLo, openHi), how far outside a solid the point is (planeAt
+  // and solidAt, the whole part exactly; solidOut, in floats, for the city's bare solids:
+  // see bareIn, until the relief is written so too), one face's openings
+  // (windowAir), and a cell's (openings).
   // (The JavaScript's, made into functions below; the cell's state, CELL,
   // as relief, reliefCell, eachPiece and windowAir set it.)
   function openingsPieces(js) {
@@ -1374,7 +1384,25 @@ export function makeArcology(set) {
       return js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : `if (${X} > reach) { reach = ${X}; nrm = gN; }`;
     }
 
+    // How far outside plane k of the solids the point is, one level finer
+    // (base: its cell's corner from the building's origin, in that level's
+    // units): the whole part in whole numbers, the rest (f) in floats, as
+    // the solids are asked at the city's level (see cityPieces); and how far
+    // outside solid i (the most of its planes').
+    const planeAt = [
+      fn('float', 'planeAt', ['int k', 'ivec3 L', 'vec3 f', 'ivec3 base']),
+      '  ' + decl('ivec4', 'p = SOLID_PI[k]'),
+      `  return (float(p.x * (base.x + L.x) + p.y * (base.y + L.y) + p.z * (base.z + L.z) - p.w) + ${js ? '(p.x * f.x + p.y * f.y + p.z * f.z)' : 'dot(vec3(p.xyz), f)'}) * SOLID_INV[k];`,
+      '}',
+      fn('float', 'solidAt', ['int i', 'ivec3 L', 'vec3 f', 'ivec3 base']),
+      '  ' + decl('float', 's = -1e9', true),
+      `  ${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} s = max(s, planeAt(k, L, f, base));`,
+      '  return s;',
+      '}',
+    ];
+
     const openings = [
+      ...planeAt,
       '// The openings in a plain or skin cell (see VOLUME in the JS): of each',
       '// solid in its entry (WIN_AT, in m.z), those of each face in its mask,',
       '// stopped at the other solids in CLIP outside it (at another with openings',
@@ -1387,7 +1415,7 @@ export function makeArcology(set) {
       '// set from m.w for them.)',
       js ? 'function openings(L, f, m, ray) {' : 'float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3 nrm) {',
       ...ins([
-        js ? 'const q = [CELL.b[0] + (L[0] + f[0]) / R, CELL.b[1] + (L[1] + f[1]) / R, CELL.b[2] + (L[2] + f[2]) / R];' : 'vec3 q = vec3(gCellB) + (vec3(L) + f) / float(R);',
+        js ? 'const base = [CELL.b[0] * R, CELL.b[1] * R, CELL.b[2] * R];' : 'ivec3 base = gCellB * R;',
         decl('float', `a = 1e9${js ? '' : ', fo = gO, fa = gA'}`, true),
         "// (Each solid's openings as they are, first.)",
         ...(js ? [`const ms = [], bs = [], rs = [], ns = [];`] : [`int ms[${WIN_AT.length}];`, `float bs[${WIN_AT.length}], rs[${WIN_AT.length}];`, `vec3 ns[${WIN_AT.length}];`]),
@@ -1408,7 +1436,7 @@ export function makeArcology(set) {
           'if (me < 0) continue;',
           decl('float', 'b = bs[s], r = rs[s]', true),
           decl('vec3', 'rn = ns[s]', true),
-          decl('float', 'own = solidOut(me, q)'),
+          decl('float', 'own = solidAt(me, L, f, base)'),
           decl('bool', 'rays = ray && r >= 0.0'),
           '// (Where the ray leaves the solid, and that plane\'s normal.)',
           decl('float', 'oIn = -1e30, oOut = 1e30', true),
@@ -1418,7 +1446,7 @@ export function makeArcology(set) {
             ...fade('gO = 0.0; gA = 0.0;'),
             loop('k', 'SOLID_AT[me].x', 'SOLID_AT[me].x + SOLID_AT[me].y'),
             ...ins([
-              decl('float', `rd = ${dot('SOLID_PL[k]', 'gDir')}, g = (${dot('SOLID_PL[k]', 'q')} - SOLID_PL[k].w) * float(R)`),
+              decl('float', `rd = ${dot('SOLID_PL[k]', 'gDir')}, g = planeAt(k, L, f, base)`),
               `if (rd > 0.0 && -g / rd < oOut) { oOut = -g / rd; oN = ${xyz('SOLID_PL[k]')}; }`,
               'else if (rd < 0.0) oIn = max(oIn, g / -rd);',
               'else if (rd == 0.0 && g > 0.0) oOut = -1e30;',
@@ -1431,17 +1459,17 @@ export function makeArcology(set) {
             decl('int', `i = int(c & ${(1 << SOLID_BITS) - 1}u) - 1`),
             'if (i == me) continue;',
             decl('bool', 'through = ((SOLID_YIELDS[i] >> uint(me)) & 1u) != 0u'),
-            decl('float', 'inside = (SOLID_KEEP[i] - solidOut(i, q)) * float(R), ri = -1.0', true),
+            decl('float', 'inside = SOLID_KEEP[i] * float(R) - solidAt(i, L, f, base), ri = -1.0', true),
             decl('vec3', `rin = ${ZERO}`, true),
             `${each('t', 0, WIN_AT.length)} if (ms[t] == i) {`,
             '  inside = min(inside, bs[t]);',
             '  if (rs[t] > ri) { ri = rs[t]; rin = ns[t]; }',
             '}',
-            'b = max(b, through ? min(inside, own * float(R)) : inside);',
+            'b = max(b, through ? min(inside, own) : inside);',
             'if (rays) {',
             ...ins([
               'solidBegin();',
-              `${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} solidFace((${dot('SOLID_PL[k]', 'q')} - SOLID_PL[k].w - SOLID_KEEP[i]) * float(R), ${arg(js ? 'SOLID_PL[k]' : 'SOLID_PL[k].xyz')});`,
+              `${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} solidFace(planeAt(k, L, f, base) - SOLID_KEEP[i] * float(R), ${arg(js ? 'SOLID_PL[k]' : 'SOLID_PL[k].xyz')});`,
               decl('float', `x = max(${IN}, 0.0)`, true),
               decl('vec3', `n = ${IN_N}`, true),
               `if (through && x >= oIn && x < oOut) { x = oOut; n = ${neg('oN')}; }`,
@@ -1463,8 +1491,8 @@ export function makeArcology(set) {
       '}',
     ];
     // (In JavaScript, vectors are arrays, and whole numbers as it has them.)
-    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'm', 'base', 'ht', 'g', 'gu', 'gv', 'gb'])) : lines.join('\n'));
-    return { cell: text(cell), solidOut: text(solidOut), windowAir: text(windowAir), openings: text(openings) };
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'm', 'base', 'ht', 'g', 'gu', 'gv', 'gb', 'p'])) : lines.join('\n'));
+    return { cell: text(cell), solidOut: js ? null : text(solidOut), windowAir: text(windowAir), openings: text(openings) };
   }
   const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false);
 
@@ -1588,6 +1616,10 @@ const int BARE_ID[NBARE] = int[NBARE](${BARE.map((s) => SOLIDS.indexOf(s)).join(
 // Every solid's planes (SOLID_PL in the JS), and where each one's are (first, how many).
 ${table('vec4', 'SOLID_PL', OPEN_ROWS.SOLID_PL.length, (p) => `vec4(${p.map(glf).join(', ')})`)}
 ${table('ivec2', 'SOLID_AT', SOLIDS.length, vrow('ivec2'))}
+// And exactly, one level finer: each plane's n and R K in whole numbers (from
+// the building's origin), and one over |n| (see planeAt).
+${table('ivec4', 'SOLID_PI', OPEN_ROWS.SOLID_PI.length, vrow('ivec4'))}
+${table('float', 'SOLID_INV', OPEN_ROWS.SOLID_INV.length, glf)}
 const int SOLID_BITS = ${SOLID_BITS};
 // Whose openings cut through each solid inside their own, as bits by solid
 // (YIELDS in the JS); everyone else's stop at it.
@@ -2321,7 +2353,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   const OPEN_JS = openingsPieces(true);
   const { openLo, openHi, openings } = new Function(
     'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', ...Object.keys(OPEN_ROWS),
-    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.solidOut}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\nreturn { openLo, openHi, openings };\n//# sourceURL=openingsPieces.gen.js`,
+    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\nreturn { openLo, openHi, openings };\n//# sourceURL=openingsPieces.gen.js`,
   )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, ...Object.values(OPEN_ROWS));
   // The least of piece(), called once for each of the pieces (one level finer:
   // three where the cell's pockets run on as three).
