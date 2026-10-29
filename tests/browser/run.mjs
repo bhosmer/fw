@@ -6,9 +6,10 @@
 //   node tests/browser/run.mjs sparkle    only the checks whose names match
 //
 // Reference pictures are of this machine's GPU: another GPU draws slightly
-// differently, so on a new machine take them afresh (and look at them).
+// differently, so on a new machine take them afresh (and look at them); so
+// too, perhaps, after an update of Chrome or of the GPU's driver.
 import { launch, serve } from './chrome.mjs';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +36,19 @@ const PLACES = {
   relief: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjQ1LDAuNiwwLjk3XSwiZGlnaXRzIjpbXSwieWF3IjowLCJwaXRjaCI6MC4xNX0=',
   // Close to a corner where two walls meet, facing into it.
   corner: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6MiwiZnJhYyI6WzAuNzMyOTI0NDcxMDI0NjE1NiwwLjIyODE0MzU3NzQxNjMwOTgzLDAuNzM0NDE2NTc4OTI4MTc5Nl0sImRpZ2l0cyI6W1stMSxbNywxOCwxNl1dLFswLFsxNiwxNyw1XV0sWzEsWzE1LDYsMjFdXSxbMixbMjEsNywyXV1dLCJ5YXciOjE0Ljk2OTQyMzUwNTYxNDc1MywicGl0Y2giOjAuMDAwMTE3NTk3OTM4MDI1Njk2NzZ9',
+  // Out on the plaza, the whole Hexahedron ahead, its shadow on the ground.
+  building: at({ world: 'arcology', F: -2, frac: [0.07422150320780334, 0.062208054127398174, 0.5984701233709889], digits: [[-2, [11, 13, 11]]], yaw: 2.2291799938059276, pitch: -0.23828340489371397 }),
+  // Before the lower's face, between two pillars, the plate's edge and the
+  // upper above.
+  front: at({ world: 'arcology', F: -2, frac: [0.5, 0.8071139361473042, 0.41167254170923323], digits: [[-2, [12, 12, 13]]], yaw: 0, pitch: 0.05 }),
+  // High over the building, looking steeply down: the town on the roof
+  // band between two pillars, the plaza far below.
+  town: at({ world: 'arcology', F: -2, frac: [0.5, 0.9166666666666661, 0.6875], digits: [[-2, [12, 12, 11]]], yaw: 3.14159, pitch: -0.95 }),
+  // Between the roof band and the plate: the town, the plate's underside
+  // over it, a stair up a pillar.
+  under: at({ world: 'arcology', F: -2, frac: [0.5, 0.8300511199076943, 0.9533112166270068], digits: [], yaw: 0.9, pitch: 0 }),
+  // In a hall inside the building, three levels down.
+  inside: at({ world: 'arcology', F: 1, frac: [0.6157683407192641, 0.9541410982350217, 0.34963503163210796], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [11, 15, 4]], [1, [19, 23, 11]]], yaw: -17.965845148832386, pitch: 0.26231536310500564 }),
 };
 
 // Run before the app's own code on every load: the frame loop never runs (so
@@ -46,10 +60,11 @@ const setup = (scheme, live = false, world = 'halls') => `
   localStorage.setItem('fw.world', ${JSON.stringify(world)});
   { let s = 12345; Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }`;
 
-// In the page: the current view drawn at w x h, top row first.
+// In the page: the current view drawn at w x h, top row first (live: as the
+// app draws it, see fw.snap).
 const PAGE_HELPERS = `
-  window.__snap = (w, h) => {
-    const px = fw.snap(w, h), out = new Uint8ClampedArray(w * h * 4);
+  window.__snap = (w, h, live = false) => {
+    const px = fw.snap(w, h, live), out = new Uint8ClampedArray(w * h * 4);
     for (let y = 0; y < h; y++) out.set(px.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
     return out;
   };
@@ -134,11 +149,39 @@ check('the shader and the JavaScript agree about rays', async () => {
 // cells, the camera put there, every level asked about; and about rays, there
 // and in the plain cells' openings and the town.
 check('the shader and the JavaScript agree in the arcology\'s skin', async () => {
-  const { VOLUME, _V2 } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const off = await agreeInSkin('arcology', await import(join(ROOT, 'src', 'spaces', 'arcology.js')), { skin: 1000, openings: 1000, overlaps: 1000, town: 400, inAir: 100 });
+  assert(!off.length, off.join('\n'));
+});
+
+// And so at the edges of the plate and the roof band, in the edge the
+// building has and each of the other candidates (the variants
+// arcology/cornice and so on: see VARIANTS in worlds.js), where they are: in
+// the cells at the bands' heights.
+check('the shader and the JavaScript agree at the edges, whichever edge', async () => {
+  const { VARIANTS } = await import(join(ROOT, 'src', 'worlds.js')), { makeArcology } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
+  const off = [];
+  for (const [name, set] of [['arcology', undefined], ...Object.entries(VARIANTS).map(([v, { set }]) => [v, set])]) {
+    const made = makeArcology(set), { heights } = made.def.building, y0 = made._V2.ORIGIN[1];
+    const band = (y) => y - y0 >= Math.floor(heights.roofLo) - 1 && y - y0 <= Math.ceil(heights.plateHi);
+    off.push(...(await agreeInSkin(name, made, { skin: 200, openings: 300, overlaps: 300, inAir: 20 }, band)));
+  }
+  known(!off.length, off.join('\n'), 'B23: the shader meets the building\'s faces at the relief\'s level a little off (the faces\' large whole numbers in single precision): to go with B22');
+});
+
+// The shader and the JavaScript compared in the world named (made: its table
+// and parts, as makeArcology gives them): at points in and around its skin
+// cells, every level's distance, the camera put there; and rays from there,
+// and from its plain cells' openings, where two solids' openings are, and its
+// town (n: how many points of each, and at least how many rays of each
+// group must be in the relief's air; keep: of cells at what height). Rays
+// at the relief's level that differ only as ledger B23 says, by less than
+// two and a half times compareRays' tolerance, are returned, not failed.
+async function agreeInSkin(world, { VOLUME, _V2 }, n, keep = () => true) {
   const { lo, size, kind, data, words, at: cellAt } = VOLUME, { TOWN_AT, SKIN, PLAIN, WIN_AT, SOLID_BITS } = _V2.BITS;
   const groups = { skin: [], openings: [], overlaps: [], town: [] };
   for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
     const v = cellAt([x, y, z]), c = [x + lo[0], y + lo[1], z + lo[2]];
+    if (!keep(c[1])) continue;
     if (kind[v] === SKIN) groups.skin.push(c);
     else if (kind[v] === PLAIN && (data[words * v] >>> TOWN_AT) & 1) groups.town.push(c);
     else if (kind[v] === PLAIN && data[words * v + 2]) groups.openings.push(c);
@@ -149,9 +192,13 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
   // (Lattice units of level CITY + 1 from the middle city cell's corner, as
   // fractions of the cell of level CITY - 1 the building is in.)
-  const pick = (cells, n) => Array.from({ length: n }, () => cells[Math.floor(rnd() * cells.length)].map((x) => (12 + (x - 0.5 + 2 * rnd()) / 24) / 24));
-  const points = pick(groups.skin, 1000);
-  await load('start', 'alhambra', false, 'arcology');
+  const pick = (name, n) => {
+    const cells = groups[name];
+    assert(cells.length, `${world}: no ${name} cells to look in`);
+    return Array.from({ length: n }, () => cells[Math.floor(rnd() * cells.length)].map((x) => (12 + (x - 0.5 + 2 * rnd()) / 24) / 24));
+  };
+  const points = pick('skin', n.skin), off = [];
+  await load('start', 'alhambra', false, world);
   const worst = await page.eval(`(() => {
     let worst = { diff: 0 };
     for (const frac of ${JSON.stringify(points)}) {
@@ -164,29 +211,36 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
     }
     return worst;
   })()`);
-  assert(worst.diff < 1e-3, `they differ by ${JSON.stringify(worst)}`);
+  assert(worst.diff < 1e-3, `${world}: they differ by ${JSON.stringify(worst)}`);
   // (And about rays, where the JavaScript answers them, from the same points,
   // and from others in the plain cells' openings (mostly solid: more of them),
-  // where two solids' openings meet, and in the town.)
-  for (const [name, at] of [['skin', points], ['openings', pick(groups.openings, 1000)], ['overlaps', pick(groups.overlaps, 1000)], ['town', pick(groups.town, 400)]]) {
-    const rays = await page.eval(`(() => {
-      const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
+  // where two solids' openings meet, and in the town: the relief's level
+  // apart from the rest.)
+  for (const [name, at] of [['skin', points], ...['openings', 'overlaps', 'town'].filter((g) => n[g]).map((g) => [g, pick(g, n[g])])]) {
+    const { relief, rest } = await page.eval(`(() => {
+      const sum = () => ({ ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} }), relief = sum(), rest = sum();
       let k = 0;
       for (const frac of ${JSON.stringify(at)}) {
         fw.pos.F = -3; fw.pos.frac = frac; fw.pos.digits = new Map();
+        const recs = fw.pos.levels(-3, 0);
         for (let j = 0; j < 3; j++) {
-          const a = (k++ * 2.399963) % 6.283, z = ((k * 0.618034) % 1) * 2 - 1, c = Math.sqrt(1 - z * z);
-          fw.compareRays(fw.pos.levels(-3, 0), [[0, 0, 0]], [c * Math.cos(a), z, c * Math.sin(a)], sum);
+          const a = (k++ * 2.399963) % 6.283, z = ((k * 0.618034) % 1) * 2 - 1, c = Math.sqrt(1 - z * z), d = [c * Math.cos(a), z, c * Math.sin(a)];
+          fw.compareRays(recs.filter((r) => r.level === -1), [[0, 0, 0]], d, relief);
+          fw.compareRays(recs.filter((r) => r.level !== -1), [[0, 0, 0]], d, rest);
         }
       }
-      return sum;
+      return { relief, rest };
     })()`);
-    assert(rays.ratio < 1 && rays.apart === 0 && rays.facing === 0, `${name}: about rays they differ: ${JSON.stringify(rays)}`);
+    if (process.env.VERBOSE) console.log(`  ${world}, ${name}: ${at.length} points, ${relief.compared + rest.compared} rays compared, in air by level ${JSON.stringify({ ...rest.inAir, ...relief.inAir })}`);
+    assert(rest.ratio < 1 && rest.apart === 0 && rest.facing === 0, `${world}, ${name}: about rays they differ: ${JSON.stringify(rest)}`);
+    assert(relief.ratio < 2.5 && relief.apart === 0 && relief.facing === 0, `${world}, ${name}: about rays at the relief's level they differ: ${JSON.stringify(relief)}`);
+    if (relief.ratio >= 1) off.push(`${world}, ${name}: about rays at the relief's level they differ: ${JSON.stringify(relief)}`);
     // (Rays in the relief's own air, one level finer than the city, not
     // only where all is solid.)
-    assert((rays.inAir[-1] ?? 0) > 100, `${name}: only ${rays.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(rays.inAir)}`);
+    assert((relief.inAir[-1] ?? 0) > n.inAir, `${world}, ${name}: only ${relief.inAir[-1] ?? 0} rays compared in the relief's air: ${JSON.stringify(relief.inAir)}`);
   }
-});
+  return off;
+}
 
 // At the city's level (fw.check seldom flies there): in the plaza's air
 // round the buildings, in the city's pockets in their faces, near the solids
@@ -313,7 +367,7 @@ void main() {
 // JavaScript agree in it too (round the camera, and about rays), and a link
 // to a part of its definition there is not, or a world there is not, says so.
 check('a variant in a link is made, and the shader and the JavaScript agree in it', async () => {
-  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&low=0.3']) {
+  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&low=0.3', 'halls&solid=0.4&wall.none=0.1&slab.solid=0.4&furniture.none=0.1']) {
     await load('start', 'alhambra', false, variant);
     const shown = await page.eval(`document.querySelector('.world')?.textContent ?? ''`);
     assert(shown.startsWith(variant.split('&')[0]), `the legend says ${shown}`);
@@ -466,53 +520,92 @@ check('the two ways of stepping rays agree', async () => {
   }
 });
 
-// Each reference picture: a place, a scheme, and how it is drawn.
+// Each reference picture: a place, and a scheme. (The halls: the court, the
+// ground, the start; then the arcology.)
 const PICTURES = [
   ['court', 'alhambra'], ['court', 'nocturne'], ['court', 'de chirico'],
   ['ground', 'alhambra'], ['ground', 'de chirico'],
   ['start', 'alhambra'], ['start', 'de chirico'],
+  ['building', 'alhambra'], ['building', 'de chirico'], ['front', 'alhambra'], ['relief', 'alhambra'],
+  ['town', 'alhambra'], ['under', 'alhambra'], ['inside', 'alhambra'], ['inside', 'nocturne'],
 ];
+// (Their size.)
+const SHOT = [320, 180];
 check('views look as they did', async () => {
-  const W = 320, H = 180;
   const failed = [];
   for (const [place, scheme] of PICTURES) {
-    const name = `${place}-${scheme.replace(/\W+/g, '-')}`;
-    const file = join(GOLDEN, name + '.png');
     await load(place, scheme);
-    const png = await page.eval(`__png(__snap(${W}, ${H}), ${W}, ${H})`);
-    if (update || !existsSync(file)) {
-      mkdirSync(GOLDEN, { recursive: true });
-      writeFileSync(file, Buffer.from(png, 'base64'));
-      continue;
-    }
-    const golden = (await import('node:fs')).readFileSync(file).toString('base64');
-    // Small differences everywhere are rounding; what counts is how much of
-    // the picture has changed visibly.
-    const d = await page.eval(`(async () => {
-      const a = await __decode(${JSON.stringify(png)}), b = await __decode(${JSON.stringify(golden)});
-      if (a.length !== b.length) return { size: true };
-      const diff = new Uint8ClampedArray(a.length);
-      let sum = 0, big = 0;
-      for (let i = 0; i < a.length; i += 4) {
-        const m = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
-        sum += m;
-        if (m > 32) big++;
-        diff[i] = diff[i + 1] = diff[i + 2] = Math.min(255, m * 4);
-        diff[i + 3] = 255;
-      }
-      const n = a.length / 4;
-      return { mean: sum / n, big: big / n, diff: __png(diff, ${W}, ${H}) };
-    })()`);
-    if (process.env.VERBOSE) console.log(`  ${name}: mean ${d.mean?.toFixed(4)}, ${((d.big ?? 0) * 100).toFixed(3)}% changed visibly`);
-    if (d.size || d.mean > 1.5 || d.big > 0.005) {
-      mkdirSync(OUT, { recursive: true });
-      writeFileSync(join(OUT, name + '.png'), Buffer.from(png, 'base64'));
-      if (d.diff) writeFileSync(join(OUT, name + '-diff.png'), Buffer.from(d.diff, 'base64'));
-      failed.push(d.size ? `${name}: size changed` : `${name}: mean ${d.mean.toFixed(2)}, ${(d.big * 100).toFixed(2)}% changed visibly`);
-    }
+    const png = await page.eval(`__png(__snap(${SHOT}), ${SHOT})`);
+    failed.push(await asBefore(`${place}-${scheme.replace(/\W+/g, '-')}`, png));
   }
-  assert(!failed.length, failed.join('\n') + `\n(the new pictures and their differences are in ${OUT})`);
+  assert(!failed.some(Boolean), failed.filter(Boolean).join('\n') + `\n(the new pictures and their differences are in ${OUT})`);
 });
+
+// And as the app draws them (the pictures above are each one frame alone):
+// antialiased over the frames before, while moving forward (drawn at half
+// the pixels each way, gathered into the full picture, for half a second:
+// long enough for the history to hold as much as it keeps moving, see
+// TAA_KEEP in renderer.js), then come to rest (all of them, until it has
+// every sample: see TAA_N).
+// (Nothing here depends on the time: the same frames each run.)
+const LIVE = [['court', 'alhambra'], ['front', 'alhambra']];
+check('views look as they did, as the app draws them moving and at rest', async () => {
+  const failed = [];
+  for (const [place, scheme] of LIVE) {
+    await load(place, scheme);
+    const [moving, still] = await page.eval(`(() => {
+      const shown = () => __png(__snap(${SHOT}, true), ${SHOT});
+      fw.renderer.reset();
+      fw.upscale = 0.5;
+      for (let i = 0; i < 29; i++) (fw.fly(1 / 60, { f: 1 }), fw.snap(${SHOT}, true));
+      fw.fly(1 / 60, { f: 1 });
+      const moving = shown();
+      fw.upscale = 1;
+      for (let i = 0; i < 15; i++) fw.snap(${SHOT}, true);
+      return [moving, shown()];
+    })()`);
+    const name = `live-${place}-${scheme.replace(/\W+/g, '-')}`;
+    failed.push(await asBefore(name + '-moving', moving), await asBefore(name + '-still', still));
+  }
+  assert(!failed.some(Boolean), failed.filter(Boolean).join('\n') + `\n(the new pictures and their differences are in ${OUT})`);
+});
+
+// A picture (png, of SHOT's size) against its reference, name: what
+// differs, or nothing. (Taken afresh, with --update, or where there is none.)
+async function asBefore(name, png) {
+  const file = join(GOLDEN, name + '.png');
+  if (update || !existsSync(file)) {
+    mkdirSync(GOLDEN, { recursive: true });
+    writeFileSync(file, Buffer.from(png, 'base64'));
+    return null;
+  }
+  const golden = readFileSync(file).toString('base64');
+  // Small differences everywhere would be rounding (another GPU, another
+  // browser: on this machine the same picture is drawn to the byte); what
+  // counts is how much of the picture has changed visibly. (A town a little
+  // sparser changes a few tenths of a percent of a picture of it.)
+  const d = await page.eval(`(async () => {
+    const a = await __decode(${JSON.stringify(png)}), b = await __decode(${JSON.stringify(golden)});
+    if (a.length !== b.length) return { size: true };
+    const diff = new Uint8ClampedArray(a.length);
+    let sum = 0, big = 0;
+    for (let i = 0; i < a.length; i += 4) {
+      const m = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
+      sum += m;
+      if (m > 32) big++;
+      diff[i] = diff[i + 1] = diff[i + 2] = Math.min(255, m * 4);
+      diff[i + 3] = 255;
+    }
+    const n = a.length / 4;
+    return { mean: sum / n, big: big / n, diff: __png(diff, ${SHOT}) };
+  })()`);
+  if (process.env.VERBOSE) console.log(`  ${name}: mean ${d.mean?.toFixed(4)}, ${((d.big ?? 0) * 100).toFixed(3)}% changed visibly`);
+  if (!(d.size || d.mean > 0.1 || d.big > 0.0005)) return null;
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(join(OUT, name + '.png'), Buffer.from(png, 'base64'));
+  if (d.diff) writeFileSync(join(OUT, name + '-diff.png'), Buffer.from(d.diff, 'base64'));
+  return d.size ? `${name}: size changed` : `${name}: mean ${d.mean.toFixed(2)}, ${(d.big * 100).toFixed(2)}% changed visibly`;
+}
 
 // Detail too small to show cleanly flickers as we move: count the pixels that
 // flash brighter or darker than both the frame before and the frame after,

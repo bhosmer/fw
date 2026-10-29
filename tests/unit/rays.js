@@ -8,7 +8,12 @@ import assert from 'node:assert/strict';
 // one (a piece may run on out of its cell where a coarser level's air is,
 // as an opening out of a building does into the city's, or over what stands
 // highest, as the plaza's air does into the sky); and the surface it
-// meets there faces back along it. Says whether it was known, and in air.
+// meets there faces back along it. And it hands over: just past where it
+// ends, either every level is solid (the ray has met a surface truly) or
+// some level says the ray goes on through its air (as the shader marches,
+// which stops where none does: a level whose way ended short of its
+// surface, with nothing to take the ray on, would draw a surface that is
+// not there). Says whether it was known, and in air.
 // (at: where the point is, for the messages.)
 export function rayHolds(flight, r, v, dir, at = '') {
   const R = flight.space.R;
@@ -32,6 +37,18 @@ export function rayHolds(flight, r, v, dir, at = '') {
     const b = Math.max(inHome ? -Infinity : flight.sky + u[1], ...levels.map((q) => -flight.airAt(q, u) / q.sig));
     assert.ok(b >= -1e-9 / r.sig, `solid (${-b} cells) at ${t * r.sig} of reach ${ray.reach}, ${where}`);
     t += Math.max(b, end * 1e-6);
+  }
+  // (Just past: a millionth of the way, or of the level's lattice unit,
+  // whichever is more; open above the ground, where the shader stops
+  // marching. A level that does not answer rays goes on as far as its
+  // distance says.)
+  const p = v.map((x, i) => x + dir[i] * (end + 1e-6 * Math.max(end, 1 / r.sig)));
+  if (flight.sky + p[1] <= 0) {
+    const on = flight.here.map((q) => {
+      const next = { dir }, b = flight.airAt(q, p, next);
+      return next.known ? next.reach : b <= 0 ? -b : -1;
+    });
+    assert.ok(on.every((x) => x < 0) || on.some((x) => x > 0), `the ray is handed over to none just past its end (${on.map((x, j) => `level ${flight.here[j].level}: ${x}`).join(', ')}), ${where}`);
   }
   return { known: true, inAir: true };
 }
