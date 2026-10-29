@@ -458,7 +458,15 @@ check('two worlds compared flip, and nothing else changes', async () => {
     let n = 0;
     const draw = fw.renderer.draw.bind(fw.renderer);
     fw.renderer.draw = (...a) => (n++, draw(...a));
-    setTimeout(() => { const before = n, kept = fw.renderer.frame.prev !== null; fw.flip(); const prev = fw.renderer.frame.prev; setTimeout(() => ok([before, n, kept, prev]), 600); }, 1500);
+    // (Up to 5 s for the frames: the flip builds B's program first, which
+    // takes longer on a busy machine: ledger T13.)
+    setTimeout(() => {
+      const before = n, kept = fw.renderer.frame.prev !== null, t0 = performance.now();
+      fw.flip();
+      const prev = fw.renderer.frame.prev;
+      const wait = () => (n - before >= 8 || performance.now() - t0 > 5000 ? ok([before, n, kept, prev]) : setTimeout(wait, 100));
+      wait();
+    }, 1500);
   })`);
   assert(drawn[1] - drawn[0] >= 8, `at rest, a flip drew ${drawn[1] - drawn[0]} frames`);
   assert(drawn[2] && drawn[3] === null, 'the history (there before the flip) was kept across it');
