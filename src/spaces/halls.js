@@ -395,12 +395,18 @@ function pieces(js, levels, salt) {
     : ['  int cu, hw, y0, sp, top;', '  if (!wallShape(h, u, fu, level, cu, hw, y0, sp, top)) return 1e9;']));
   out.push('  ' + decl('int', 'x = u - cu, yy = y - M - y0'), '  airPiece();', ...twin.planes(js, 'air', TUNNEL).map((l) => '  ' + l), `  return ${D};`, '}');
 
-  // An opening through the slab above (up) or below the room (see HOLE).
-  out.push(fn('float', 'slabOpening', ['ivec3 L', 'vec3 f', 'bool up', 'int H', 'uint h', 'int level']));
+  // An opening through a slab, from y0 to y1 (see HOLE), as h picks it: in
+  // a room's floor or ceiling (slabOpening: the one above, up, or below), or
+  // carried further (as the arcology's light wells are, up to its plaza).
+  out.push(fn('float', 'slabHole', ['ivec3 L', 'vec3 f', 'int y0', 'int y1', 'uint h', 'int level']));
   out.push('  ' + decl('int', 'w, dg', true));
   out.push(...atLevel((kinds) => choose(kinds.slabs, (k) => [`w = ${e(k.half)}; dg = ${e(k.cut)};`], NOTHING)));
-  out.push('  ' + decl('int', 'y0 = up ? M + H - 1 : -M, y1 = up ? R + M : M + 1'));
   out.push('  airPiece();', ...twin.planes(js, 'air', HOLE).map((l) => '  ' + l), `  return ${D};`, '}');
+  out.push(fn('float', 'slabOpening', ['ivec3 L', 'vec3 f', 'bool up', 'int H', 'uint h', 'int level']));
+  out.push('  return slabHole(L, f, up ? M + H - 1 : -M, up ? R + M : M + 1, h, level);', '}');
+  // (And in JavaScript, the opening's half width, or none: for a check of
+  // where there is one.)
+  if (js) out.push('function slabHalf(h, level) {', ...atLevel((kinds) => choose(kinds.slabs, (k) => [`return ${e(k.half)};`], 'null')), '}');
 
   // Solid things standing in the room: the distance to the nearest
   // (negative inside it). under and over are what picks the openings in
@@ -595,9 +601,9 @@ export function makeHalls(set) {
   // there: how far it goes in the piece of air it is in (reach, in lattice
   // units; less than 0, in solid), and the surface it meets there (nx, ny,
   // nz); known says whether the cell answers that (here, always).
-  const { roomHigh, wallShape, furnitureKind, hallsAir } = new Function(
+  const { roomHigh, wallShape, slabHole, slabHalf, furnitureKind, hallsAir } = new Function(
     'P', 'C', 'M', 'R', 'HLO', 'HHI', 'FAR', 'H2', 'hashCell', 'wrapId', 'built',
-    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\nconst float = (x) => x, abs = Math.abs;\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
+    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\nconst float = (x) => x, abs = Math.abs;\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabHole, slabHalf, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
   )(P, C, M, R, HLO, HHI, FAR, Math.SQRT1_2, hashCell, wrapId, built);
 
   // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
@@ -744,7 +750,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     room: (id, seed, level) => hallsRoom(id, seed, level),
     openings: (id, seed, level) => hallsOpenings(id, seed, level),
   };
-  return { space: halls, spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built };
+  return { space: halls, spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf };
 }
 
 // The halls as they are (and their parts, for the spaces built on them).

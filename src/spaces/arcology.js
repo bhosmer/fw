@@ -125,13 +125,7 @@ function check(def) {
 // checks its table and its parts (_V2).
 export function makeArcology(set) {
   const def = check(frozen(define(ARCOLOGY, set)));
-  const { space: halls, spec: HALLS, kindsAt: hallsKindsAt, to: hallsTo, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = makeHalls(def.halls);
-  // (Below which a slab is solid, and an opening through it an oculus: see
-  // well. The well's shapes are the halls' own, as yet written again here:
-  // so they must be the ones it writes.)
-  const slabTo = (name) => hallsTo('slabs', name, CITY);
-  if (JSON.stringify(hallsKindsAt(CITY).slabs.map(({ name, half, cut }) => [name, half, cut])) !== JSON.stringify([['solid', undefined, undefined], ['oculus', 3, 4], ['well', 6, 'FAR']]))
-    throw new Error('arcology: the light wells are written for the halls\' slabs as they are (solid, oculus 3 and 4, well 6), not as changed');
+  const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf } = makeHalls(def.halls);
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
   // lower's apex a cell under the plaza's floor (see GROUND).
@@ -1966,26 +1960,14 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout f
 }
 
 // The light well, if any, that the hall below opens up through the plaza:
-// halls' own opening through its ceiling, as that hall has it (the two must
-// agree), carried on up to the plaza.
+// the halls' own opening through its ceiling (their slabHole, at the city's
+// level), carried on up to the plaza.
 float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
   ivec3 below = wrapId(id - ivec3(0, 1, 0));
-  uint h = hashCell(below, seed ^ ${hexu(HALLS.salt.slab)});
-  float t = h01(h);
-  if (t < ${glf(slabTo('solid'))} || !(built(below, seed, ${CITY}) || built(id, seed, ${CITY}))) return 1e9;
+  if (!(built(below, seed, ${CITY}) || built(id, seed, ${CITY}))) return 1e9;
   ivec3 o = fromMiddle(id) / R;
   for (int k = 0; k < NBUILT; k++) if (BUILT_CELLS[k] == o.xz) return 1e9;
-  bool oculus = t < ${glf(slabTo('oculus'))};
-  int w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-  airPiece();
-  airSpan(L.y, f.y, -M, G + 1, EY);
-  airSpan(L.x - C, f.x, -w, w, EX);
-  airSpan(L.z - C, f.z, -w, w, EZ);
-  for (int j = 0; j < 4; j++) {
-    int sx = (j & 1) == 1 ? 1 : -1, sz = (j & 2) == 2 ? 1 : -1;
-    airPlane(diag(2, sx, sz, C, C, dg) * 0.70710678, vec3(float(sx), 0.0, float(sz)) * 0.70710678);
-  }
-  return gD;
+  return slabHole(L, f, -M, G + 1, hashCell(below, seed ^ ${hexu(HALLS.salt.slab)}), ${CITY});
 }
 
 ${SOLIDS.map(solidGlsl).join('\n')}
@@ -2128,25 +2110,16 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // the same order and choices as the shader's, but not everywhere in the
   // same form (the two agree as the parity checks show, not by
   // construction: see .claude/design/t10-review.md).
-  let dLp, dFp, dLm, dFm, dLs, dFs;
-  const diag = (p, sa, sb, ca, cb, k) =>
-    sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];
+  let dLs, dFs;
   const NONE = 1e9;
   const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 
   const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
 
-  // The point along the slants (from dg, or else from L and f), and along the
-  // diagonals.
+  // The point along the diagonals (the shared pieces', see pieces.at), and
+  // along the slants (from dg, or else from L and f).
   function setPoint(L, f, dg) {
-    if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
-    else {
-      const pairs = [[0, 1], [2, 1], [0, 2]];
-      dLp = pairs.map(([a, b]) => L[a] + L[b]);
-      dFp = pairs.map(([a, b]) => f[a] + f[b]);
-      dLm = pairs.map(([a, b]) => L[a] - L[b]);
-      dFm = pairs.map(([a, b]) => f[a] - f[b]);
-    }
+    P.at(L, f, dg);
     if (dg?.Ls) (dLs = dg.Ls), (dFs = dg.fs);
     else {
       // (Split again, as levelRay does: a whole number and the rest, at most a half.)
@@ -2156,24 +2129,16 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     }
   }
 
-  // See well in the shader: whether there is one (its half width and how far
-  // in its corners are cut), and its air (a piece: for a ray too).
+  // See well in the shader: whether there is one (its hash, and its half
+  // width), and its air (a piece: for a ray too).
   function wellOf(id, seed) {
     const below = wrapId([id[0], id[1] - 1, id[2]]);
-    const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
-    if (t < slabTo('solid') || !(built(below, seed, CITY, roomRule) || built(id, seed, CITY, roomRule))) return null;
+    if (!(built(below, seed, CITY, roomRule) || built(id, seed, CITY, roomRule))) return null;
     if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
-    const oculus = t < slabTo('oculus');
-    return { w: oculus ? 3 : 6, dg: oculus ? 4 : 1000 };
+    const h = hashCell(below, seed ^ HALLS.salt.slab), w = slabHalf(h, CITY);
+    return w === null ? null : { h, w };
   }
-  function wellAir(L, f, { w, dg }) {
-    P.airPiece();
-    P.airSpan(L[1], f[1], -M, G + 1, 1);
-    P.airSpan(L[0] - C, f[0], -w, w, 0);
-    P.airSpan(L[2] - C, f[2], -w, w, 2);
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) P.airPlane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
-    return P.S.d;
-  }
+  const wellAir = (L, f, { h }) => slabHole(L, f, -M, G + 1, h, CITY);
 
   // One solid, o the cell's corner from the middle cell's (see solidGlsl).
   function solid(s, L, f, o) {
