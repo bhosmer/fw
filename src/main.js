@@ -29,6 +29,9 @@ const R = space.R;
 
 // Of the levels around us, the most that are drawn.
 const N_VIEW = 12;
+// How far from the camera, in a level's lattice units, fw.check compares the
+// shader with the JavaScript.
+const CHECK_REACH = 2000;
 
 const FOV_TAN = Math.tan((70 * Math.PI) / 360);
 const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
@@ -467,23 +470,35 @@ window.fw = {
     return log;
   },
   // Compare the JavaScript cell function with the shader's along a random
-  // flight: returns the worst disagreement found, in lattice units.
-  check(n = 300) {
+  // flight, at the camera and at points round it out to a few cells away
+  // (where cells, diagonals and slants are found from the camera's): returns
+  // the worst disagreement found, in lattice units, and how many comparisons
+  // away from the camera were made.
+  check(n = 300, round = 15) {
     let seed = 99;
     const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-    let worst = { diff: 0 };
+    let worst = { diff: 0 }, compared = 0;
     for (let i = 0; i < n; i++) {
       if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
       this.fly(0.05 + rnd() * 0.4, { f: 1 });
       const recs = pos.levels(pos.F - UP, pos.F + DOWN);
-      const gpu = renderer.probe(recs);
-      recs.forEach((r, j) => {
-        const cpu = flight.airAt(r);
+      const points = [[0, 0, 0]];
+      for (let k = 0; k < round; k++) {
+        const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], r = Math.pow(10, -3 + 4 * rnd()) / Math.hypot(...d);
+        points.push(d.map((x) => x * r));
+      }
+      renderer.probe(recs, points).forEach((gpu, k) => recs.forEach((r, j) => {
+        // (Only where the shader's numbers can tell: a level's lattice units
+        // from the camera in single precision, no further than its cells
+        // can be seen anyway.)
+        if (Math.max(...points[k].map(Math.abs)) * r.sig > CHECK_REACH) return;
+        compared += k > 0;
+        const cpu = flight.airAt(r, points[k]);
         const diff = Math.abs(cpu - gpu[j]) / Math.max(1, Math.abs(cpu));
-        if (diff > worst.diff) worst = { diff, level: r.level, F: pos.F, cpu, gpu: gpu[j] };
-      });
+        if (diff > worst.diff) worst = { diff, level: r.level, F: pos.F, v: points[k], cpu, gpu: gpu[j] };
+      }));
     }
-    return worst;
+    return { ...worst, compared };
   },
   // (Testing upscaling: the fraction of pixels drawn, as the frame time would set it.)
   set upscale(v) { upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },

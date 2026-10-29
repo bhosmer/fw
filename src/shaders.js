@@ -255,14 +255,19 @@ float levelAir(int i, vec3 v, float o, float s) {
 `;
 }
 
-// One pixel per level: that level's air distance at the camera itself.
+// Points a probe can be asked about at once (see probeFrag).
+export const PROBE_POINTS = 64;
+
+// One pixel per level and point: that level's air distance at the point (a
+// row each, camera-relative), to check the JavaScript twin against.
 export function probeFrag(nlev, space) {
   return (
     common(nlev, space) +
     /* glsl */ `
+uniform vec3 uProbeV[${PROBE_POINTS}];
 out vec4 outColor;
 void main() {
-  outColor = vec4(levelAir(int(gl_FragCoord.x), vec3(0.0), 0.0, 0.0), 0.0, 0.0, 1.0);
+  outColor = vec4(levelAir(int(gl_FragCoord.x), uProbeV[int(gl_FragCoord.y)], 0.0, 0.0), 0.0, 0.0, 1.0);
 }`
   );
 }

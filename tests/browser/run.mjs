@@ -108,6 +108,8 @@ check('the shader and the JavaScript agree about each world', async () => {
     await load('start', 'alhambra', false, world);
     const worst = await page.eval('fw.check(300)');
     assert(worst.diff < 1e-3, `${world}: they differ by ${JSON.stringify(worst)}`);
+    // (And not only at the camera: the points round it were compared too.)
+    assert(worst.compared > 10000, `${world}: only ${worst.compared} comparisons away from the camera`);
   }
 });
 
@@ -130,7 +132,7 @@ check('the shader and the JavaScript agree in the arcology\'s skin', async () =>
     let worst = { diff: 0 };
     for (const frac of ${JSON.stringify(points)}) {
       fw.pos.F = -3; fw.pos.frac = frac; fw.pos.digits = new Map();
-      const recs = fw.pos.levels(-3, 0), gpu = fw.renderer.probe(recs);
+      const recs = fw.pos.levels(-3, 0), [gpu] = fw.renderer.probe(recs);
       recs.forEach((r, j) => {
         const cpu = fw.flight.airAt(r), diff = Math.abs(cpu - gpu[j]) / Math.max(1, Math.abs(cpu));
         if (diff > worst.diff) worst = { diff, level: r.level, frac, cpu, gpu: gpu[j] };

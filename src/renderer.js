@@ -1,4 +1,4 @@
-import { VERT, SMOOTH_FRAG, TAAU_FRAG, probeFrag, viewFrag, slantCount4 } from './shaders.js';
+import { VERT, SMOOTH_FRAG, TAAU_FRAG, PROBE_POINTS, probeFrag, viewFrag, slantCount4 } from './shaders.js';
 import { levelSeed } from './util.js';
 
 // A program is built in two halves: begun (compiled and linked, without
@@ -70,7 +70,6 @@ export class Renderer {
       ...LEVEL_UNIFORMS, 'uN', 'uNear', 'uWall', 'uFloor', 'uRes', 'uCam', 'uTan', 'uScale', 'uFogLen', 'uMaxT', 'uFogK', 'uSky', 'uOuter', 'uOuterWall', 'uOuterFloor', 'uSkyH', 'uSunReach', 'uZenith', 'uGround', 'uFill', 'uSunK', 'uSunCol', 'uAmbient', 'uLamp', 'uLampReach', 'uDisc', 'uClouds', 'uStars', 'uSun', 'uInlay', 'uStride', 'uDebug', 'uJitter', 'uLodH', 'uToOut',
     ];
     this.pending = [
-      ['probeProg', probeFrag(nProbe, space), LEVEL_UNIFORMS],
       ['viewProg', viewFrag(nView, space, true), viewUniforms],
       ['smoothProg', SMOOTH_FRAG, ['uTex', 'uRes']],
       ['taauProg', TAAU_FRAG, ['uCur', 'uHist', 'uHistW', 'uRes', 'uRender', 'uJit', 'uCam', 'uPrev', 'uD', 'uTan', 'uLog', 'uCap', 'uHave', 'uStill', 'uRestart']],
@@ -78,6 +77,9 @@ export class Renderer {
     // The older way of finding what each pixel sees, to check the above
     // against: made the first time it is asked for (see refProg).
     this.makeRef = () => link(gl, viewFrag(nView, space, false), viewUniforms);
+    // And the probe, which checks the JavaScript twin against the shader
+    // (see probe): made when first asked for too.
+    this.makeProbe = () => link(gl, probeFrag(nProbe, space), [...LEVEL_UNIFORMS, 'uProbeV']);
 
     // Temporal antialiasing and upscaling (see TAAU_FRAG): two history
     // pictures, drawn into in turn, each with its weights; and what the frame
@@ -102,12 +104,12 @@ export class Renderer {
 
     this.probeTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.probeTex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, nProbe, 1);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, nProbe, PROBE_POINTS);
     this.probeFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.probeTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.probeBuf = new Float32Array(nProbe * 4);
+    this.probeBuf = new Float32Array(nProbe * PROBE_POINTS * 4);
 
     // What a space keeps as a table rather than works out (see volume in
     // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned integers, on a
@@ -208,18 +210,22 @@ export class Renderer {
     }
   }
 
-  // Each level's air distance at the camera, in that level's lattice units.
-  probe(recs) {
+  // Each level's air distance, in that level's lattice units, at each of the
+  // points (camera-relative, level-F cells; at most PROBE_POINTS): a list
+  // per point of one per level.
+  probe(recs, points = [[0, 0, 0]]) {
     const gl = this.gl;
-    const p = this.probeProg;
+    const p = (this.probeProg ??= this.makeProbe());
+    const n = this.nProbe;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
-    gl.viewport(0, 0, this.nProbe, 1);
+    gl.viewport(0, 0, n, points.length);
     gl.useProgram(p.prog);
-    this.setLevels(p, recs, this.nProbe);
+    this.setLevels(p, recs, n);
+    gl.uniform3fv(p.u.uProbeV, new Float32Array(points.flat()));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.readPixels(0, 0, this.nProbe, 1, gl.RGBA, gl.FLOAT, this.probeBuf);
+    gl.readPixels(0, 0, n, points.length, gl.RGBA, gl.FLOAT, this.probeBuf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return recs.map((_, i) => this.probeBuf[i * 4]);
+    return points.map((_, k) => recs.map((_, i) => this.probeBuf[(k * n + i) * 4]));
   }
 
   // A picture: colour, and in alpha the log of the distance to what each pixel saw.
