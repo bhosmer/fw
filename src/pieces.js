@@ -49,8 +49,13 @@ function face(s, nx, ny, nz) {
 }
 
 // A convex solid standing in that piece, which the point is outside: g is the
-// point's distance outside each face, n points out of the solid.
-function solidFace(g, nx, ny, nz) {
+// point's distance outside each face, n points out of the solid. (Begun by
+// solidBegin, ended by solidDone; or, as the arcology's openings ask, where
+// the ray enters it and leaves it read from S: in and out.)
+export function solidBegin() {
+  (S.in = -1e30), (S.out = 1e30);
+}
+export function solidFace(g, nx, ny, nz) {
   const r = nx * S.dx + ny * S.dy + nz * S.dz;
   if (r < 0) {
     const x = g / -r;
@@ -69,7 +74,7 @@ export function airPlane(s, nx, ny, nz) {
 }
 export function solidPiece() {
   S.d = -1e30;
-  if (S.ray) (S.in = -1e30), (S.out = 1e30);
+  if (S.ray) solidBegin();
 }
 export function solidPlane(s, nx, ny, nz) {
   S.d = Math.max(S.d, s);

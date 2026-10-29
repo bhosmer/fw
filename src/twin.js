@@ -333,11 +333,19 @@ export function writer(js) {
     X: js ? 'S.x' : 'gX',
   };
 }
-// (In the JavaScript they write, float and abs are as GLSL has them.)
-export const AS_GLSL = 'const float = (x) => x, abs = Math.abs;';
-// Their text in JavaScript, where a point's coordinates are arrays: each of
-// the names' components (L.x, SLO[k].y) as an element (L[0], SLO[k][1]).
+// (In the JavaScript they write, float, abs, int, uint and ceil are as GLSL
+// has them.)
+export const AS_GLSL = 'const float = (x) => x, abs = Math.abs, int = (x) => x | 0, uint = (x) => x >>> 0, ceil = Math.ceil;';
+// Their text in JavaScript, where vectors are arrays: each component of
+// the names given, and of any element of a table (L.x, SLO[k].y, GUP[k].w),
+// as an element (L[0], SLO[k][1], GUP[k][3]).
 export function arrays(text, names) {
-  const name = new RegExp(`(${names.map((n) => `\\b${n.replace(/[[\]]/g, '\\$&')}`).join('|')})\\.([xyz])\\b`, 'g');
-  return text.replace(name, (_, v, a) => `${v}[${'xyz'.indexOf(a)}]`);
+  const name = new RegExp(`(${[...names.map((n) => `\\b${n}`), '\\]'].join('|')})\\.([xyzw])\\b`, 'g');
+  return text.replace(name, (_, v, a) => `${v}[${'xyzw'.indexOf(a)}]`);
 }
+// And whole numbers as JavaScript has them: GLSL's unsigned literals (7u)
+// as plain, its shifts right as unsigned ones (for text whose shifts right
+// are all of uints). (With int and uint as GLSL's: see AS_GLSL. Division is
+// the writer's to say: JavaScript's is not whole. Like arrays, it rewrites
+// the text's comments too.)
+export const unsigned = (text) => text.replace(/\b(0x[0-9a-f]+|\d+)u\b/gi, '$1').replace(/(?<!>)>>(?!>)/g, '>>>');

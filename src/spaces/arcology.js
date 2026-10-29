@@ -863,10 +863,10 @@ export function makeArcology(set) {
   const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
   // A cell's plan and its density (by its cluster, two cells square), by its hashes.
   function townCell() {
-    const hc = hashCell([fdiv(cellB[0], 2), fdiv(cellB[2], 2), 9], TOWN_SALT), hl = hashCell([cellB[0], cellB[2], 11], TOWN_SALT);
+    const hc = hashCell([fdiv(CELL.b[0], 2), fdiv(CELL.b[2], 2), 9], TOWN_SALT), hl = hashCell([CELL.b[0], CELL.b[2], 11], TOWN_SALT);
     return { dens: TOWN_DENSITY[hc % TOWN_DENSITY.length], plan: TOWN_PLANS[TOWN_PICK[hl % TOWN_PICK.length]] };
   }
-  const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_SALT);
+  const lotHash = (n, salt) => hashCell([CELL.b[0] * 16 + n, CELL.b[2], salt], TOWN_SALT);
   const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
   const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   // (For the checks in .claude/verify.)
@@ -1052,6 +1052,34 @@ export function makeArcology(set) {
 
   const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
 
+  // The openings' tables (see WINDOWS and GRIDS, and the shader's
+  // declarations of them), as rows that both languages read: the faces with
+  // openings, their grids, and the solids' planes in one list (SOLID_PL, each
+  // solid's at SOLID_AT: first, how many). (A row of nothing where there are
+  // none, as the shader needs one.)
+  const rowsOf = (list, none, row) => (list.length ? list : [none]).map(row);
+  const OPEN_ROWS = {
+    WHT: rowsOf(WINDOWS, { h: { k: 0, sign: 1 }, t: { k: 0, sign: 1 } }, (W) => [W.h.k, W.h.sign, W.t.k, W.t.sign]),
+    WKA: rowsOf(WINDOWS, { K: 0, alpha: 1 }, (W) => [W.K, W.alpha]),
+    WH: rowsOf(WINDOWS, { hv: [1, 0, 0] }, (W) => W.hv),
+    WT: rowsOf(WINDOWS, { tv: [0, 0, 1] }, (W) => W.tv),
+    WLEN: rowsOf(WINDOWS, { len: 1 }, (W) => W.len),
+    WGR: rowsOf(WINDOWS, { g0: 0, ng: 0 }, (W) => [W.g0, W.ng]),
+    GGRID: rowsOf(GRIDS, { pu: 1, wu: 1, dw: 1, ch: 0 }, (g) => [g.pu, g.wu, g.dw, g.ch]),
+    GUP: rowsOf(GRIDS, { ph: 0, py: 1, hy: 1, yb: 0 }, (g) => [g.ph, g.py, g.hy, g.yb]),
+    GVAR: rowsOf(GRIDS, { vary: [0, 0, 0, 0] }, (g) => g.vary),
+    GVB: rowsOf(GRIDS, { varyB: [0, 0, 0, 0] }, (g) => g.varyB),
+    GSCALE: rowsOf(GRIDS, { scale: 1 }, (g) => g.scale),
+    SOLID_PL: SOLID_PL.flat(),
+    SOLID_AT: SOLID_PL.map((pl, i) => [SOLID_PL.slice(0, i).flat().length, pl.length]),
+    SOLID_YIELDS: YIELDS,
+    SOLID_KEEP: SOLIDS.map((s) => s.keep ?? 0),
+    WFIRST: SOLIDS.map((s) => s.wfirst ?? 0),
+  };
+  // (A table's GLSL declaration: its type, and each row's.)
+  const table = (type, name, n, row) => `const ${type} ${name}[${n}] = ${type}[${n}](${OPEN_ROWS[name].map(row).join(', ')});`;
+  const vrow = (type) => (r) => `${type}(${r.join(', ')})`;
+
   // The city's own pieces, in either language (js: true, or GLSL), written
   // once: where the middle city cell is (fromMiddle); each of the
   // building's solids from its planes (upright or along a slant: see
@@ -1152,10 +1180,293 @@ export function makeArcology(set) {
       '  return max(e, 0.0);',
       '}',
     ];
-    const text = (lines) => (js ? twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'own', 'up', 'SLO[k]', 'SHI[k]', 'VOL_LO', 'VOL_SIZE']) : lines.join('\n'));
+    const text = (lines) => (js ? twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'own', 'up', 'VOL_LO', 'VOL_SIZE']) : lines.join('\n'));
     return { middle: text(middle), solids: text([...solids, solid]), plaza: text(plaza), ground: text(ground) };
   }
-  const CITY_GLSL = cityPieces(false);
+  // The openings, in either language (js: true, or GLSL), written once from
+  // their tables (OPEN_ROWS): which sides a cell's openings run on across
+  // (runsOn, openLo, openHi), how far outside a solid the point is
+  // (solidOut), one face's openings (windowAir), and a cell's (openings).
+  // (The JavaScript's, made into functions below; the cell's state, CELL,
+  // as relief, reliefCell, eachPiece and windowAir set it.)
+  function openingsPieces(js) {
+    // (Where the languages differ: what twin.writer writes; the cell's state
+    // (gCellB and the rest, or CELL); the point along a slant; vectors (a
+    // vec3, or an array: as a call's arguments, negated, of a table's row,
+    // a dot product); the slots' arrays (declared, or empty); a ray's reach
+    // and normal (inout, or an object, o for each slot, read back into rs
+    // and ns); a whole number divided (idiv: truncated in both); and the
+    // fade with distance, the shader's alone (the JavaScript's world is as
+    // it is: see pieces.js). Otherwise the text is both's: in JavaScript
+    // float, int, uint, ceil, min and max are as GLSL has them, vectors are
+    // arrays, and whole numbers are as twin.unsigned makes them.)
+    const { fn, decl, loop, D, X, RAY } = twin.writer(js);
+    const [CELLB, OPEN, CROSS, AXIS, IN, OUT] = js ? ['CELL.b', 'CELL.open', 'CELL.cross', 'CELL.axis', 'S.in', 'S.out'] : ['gCellB', 'gCarveOpen', 'gCarveCross', 'gAxis', 'gIn', 'gOut'];
+    const ZERO = js ? '[0, 0, 0]' : 'vec3(0.0)', IN_N = js ? '[S.inx, S.iny, S.inz]' : 'gInN';
+    const xyz = (v) => (js ? v : `${v}.xyz`), neg = (v) => (js ? `[-${v}[0], -${v}[1], -${v}[2]]` : `-${v}`);
+    const arg = (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`);
+    const dot = (v, w) => (js ? `(${[0, 1, 2].map((a) => `${v}[${a}] * ${w === 'gDir' ? `S.d${'xyz'[a]}` : `${w}[${a}]`}`).join(' + ')})` : `dot(${v}.xyz, ${w})`);
+    const fade = (...lines) => (js ? [] : lines);
+    const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
+    // (The ray's reach and normal kept, where it goes further.)
+    const keep = (x, n) => (js ? `if (ray && ${x} > ray.reach) { ray.reach = ${x}; [ray.nx, ray.ny, ray.nz] = ${n}; }` : `if (${x} > reach) { reach = ${x}; nrm = ${n}; }`);
+    const ins = (lines, by = '  ') => lines.map((l) => by + l);
+    // (A loop of one statement, without braces.)
+    const each = (v, from, to) => loop(v, from, to).slice(0, -2);
+
+    const cell = [
+      fn('bool', 'runsOn', ['int a', 'uint side']) + ` return (${OPEN} & (side << uint(2 * a))) != 0u && (${AXIS} < 0 || ${AXIS} == a); }`,
+      fn('int', 'openLo', ['int a']) + ' return runsOn(a, 2u) ? -R : 0; }',
+      fn('int', 'openHi', ['int a']) + ' return runsOn(a, 1u) ? 2 * R : R; }',
+    ];
+    const solidOut = [
+      '// How far outside solid i the point q is (cells from the building\'s origin;',
+      '// inside, less than 0): the most of its planes\'.',
+      fn('float', 'solidOut', ['int i', 'vec3 q']),
+      '  ' + decl('float', 's = -1e9', true),
+      `  ${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} s = max(s, ${dot('SOLID_PL[k]', 'q')} - SOLID_PL[k].w);`,
+      '  return s;',
+      '}',
+    ];
+
+    const windowAir = [
+      "// Face j's openings where the point is: in each of its grids, the opening",
+      "// of its square of the grid (GGRID along, GUP up), from GGRID's deep behind",
+      "// the face to a unit past it, and its channel (GGRID's channel deep, all the",
+      "// way up); or, varying (GVAR), its segment's opening; within the cell or a",
+      '// cell past each side in gCarveOpen (as one piece or three: see runsOn); and',
+      '// where the point is in',
+      "// none, how far off its square's edges are (the other openings are beyond",
+      "// them; its channel is one piece up the cell).",
+      js ? 'function windowAir(j, L, f, d, ray) {' : 'float windowAir(int j, ivec3 L, vec3 f, float d, bool ray, inout float reach, inout vec3 nrm) {',
+      ...ins([
+        js ? 'const base = [CELL.b[0] * R, CELL.b[1] * R, CELL.b[2] * R];' : 'ivec3 base = gCellB * R;',
+        decl('ivec4', 'ht = WHT[j]'),
+        ...(js
+          ? ['let u = SL.Ls[ht.z], w = SL.Ls[ht.x];', 'const fu = float(ht.w) * SL.Fs[ht.z], fw = float(ht.y) * SL.Fs[ht.x];']
+          : ['int u, w;', 'float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);']),
+        'u = ht.w * u + WT[j].x * base.x + WT[j].z * base.z;',
+        'w = ht.y * w + WH[j].x * base.x + WH[j].z * base.z;',
+        decl('int', `y = base.y + L.y - ${GROUND * R}`),
+        decl('float', 'len = WLEN[j], inv = 1.0 / len'),
+        decl('int', 'K = WKA[j].x * R, a = WKA[j].y'),
+        decl('int', 'outer = -fdiv(-K, a) + int(ceil(len))'),
+        `${RAY} = false;`,
+        decl('float', 'gw = 1e9, cap = 1e9', true),
+        ...fade(
+          '// (With distance an opening fades by getting shallower, as the relief',
+          '// does (see facePocket): as its level does, or sooner, at its own size.)',
+          'float fo = gO, fa = gA;',
+          'gO = 0.0; gA = 0.0;',
+        ),
+        decl('int', `pieces = ${CROSS} ? 3 : 1`),
+        loop('k', 'WGR[j].x', 'WGR[j].x + WGR[j].y'),
+        ...ins([
+          decl('ivec4', 'g = GGRID[k], gu = GUP[k], gv = GVAR[k], gb = GVB[k]'),
+          decl('int', 'cy = fdiv(y - gu.w - (f.y < 0.0 ? 1 : 0), gu.y), y0 = gu.w + cy * gu.y'),
+          "// (Segments' rows are shifted along, each by its own whole number of cuts.)",
+          decl('int', `sh = gv.x == 1 ? fdiv(gv.z * int(hashCell(${js ? '[cy, k, 0]' : 'ivec3(cy, k, 0)'}, SEGMENT_SALT ^ 1u) % uint(${idiv('gv.y', 'gv.z')})) * g.x, gv.y) : 0`),
+          decl('int', 'cu = fdiv(u - gu.x - sh - (fu < 0.0 ? 1 : 0), g.x), u0 = gu.x + sh + cu * g.x'),
+          'cap = min(cap, min(min(float(u - u0) + fu, float(u0 + g.x - u) - fu) * inv, min(float(y - y0) + f.y, float(y0 + gu.y - y) - f.y)));',
+          "// (A segment's opening: where along, how wide and deep, in its units",
+          '// (gv.y to the block).)',
+          decl('int', 'vo = 0, vw = 0, vd = 0, jb = 0, jt = 0', true),
+          'if (gv.x == 1) {',
+          ...ins([
+            '// (The segment of its block the point is in, between the block\'s',
+            '// cuts, sorted; its opening inset from both ends, or none.)',
+            decl('uint', `h = hashCell(${js ? '[cu, cy, k]' : 'ivec3(cu, cy, k)'}, SEGMENT_SALT)`),
+            decl('int', `n = ${idiv('gv.y', 'gv.z')} - 1`),
+            decl('int', 'c1 = gv.z * (1 + int(h % uint(n))), c2 = gv.z * (1 + int((h >> 10u) % uint(n))), c3 = gv.z * (1 + int((h >> 20u) % uint(n)))', true),
+            `${decl('int', 't = min(c1, c2)', true)} c2 = max(c1, c2); c1 = t;`,
+            't = min(c2, c3); c3 = max(c2, c3); c2 = t;',
+            't = min(c1, c2); c2 = max(c1, c2); c1 = t;',
+            decl('float', 'p = float(u - u0) + fu'),
+            decl('int', 'A = 0, B = c1, i = 0', true),
+            'if (p >= float(fdiv(c1 * g.x, gv.y))) { A = c1; B = c2; i = 1; }',
+            'if (p >= float(fdiv(c2 * g.x, gv.y))) { A = c2; B = c3; i = 2; }',
+            'if (p >= float(fdiv(c3 * g.x, gv.y))) { A = c3; B = gv.y; i = 3; }',
+            'cap = min(cap, min(p - float(fdiv(A * g.x, gv.y)), float(fdiv(B * g.x, gv.y)) - p) * inv);',
+            decl('uint', `hs = hashCell(${js ? '[cu, 4 * cy + i, k]' : 'ivec3(cu, 4 * cy + i, k)'}, SEGMENT_SALT ^ 2u)`),
+            'vo = A + gv.w;',
+            'vw = B - A - 2 * gv.w;',
+            'vd = int(hs % 100u) < gb.z ? 0 : gb.x + int((hs >> 8u) % uint(gb.y - gb.x + 1));',
+            'if (gb.w > 0) {',
+            ...ins([
+              '// (J is not known when compiled: were it, (hv >> 16u) % J would meet',
+              "// ledger B20's compiler fault. Keep it so, or the shift elsewhere.)",
+              decl('uint', `hv = hashCell(${js ? '[cu, 4 * cy + i, k]' : 'ivec3(cu, 4 * cy + i, k)'}, SEGMENT_SALT ^ 3u), J = uint(gb.w + 1)`),
+              'jb = int(hv % J); jt = int((hv >> 8u) % J);',
+              decl('int', 'jl = int((hv >> 16u) % J), jr = int((hv >> 24u) % J)'),
+              'vo += jl; vw -= jl + jr;',
+            ]),
+            '}',
+          ]),
+          '}',
+          "// (The opening, then its channel, if any; a segment's, if any.)",
+          `${loop('c', 0, '(gv.x == 1 ? (vd > 0 ? 1 : 0) : g.w > 0 ? 2 : 1)')}`,
+          ...ins([
+            js ? 'let ua, ub, ya, yb, back;' : 'int ua, ub, ya, yb, back;',
+            'if (gv.x == 1) {',
+            ...ins([
+              'ua = u0 + fdiv(vo * g.x, gv.y);',
+              'ub = u0 + fdiv((vo + vw) * g.x, gv.y);',
+              'back = fdiv(K, a) - fdiv(vd * g.x, gv.y);',
+              'ya = y0 + jb;',
+              'yb = y0 + gu.z - jt;',
+            ]),
+            '} else {',
+            ...ins([
+              'ua = u0;',
+              'ub = u0 + g.y;',
+              'back = fdiv(K, a) - (c == 0 ? g.z : g.w);',
+              `ya = c == 0 ? y0 : -${FAR};`,
+              `yb = c == 0 ? y0 + gu.z : ${FAR};`,
+            ]),
+            '}',
+            'if (gv.x == 1 && ub - ua < fdiv(2 * g.x, gv.y)) continue;',
+            ...fade(
+              'float fz = (float(K) / float(a) - float(back)) * inv;',
+              "// (Its fade: as its level's, or at its own size, sooner (GSCALE: 1 for",
+              '// as the level); for a ray, going no slower than it may in the step.)',
+              'float own = (gScale / GSCALE[k] - 1.0 / LOD_HI) * LOD_K;',
+              'float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate / GSCALE[k] : 0.0;',
+            ),
+            js ? 'const tn = [WT[j][0] * inv, WT[j][1] * inv, WT[j][2] * inv], hn = [WH[j][0] * inv, WH[j][1] * inv, WH[j][2] * inv];' : 'vec3 tn = vec3(WT[j]) * inv, hn = vec3(WH[j]) * inv;',
+            loop('p', 0, 'pieces'),
+            ...ins([
+              `${AXIS} = pieces == 1 ? -1 : p;`,
+              loop('pass', 0, 2),
+              ...ins([
+                'airPiece();',
+                `airPlane((float(ua - u) - fu) * inv, ${arg('tn', '-')});`,
+                `airPlane((float(u - ub) + fu) * inv, ${arg('tn')});`,
+                ...fade('gA = fq * fz;'),
+                `airPlane((float(back - w) - fw) * inv${js ? '' : ' + fp * fz'}, ${arg('hn', '-')});`,
+                ...fade('gA = 0.0;'),
+                `airPlane((float(w - outer) + fw) * inv, ${arg('hn')});`,
+                ...twin.planes(js, 'air', [
+                  { span: ['L.y', 'f.y', `max(ya + ${GROUND * R} - base.y, openLo(1))`, `min(yb + ${GROUND * R} - base.y, openHi(1))`, 1] },
+                  { span: ['L.x', 'f.x', 'openLo(0)', 'openHi(0)', 0] },
+                  { span: ['L.z', 'f.z', 'openLo(2)', 'openHi(2)', 2] },
+                ]),
+                'if (pass == 0) {',
+                ...ins([decl('float', `gd = ${D}`), 'gw = min(gw, gd);', `if (!ray || gd${js ? '' : ' + gO'} > 0.0) break;`, `${RAY} = true;`]),
+                '} else {',
+                ...ins([`${RAY} = false;`, keepX()]),
+                '}',
+              ]),
+              '}',
+            ]),
+            '}',
+          ]),
+          '}',
+        ]),
+        '}',
+        `${AXIS} = -1;`,
+        ...fade('gO = fo; gA = fa;'),
+        'return min(min(d, gw), max(cap, 0.0));',
+      ]),
+      '}',
+    ];
+    // (In windowAir, the ray's reach where it leaves the piece.)
+    function keepX() {
+      return js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : `if (${X} > reach) { reach = ${X}; nrm = gN; }`;
+    }
+
+    const openings = [
+      '// The openings in a plain or skin cell (see VOLUME in the JS): of each',
+      '// solid in its entry (WIN_AT, in m.z), those of each face in its mask,',
+      '// stopped at the other solids in CLIP outside it (at another with openings',
+      '// here, only where that is not open itself: so that two solids\' openings',
+      '// meeting overlap, and leave no sheet between them); for a ray, the furthest',
+      '// it runs in them (reach, nrm). A ray in a solid\'s openings stops at the',
+      '// first of another\'s way that is outside it: where it goes in, or else where',
+      '// it leaves the solid (sooner than it might, in another\'s openings: they',
+      '// carry it on from there). (They run on as gCarveOpen and gCarveCross say:',
+      '// set from m.w for them.)',
+      js ? 'function openings(L, f, m, ray) {' : 'float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3 nrm) {',
+      ...ins([
+        js ? 'const q = [CELL.b[0] + (L[0] + f[0]) / R, CELL.b[1] + (L[1] + f[1]) / R, CELL.b[2] + (L[2] + f[2]) / R];' : 'vec3 q = vec3(gCellB) + (vec3(L) + f) / float(R);',
+        decl('float', `a = 1e9${js ? '' : ', fo = gO, fa = gA'}`, true),
+        "// (Each solid's openings as they are, first.)",
+        ...(js ? [`const ms = [], bs = [], rs = [], ns = [];`] : [`int ms[${WIN_AT.length}];`, `float bs[${WIN_AT.length}], rs[${WIN_AT.length}];`, `vec3 ns[${WIN_AT.length}];`]),
+        loop('s', 0, WIN_AT.length),
+        ...ins([
+          decl('uint', `w = (m.z >> uint(s * WIN_BITS)) & ${(1 << WIN_BITS) - 1}u`),
+          `ms[s] = int(w & ${(1 << SOLID_BITS) - 1}u) - 1;`,
+          `bs[s] = 1e9; rs[s] = -1.0; ns[s] = ${ZERO};`,
+          ...(js ? ['const o = { reach: -1, nx: 0, ny: 0, nz: 0 };'] : []),
+          'if (ms[s] >= 0)',
+          `  ${js ? 'for (let' : 'for (uint'} k = w >> uint(SOLID_BITS); k != 0u; k &= k - 1u) bs[s] = windowAir(WFIRST[ms[s]] + lowBit(k), L, f, bs[s], ${js ? 'ray && o' : 'ray, rs[s], ns[s]'});`,
+          ...(js ? ['rs[s] = o.reach; ns[s] = [o.nx, o.ny, o.nz];'] : []),
+        ]),
+        '}',
+        loop('s', 0, WIN_AT.length),
+        ...ins([
+          decl('int', 'me = ms[s]'),
+          'if (me < 0) continue;',
+          decl('float', 'b = bs[s], r = rs[s]', true),
+          decl('vec3', 'rn = ns[s]', true),
+          decl('float', 'own = solidOut(me, q)'),
+          decl('bool', 'rays = ray && r >= 0.0'),
+          '// (Where the ray leaves the solid, and that plane\'s normal.)',
+          decl('float', 'oIn = -1e30, oOut = 1e30', true),
+          decl('vec3', `oN = ${ZERO}`, true),
+          'if (rays) {',
+          ...ins([
+            ...fade('gO = 0.0; gA = 0.0;'),
+            loop('k', 'SOLID_AT[me].x', 'SOLID_AT[me].x + SOLID_AT[me].y'),
+            ...ins([
+              decl('float', `rd = ${dot('SOLID_PL[k]', 'gDir')}, g = (${dot('SOLID_PL[k]', 'q')} - SOLID_PL[k].w) * float(R)`),
+              `if (rd > 0.0 && -g / rd < oOut) { oOut = -g / rd; oN = ${xyz('SOLID_PL[k]')}; }`,
+              'else if (rd < 0.0) oIn = max(oIn, g / -rd);',
+              'else if (rd == 0.0 && g > 0.0) oOut = -1e30;',
+            ]),
+            '}',
+          ]),
+          '}',
+          `${js ? 'for (let' : 'for (uint'} c = m.y & ${(1 << CROSS_AT) - 1}u; c != 0u; c >>= uint(SOLID_BITS)) {`,
+          ...ins([
+            decl('int', `i = int(c & ${(1 << SOLID_BITS) - 1}u) - 1`),
+            'if (i == me) continue;',
+            decl('bool', 'through = ((SOLID_YIELDS[i] >> uint(me)) & 1u) != 0u'),
+            decl('float', 'inside = (SOLID_KEEP[i] - solidOut(i, q)) * float(R), ri = -1.0', true),
+            decl('vec3', `rin = ${ZERO}`, true),
+            `${each('t', 0, WIN_AT.length)} if (ms[t] == i) {`,
+            '  inside = min(inside, bs[t]);',
+            '  if (rs[t] > ri) { ri = rs[t]; rin = ns[t]; }',
+            '}',
+            'b = max(b, through ? min(inside, own * float(R)) : inside);',
+            'if (rays) {',
+            ...ins([
+              'solidBegin();',
+              `${each('k', 'SOLID_AT[i].x', 'SOLID_AT[i].x + SOLID_AT[i].y')} solidFace((${dot('SOLID_PL[k]', 'q')} - SOLID_PL[k].w - SOLID_KEEP[i]) * float(R), ${arg(js ? 'SOLID_PL[k]' : 'SOLID_PL[k].xyz')});`,
+              decl('float', `x = max(${IN}, 0.0)`, true),
+              decl('vec3', `n = ${IN_N}`, true),
+              `if (through && x >= oIn && x < oOut) { x = oOut; n = ${neg('oN')}; }`,
+              '// (Inside it here: air only in its own openings, as the distance',
+              '// says, and as far as the ray stays in them.)',
+              'else if (x == 0.0 && ri >= 0.0) { x = ri; n = rin; }',
+              `if (x < ${OUT} && x < r) { r = x > 0.0 ? x : -1.0; rn = n; }`,
+            ]),
+            '}',
+          ]),
+          '}',
+          ...fade('gO = fo; gA = fa;'),
+          'a = min(a, b);',
+          keep('r', 'rn'),
+        ]),
+        '}',
+        'return a;',
+      ]),
+      '}',
+    ];
+    // (In JavaScript, vectors are arrays, and whole numbers as it has them.)
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'm', 'base', 'ht', 'g', 'gu', 'gv', 'gb'])) : lines.join('\n'));
+    return { cell: text(cell), solidOut: text(solidOut), windowAir: text(windowAir), openings: text(openings) };
+  }
+  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false);
 
   const glsl = /* glsl */ `
 const int G = ${G};
@@ -1248,22 +1559,22 @@ const float DMAX = ${glf(DMAX)}, BAND_IN = ${glf(BAND_IN)}, BAND_OUT = ${glf(BAN
 // alpha (w = h . Y < K R / alpha inside); len; and their grids (WGR: the
 // first, how many).
 const int NW = ${Math.max(WINDOWS.length, 1)};
-const ivec4 WHT[NW] = ivec4[NW](${(WINDOWS.length ? WINDOWS : [{ h: { k: 0, sign: 1 }, t: { k: 0, sign: 1 } }]).map((W) => `ivec4(${W.h.k}, ${W.h.sign}, ${W.t.k}, ${W.t.sign})`).join(', ')});
-const ivec2 WKA[NW] = ivec2[NW](${(WINDOWS.length ? WINDOWS : [{ K: 0, alpha: 1 }]).map((W) => `ivec2(${W.K}, ${W.alpha})`).join(', ')});
-const ivec3 WH[NW] = ivec3[NW](${ivecs((WINDOWS.length ? WINDOWS : [{ hv: [1, 0, 0] }]).map((W) => W.hv))});
-const ivec3 WT[NW] = ivec3[NW](${ivecs((WINDOWS.length ? WINDOWS : [{ tv: [0, 0, 1] }]).map((W) => W.tv))});
-const float WLEN[NW] = float[NW](${(WINDOWS.length ? WINDOWS : [{ len: 1 }]).map((W) => glf(W.len)).join(', ')});
-const ivec2 WGR[NW] = ivec2[NW](${(WINDOWS.length ? WINDOWS : [{ g0: 0, ng: 0 }]).map((W) => `ivec2(${W.g0}, ${W.ng})`).join(', ')});
+${table('ivec4', 'WHT', 'NW', vrow('ivec4'))}
+${table('ivec2', 'WKA', 'NW', vrow('ivec2'))}
+${table('ivec3', 'WH', 'NW', vrow('ivec3'))}
+${table('ivec3', 'WT', 'NW', vrow('ivec3'))}
+${table('float', 'WLEN', 'NW', glf)}
+${table('ivec2', 'WGR', 'NW', vrow('ivec2'))}
 // Each grid (see GRIDS): pitch and width along (in u), the openings' depth
 // and the channel's (in w); where an opening starts along, the pitch up, its
 // height and where a row starts (GUP).
 const int NG = ${Math.max(GRIDS.length, 1)};
-const ivec4 GGRID[NG] = ivec4[NG](${(GRIDS.length ? GRIDS : [{ pu: 1, wu: 1, dw: 1, ch: 0 }]).map((g) => `ivec4(${g.pu}, ${g.wu}, ${g.dw}, ${g.ch})`).join(', ')});
-const ivec4 GUP[NG] = ivec4[NG](${(GRIDS.length ? GRIDS : [{ ph: 0, py: 1, hy: 1, yb: 0 }]).map((g) => `ivec4(${g.ph}, ${g.py}, ${g.hy}, ${g.yb})`).join(', ')});
+${table('ivec4', 'GGRID', 'NG', vrow('ivec4'))}
+${table('ivec4', 'GUP', 'NG', vrow('ivec4'))}
 // (And how it varies, and the sizes it fades at: see GRIDS.)
-const ivec4 GVAR[NG] = ivec4[NG](${(GRIDS.length ? GRIDS : [{ vary: [0, 0, 0, 0] }]).map((g) => `ivec4(${g.vary.join(', ')})`).join(', ')});
-const ivec4 GVB[NG] = ivec4[NG](${(GRIDS.length ? GRIDS : [{ varyB: [0, 0, 0, 0] }]).map((g) => `ivec4(${g.varyB.join(', ')})`).join(', ')});
-const float GSCALE[NG] = float[NG](${(GRIDS.length ? GRIDS : [{ scale: 1 }]).map((g) => glf(g.scale)).join(', ')});
+${table('ivec4', 'GVAR', 'NG', vrow('ivec4'))}
+${table('ivec4', 'GVB', 'NG', vrow('ivec4'))}
+${table('float', 'GSCALE', 'NG', glf)}
 const uint SEGMENT_SALT = ${SEGMENT_SALT}u;
 const int WIN_BITS = ${WIN_BITS};
 // Each face's mass's bounds, from the building's origin, in cells.
@@ -1275,24 +1586,18 @@ const ivec3 BARE_HI[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[1]))});
 // (Their indices in SOLIDS: their planes are SOLID_PL's.)
 const int BARE_ID[NBARE] = int[NBARE](${BARE.map((s) => SOLIDS.indexOf(s)).join(', ')});
 // Every solid's planes (SOLID_PL in the JS), and where each one's are (first, how many).
-const vec4 SOLID_PL[${SOLID_PL.flat().length}] = vec4[${SOLID_PL.flat().length}](${SOLID_PL.flat().map((p) => `vec4(${p.map(glf).join(', ')})`).join(', ')});
-const ivec2 SOLID_AT[${SOLIDS.length}] = ivec2[${SOLIDS.length}](${SOLID_PL.map((pl, i) => `ivec2(${SOLID_PL.slice(0, i).flat().length}, ${pl.length})`).join(', ')});
+${table('vec4', 'SOLID_PL', OPEN_ROWS.SOLID_PL.length, (p) => `vec4(${p.map(glf).join(', ')})`)}
+${table('ivec2', 'SOLID_AT', SOLIDS.length, vrow('ivec2'))}
 const int SOLID_BITS = ${SOLID_BITS};
 // Whose openings cut through each solid inside their own, as bits by solid
 // (YIELDS in the JS); everyone else's stop at it.
-const uint SOLID_YIELDS[${SOLIDS.length}] = uint[${SOLIDS.length}](${YIELDS.map((m) => m + 'u').join(', ')});
+${table('uint', 'SOLID_YIELDS', SOLIDS.length, (m) => m + 'u')}
 // How far clear of each solid others' openings stop (cells: a pillar's
 // bearing, say).
-const float SOLID_KEEP[${SOLIDS.length}] = float[${SOLIDS.length}](${SOLIDS.map((s) => glf(s.keep ?? 0)).join(', ')});
+${table('float', 'SOLID_KEEP', SOLIDS.length, glf)}
 // Each solid's first face with openings (its index in WINDOWS).
-const int WFIRST[${SOLIDS.length}] = int[${SOLIDS.length}](${SOLIDS.map((s) => s.wfirst ?? 0).join(', ')});
-// How far outside solid i the point q is (cells from the building's origin;
-// inside, less than 0): the most of its planes'.
-float solidOut(int i, vec3 q) {
-  float s = -1e9;
-  for (int k = SOLID_AT[i].x; k < SOLID_AT[i].x + SOLID_AT[i].y; k++) s = max(s, dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w);
-  return s;
-}
+${table('int', 'WFIRST', SOLIDS.length, String)}
+${OPEN_GLSL.solidOut}
 
 ${CITY_GLSL.middle}
 // Where the halls may have rooms (see spaceRoom in halls.js): not in the
@@ -1494,9 +1799,7 @@ void depthOut(int k, int S, int ni, float nf) {
 uint gCarveOpen;
 bool gCarveCross;
 int gAxis;
-bool runsOn(int a, uint side) { return (gCarveOpen & (side << uint(2 * a))) != 0u && (gAxis < 0 || gAxis == a); }
-int openLo(int a) { return runsOn(a, 2u) ? -R : 0; }
-int openHi(int a) { return runsOn(a, 1u) ? 2 * R : R; }
+${OPEN_GLSL.cell}
 void heights(int lv, ivec3 L, vec3 f, ivec3 base, int lo4, int hi4) {
   if (lv == 1) {
     airSpan(L.y, f.y, max(lo4 * R / 4 - base.y, openLo(1)), min(hi4 * R / 4 - base.y, openHi(1)), EY);
@@ -1722,196 +2025,9 @@ uint cityFaces(ivec3 L, vec3 f, ivec3 o) {
   return near;
 }
 
-// Face j's openings where the point is: in each of its grids, the opening
-// of its square of the grid (GGRID along, GUP up), from GGRID's deep behind
-// the face to a unit past it, and its channel (GGRID's channel deep, all the
-// way up); or, varying (GVAR), its segment's opening; within the cell or a
-// cell past each side in gCarveOpen (as one piece or three: see runsOn); and
-// where the point is in
-// none, how far off its square's edges are (the other openings are beyond
-// them; its channel is one piece up the cell).
-float windowAir(int j, ivec3 L, vec3 f, float d, bool ray, inout float reach, inout vec3 nrm) {
-  ivec3 base = gCellB * R;
-  ivec4 ht = WHT[j];
-  int u, w;
-  float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);
-  u = ht.w * u + WT[j].x * base.x + WT[j].z * base.z;
-  w = ht.y * w + WH[j].x * base.x + WH[j].z * base.z;
-  int y = base.y + L.y - ${GROUND * R};
-  float len = WLEN[j], inv = 1.0 / len;
-  int K = WKA[j].x * R, a = WKA[j].y;
-  int outer = -fdiv(-K, a) + int(ceil(len));
-  gRay = false;
-  float gw = 1e9, cap = 1e9;
-  // (With distance an opening fades by getting shallower, as the relief
-  // does (see facePocket): as its level does, or sooner, at its own size.)
-  float fo = gO, fa = gA;
-  gO = 0.0; gA = 0.0;
-  int pieces = gCarveCross ? 3 : 1;
-  for (int k = WGR[j].x; k < WGR[j].x + WGR[j].y; k++) {
-    ivec4 g = GGRID[k], gu = GUP[k], gv = GVAR[k], gb = GVB[k];
-    int cy = fdiv(y - gu.w - (f.y < 0.0 ? 1 : 0), gu.y), y0 = gu.w + cy * gu.y;
-    // (Segments' rows are shifted along, each by its own whole number of cuts.)
-    int sh = gv.x == 1 ? fdiv(gv.z * int(hashCell(ivec3(cy, k, 0), SEGMENT_SALT ^ 1u) % uint(gv.y / gv.z)) * g.x, gv.y) : 0;
-    int cu = fdiv(u - gu.x - sh - (fu < 0.0 ? 1 : 0), g.x), u0 = gu.x + sh + cu * g.x;
-    cap = min(cap, min(min(float(u - u0) + fu, float(u0 + g.x - u) - fu) * inv, min(float(y - y0) + f.y, float(y0 + gu.y - y) - f.y)));
-    // (A segment's opening: where along, how wide and deep, in its units
-    // (gv.y to the block).)
-    int vo = 0, vw = 0, vd = 0, jb = 0, jt = 0;
-    if (gv.x == 1) {
-      // (The segment of its block the point is in, between the block's
-      // cuts, sorted; its opening inset from both ends, or none.)
-      uint h = hashCell(ivec3(cu, cy, k), SEGMENT_SALT);
-      int n = gv.y / gv.z - 1;
-      int c1 = gv.z * (1 + int(h % uint(n))), c2 = gv.z * (1 + int((h >> 10u) % uint(n))), c3 = gv.z * (1 + int((h >> 20u) % uint(n)));
-      int t = min(c1, c2); c2 = max(c1, c2); c1 = t;
-      t = min(c2, c3); c3 = max(c2, c3); c2 = t;
-      t = min(c1, c2); c2 = max(c1, c2); c1 = t;
-      float p = float(u - u0) + fu;
-      int A = 0, B = c1, i = 0;
-      if (p >= float(fdiv(c1 * g.x, gv.y))) { A = c1; B = c2; i = 1; }
-      if (p >= float(fdiv(c2 * g.x, gv.y))) { A = c2; B = c3; i = 2; }
-      if (p >= float(fdiv(c3 * g.x, gv.y))) { A = c3; B = gv.y; i = 3; }
-      cap = min(cap, min(p - float(fdiv(A * g.x, gv.y)), float(fdiv(B * g.x, gv.y)) - p) * inv);
-      uint hs = hashCell(ivec3(cu, 4 * cy + i, k), SEGMENT_SALT ^ 2u);
-      vo = A + gv.w;
-      vw = B - A - 2 * gv.w;
-      vd = int(hs % 100u) < gb.z ? 0 : gb.x + int((hs >> 8u) % uint(gb.y - gb.x + 1));
-      if (gb.w > 0) {
-        // (J is not known when compiled: were it, (hv >> 16u) % J would meet
-        // ledger B20's compiler fault. Keep it so, or the shift elsewhere.)
-        uint hv = hashCell(ivec3(cu, 4 * cy + i, k), SEGMENT_SALT ^ 3u), J = uint(gb.w + 1);
-        jb = int(hv % J); jt = int((hv >> 8u) % J);
-        int jl = int((hv >> 16u) % J), jr = int((hv >> 24u) % J);
-        vo += jl; vw -= jl + jr;
-      }
-    }
-    // (The opening, then its channel, if any; a segment's, if any.)
-    for (int c = 0; c < (gv.x == 1 ? (vd > 0 ? 1 : 0) : g.w > 0 ? 2 : 1); c++) {
-      int ua, ub, ya, yb, back;
-      if (gv.x == 1) {
-        ua = u0 + fdiv(vo * g.x, gv.y);
-        ub = u0 + fdiv((vo + vw) * g.x, gv.y);
-        back = fdiv(K, a) - fdiv(vd * g.x, gv.y);
-        ya = y0 + jb;
-        yb = y0 + gu.z - jt;
-      } else {
-        ua = u0;
-        ub = u0 + g.y;
-        back = fdiv(K, a) - (c == 0 ? g.z : g.w);
-        ya = c == 0 ? y0 : -${FAR};
-        yb = c == 0 ? y0 + gu.z : ${FAR};
-      }
-      if (gv.x == 1 && ub - ua < fdiv(2 * g.x, gv.y)) continue;
-      float fz = (float(K) / float(a) - float(back)) * inv;
-      // (Its fade: as its level's, or at its own size, sooner (GSCALE: 1 for
-      // as the level); for a ray, going no slower than it may in the step.)
-      float own = (gScale / GSCALE[k] - 1.0 / LOD_HI) * LOD_K;
-      float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate / GSCALE[k] : 0.0;
-      vec3 tn = vec3(WT[j]) * inv, hn = vec3(WH[j]) * inv;
-      for (int p = 0; p < pieces; p++) {
-        gAxis = pieces == 1 ? -1 : p;
-        for (int pass = 0; pass < 2; pass++) {
-          airPiece();
-          airPlane((float(ua - u) - fu) * inv, -tn);
-          airPlane((float(u - ub) + fu) * inv, tn);
-          gA = fq * fz;
-          airPlane((float(back - w) - fw) * inv + fp * fz, -hn);
-          gA = 0.0;
-          airPlane((float(w - outer) + fw) * inv, hn);
-          airSpan(L.y, f.y, max(ya + ${GROUND * R} - base.y, openLo(1)), min(yb + ${GROUND * R} - base.y, openHi(1)), EY);
-          airSpan(L.x, f.x, openLo(0), openHi(0), EX);
-          airSpan(L.z, f.z, openLo(2), openHi(2), EZ);
-          if (pass == 0) {
-            float gd = gD;
-            gw = min(gw, gd);
-            if (!ray || gd + gO > 0.0) break;
-            gRay = true;
-          } else {
-            gRay = false;
-            if (gX > reach) { reach = gX; nrm = gN; }
-          }
-        }
-      }
-    }
-  }
-  gAxis = -1;
-  gO = fo; gA = fa;
-  return min(min(d, gw), max(cap, 0.0));
-}
+${OPEN_GLSL.windowAir}
 
-// The openings in a plain or skin cell (see VOLUME in the JS): of each
-// solid in its entry (WIN_AT, in m.z), those of each face in its mask,
-// stopped at the other solids in CLIP outside it (at another with openings
-// here, only where that is not open itself: so that two solids' openings
-// meeting overlap, and leave no sheet between them); for a ray, the furthest
-// it runs in them (reach, nrm). A ray in a solid's openings stops at the
-// first of another's way that is outside it: where it goes in, or else where
-// it leaves the solid (sooner than it might, in another's openings: they
-// carry it on from there). (They run on as gCarveOpen and gCarveCross say:
-// set from m.w for them.)
-float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3 nrm) {
-  vec3 q = vec3(gCellB) + (vec3(L) + f) / float(R);
-  float a = 1e9, fo = gO, fa = gA;
-  // (Each solid's openings as they are, first.)
-  int ms[${WIN_AT.length}];
-  float bs[${WIN_AT.length}], rs[${WIN_AT.length}];
-  vec3 ns[${WIN_AT.length}];
-  for (int s = 0; s < ${WIN_AT.length}; s++) {
-    uint w = (m.z >> uint(s * WIN_BITS)) & ${(1 << WIN_BITS) - 1}u;
-    ms[s] = int(w & ${(1 << SOLID_BITS) - 1}u) - 1;
-    bs[s] = 1e9; rs[s] = -1.0; ns[s] = vec3(0.0);
-    if (ms[s] >= 0)
-      for (uint k = w >> uint(SOLID_BITS); k != 0u; k &= k - 1u) bs[s] = windowAir(WFIRST[ms[s]] + lowBit(k), L, f, bs[s], ray, rs[s], ns[s]);
-  }
-  for (int s = 0; s < ${WIN_AT.length}; s++) {
-    int me = ms[s];
-    if (me < 0) continue;
-    float b = bs[s], r = rs[s];
-    vec3 rn = ns[s];
-    float own = solidOut(me, q);
-    bool rays = ray && r >= 0.0;
-    // (Where the ray leaves the solid, and that plane's normal.)
-    float oIn = -1e30, oOut = 1e30;
-    vec3 oN = vec3(0.0);
-    if (rays) {
-      gO = 0.0; gA = 0.0;
-      for (int k = SOLID_AT[me].x; k < SOLID_AT[me].x + SOLID_AT[me].y; k++) {
-        float rd = dot(SOLID_PL[k].xyz, gDir), g = (dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w) * float(R);
-        if (rd > 0.0 && -g / rd < oOut) { oOut = -g / rd; oN = SOLID_PL[k].xyz; }
-        else if (rd < 0.0) oIn = max(oIn, g / -rd);
-        else if (rd == 0.0 && g > 0.0) oOut = -1e30;
-      }
-    }
-    for (uint c = m.y & ${(1 << CROSS_AT) - 1}u; c != 0u; c >>= uint(SOLID_BITS)) {
-      int i = int(c & ${(1 << SOLID_BITS) - 1}u) - 1;
-      if (i == me) continue;
-      bool through = ((SOLID_YIELDS[i] >> uint(me)) & 1u) != 0u;
-      float inside = (SOLID_KEEP[i] - solidOut(i, q)) * float(R), ri = -1.0;
-      vec3 rin = vec3(0.0);
-      for (int t = 0; t < ${WIN_AT.length}; t++) if (ms[t] == i) {
-        inside = min(inside, bs[t]);
-        if (rs[t] > ri) { ri = rs[t]; rin = ns[t]; }
-      }
-      b = max(b, through ? min(inside, own * float(R)) : inside);
-      if (rays) {
-        solidBegin();
-        for (int k = SOLID_AT[i].x; k < SOLID_AT[i].x + SOLID_AT[i].y; k++) solidFace((dot(SOLID_PL[k].xyz, q) - SOLID_PL[k].w - SOLID_KEEP[i]) * float(R), SOLID_PL[k].xyz);
-        float x = max(gIn, 0.0);
-        vec3 n = gInN;
-        if (through && x >= oIn && x < oOut) { x = oOut; n = -oN; }
-        // (Inside it here: air only in its own openings, as the distance
-        // says, and as far as the ray stays in them.)
-        else if (x == 0.0 && ri >= 0.0) { x = ri; n = rin; }
-        if (x < gOut && x < r) { r = x > 0.0 ? x : -1.0; rn = n; }
-      }
-    }
-    gO = fo; gA = fa;
-    a = min(a, b);
-    if (r > reach) { reach = r; nrm = rn; }
-  }
-  return a;
-}
+${OPEN_GLSL.openings}
 
 // Box k of a lot r of the town, in units over the cell's corner and the
 // floor (made from the definition's kinds of building: see town.js, as the
@@ -2194,27 +2310,33 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   }
   const wellAir = (L, f, { h }) => slabHole(L, f, -M, G + 1, h, CITY);
 
-  let cellB = [0, 0, 0];
-  // The sides a skin cell's pockets (or a cell's openings) run on
-  // across, whether as three pieces, and which of them is being asked about
-  // (see runOn).
-  let cellOpen = 0, cellCross = false, axis = -1;
-  const runsOn = (a, side) => cellOpen & (side << (2 * a)) && (axis < 0 || axis === a);
-  const openLo = (a) => (runsOn(a, 2) ? -R : 0), openHi = (a) => (runsOn(a, 1) ? 2 * R : R);
+  // The cell of the table being asked about (see relief and reliefCell):
+  // its corner from the building's origin (b); the sides its pockets (or its
+  // openings) run on across (open), whether as three pieces (cross), and
+  // which of them is being asked about (axis: see runsOn). Read by the code
+  // written below, made into functions, as by the rest.
+  const CELL = { b: [0, 0, 0], open: 0, cross: false, axis: -1 };
+
+  // The openings in JavaScript (see openingsPieces), made into functions.
+  const OPEN_JS = openingsPieces(true);
+  const { openLo, openHi, openings } = new Function(
+    'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', ...Object.keys(OPEN_ROWS),
+    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.solidOut}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\nreturn { openLo, openHi, openings };\n//# sourceURL=openingsPieces.gen.js`,
+  )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, ...Object.values(OPEN_ROWS));
   // The least of piece(), called once for each of the pieces (one level finer:
   // three where the cell's pockets run on as three).
   function eachPiece(lv, piece) {
-    if (lv !== 1 || !cellCross) return (axis = -1), piece();
+    if (lv !== 1 || !CELL.cross) return (CELL.axis = -1), piece();
     let d = NONE;
-    for (axis = 0; axis < 3; axis++) d = Math.min(d, piece());
-    axis = -1;
+    for (CELL.axis = 0; CELL.axis < 3; CELL.axis++) d = Math.min(d, piece());
+    CELL.axis = -1;
     return d;
   }
   function relief(id, up) {
     if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0, 0, 0];
     const o = fromMiddle(up), v = [0, 1, 2].map((a) => o[a] + (((id[a] % R) + R) % R) - VOLUME.lo[a]);
     if (v.some((x, a) => x < 0 || x >= VOLUME.size[a])) return [0, 0, 0, 0];
-    cellB = v.map((x, a) => x + VOLUME.lo[a] - ORIGIN[a]);
+    CELL.b = v.map((x, a) => x + VOLUME.lo[a] - ORIGIN[a]);
     const i = WORDS * (v[0] + VOLUME.size[0] * (v[1] + VOLUME.size[1] * v[2]));
     return [VOLUME.data[i], VOLUME.data[i + 1], VOLUME.data[i + 2], VOLUME.data[i + 3]];
   }
@@ -2306,7 +2428,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     P.airPlane(p.Yi - y1 + p.Yf, 0, 1, 0);
   }
   // The true heights lo to hi, and one level finer, the cell or a cell past
-  // each side in cellOpen (see runOn).
+  // each side in CELL.open (see runsOn).
   function within(lv, L, f, lo, hi) {
     P.airSpan(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi, 1);
     if (lv === 1) P.airSpan(L[0], f[0], openLo(0), openHi(0), 0), P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
@@ -2322,7 +2444,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
   // cut as cut says (see cutBack), to a unit past the face, within true
   // heights lo to hi (level units) and, one level finer, within the cell or
-  // a cell past each side in cellOpen (see runOn).
+  // a cell past each side in CELL.open (see runsOn).
   function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, cut, lo, hi, ray) {
     const [tx, ty, tz] = F.tv.map((x) => x / F.len);
     return cutAir(lv, () => {
@@ -2417,7 +2539,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   }
 
   function pockets(L, f, faces, d, ray) {
-    const base = cellB.map((x) => x * R);
+    const base = CELL.b.map((x) => x * R);
     FACES.forEach((F, k) => {
       if (faces & (1 << k)) d = facePocket(1, k, L, f, base, d, ray);
     });
@@ -2473,68 +2595,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return d;
   }
 
-  // See windowAir in the shader. (ray: as in hallsAir, for this solid's
-  // openings alone; see openings.)
-  function windowAir(j, L, f, d, ray) {
-    const W = WINDOWS[j], base = cellB.map((x) => x * R);
-    const u = W.t.sign * SL.Ls[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * SL.Fs[W.t.k];
-    const w = W.h.sign * SL.Ls[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * SL.Fs[W.h.k];
-    const y = base[1] + L[1] - GROUND * R;
-    const K = W.K * R, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
-    const along = W.tv.map((x) => x / W.len), across = W.hv.map((x) => x / W.len);
-    let a = NONE, cap = NONE;
-    for (let k = W.g0; k < W.g0 + W.ng; k++) {
-      const { pu, wu, dw, ch, ph, py, hy, yb: rows, vary: [vk, vp, va, vi], varyB: [d0, d1, none, jit] } = GRIDS[k];
-      const cy = fdiv(y - rows - (f[1] < 0 ? 1 : 0), py), y0 = rows + cy * py;
-      // (Segments' rows are shifted along, each by its own whole number of cuts.)
-      const sh = vk === 1 ? fdiv(va * (hashCell([cy, k, 0], (SEGMENT_SALT ^ 1) >>> 0) % (vp / va)) * pu, vp) : 0;
-      const cu = fdiv(u - ph - sh - (fu < 0 ? 1 : 0), pu), u0 = ph + sh + cu * pu;
-      cap = Math.min(cap, (u - u0 + fu) / W.len, (u0 + pu - u - fu) / W.len, y - y0 + f[1], y0 + py - y - f[1]);
-      // (A segment's opening: where along, how wide and deep, in its units.)
-      let vo = 0, vw = 0, vd = 0, jb = 0, jt = 0;
-      if (vk === 1) {
-        // (The segment of its block the point is in: see the shader.)
-        const h = hashCell([cu, cy, k], SEGMENT_SALT), n = vp / va - 1;
-        const cuts = [h % n, (h >>> 10) % n, (h >>> 20) % n].map((x) => va * (1 + x)).sort((a, b) => a - b);
-        const p = u - u0 + fu, U = (x) => fdiv(x * pu, vp);
-        let A = 0, B = cuts[0], i = 0;
-        for (let m = 0; m < 3; m++) if (p >= U(cuts[m])) [A, B, i] = [cuts[m], m < 2 ? cuts[m + 1] : vp, m + 1];
-        cap = Math.min(cap, (p - U(A)) / W.len, (U(B) - p) / W.len);
-        const hs = hashCell([cu, 4 * cy + i, k], (SEGMENT_SALT ^ 2) >>> 0);
-        vo = A + vi;
-        vw = B - A - 2 * vi;
-        vd = hs % 100 < none ? 0 : d0 + ((hs >>> 8) % (d1 - d0 + 1));
-        if (jit > 0) {
-          const hv = hashCell([cu, 4 * cy + i, k], (SEGMENT_SALT ^ 3) >>> 0), J = jit + 1;
-          jb = hv % J;
-          jt = (hv >>> 8) % J;
-          const jl = (hv >>> 16) % J, jr = (hv >>> 24) % J;
-          vo += jl;
-          vw -= jl + jr;
-        }
-      }
-      // (The opening, then its channel, if any; a segment's, if any.)
-      for (const c of vk === 1 ? (vd > 0 ? [0] : []) : ch > 0 ? [0, 1] : [0]) {
-        let ua, ub, ya, yt, back;
-        if (vk) [ua, ub, back, ya, yt] = [u0 + fdiv(vo * pu, vp), u0 + fdiv((vo + vw) * pu, vp), fdiv(K, W.alpha) - fdiv(vd * pu, vp), y0 + jb, y0 + hy - jt];
-        else [ua, ub, back, ya, yt] = [u0, u0 + wu, fdiv(K, W.alpha) - (c === 0 ? dw : ch), c === 0 ? y0 : -FAR, c === 0 ? y0 + hy : FAR];
-        if (vk === 1 && ub - ua < fdiv(2 * pu, vp)) continue;
-        a = Math.min(a, cutAir(1, () => {
-          P.airPiece();
-          P.airPlane((ua - u - fu) / W.len, -along[0], -along[1], -along[2]);
-          P.airPlane((u - ub + fu) / W.len, ...along);
-          P.airPlane((back - w - fw) / W.len, -across[0], -across[1], -across[2]);
-          P.airPlane((w - outer + fw) / W.len, ...across);
-          P.airSpan(L[1], f[1], Math.max(ya + GROUND * R - base[1], openLo(1)), Math.min(yt + GROUND * R - base[1], openHi(1)), 1);
-          P.airSpan(L[0], f[0], openLo(0), openHi(0), 0);
-          P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
-          return P.S.d;
-        }, ray));
-      }
-    }
-    return Math.min(d, a, Math.max(cap, 0));
-  }
-
   function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
     const kind = m & 3;
     if (kind === DEEP) {
@@ -2562,13 +2622,13 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       return d > 0 ? Math.min(d, Math.max(-g, 0)) : d;
     }
     const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
-    cellOpen = (wrun >>> OPEN_AT) & 63;
-    cellCross = !!((wrun >>> CROSS_AT) & 1);
+    CELL.open = (wrun >>> OPEN_AT) & 63;
+    CELL.cross = !!((wrun >>> CROSS_AT) & 1);
     const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
     if (ray) P.aim(ray);
-    const a = openings(L, f, wins, clip, ray);
-    cellOpen = (m >>> OPEN_AT) & 63;
-    cellCross = !!((clip >>> CROSS_AT) & 1);
+    const a = openings(L, f, [m, clip, wins, wrun], ray);
+    CELL.open = (m >>> OPEN_AT) & 63;
+    CELL.cross = !!((clip >>> CROSS_AT) & 1);
     const t = town ? townAir(L, f, m, ray) : NONE;
     return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
   }
@@ -2631,70 +2691,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     P.solidPlane(z0 - p[2], 0, 0, -1);
     P.solidPlane(p[2] - z1, 0, 0, 1);
     return P.solidDone();
-  }
-
-  // See openings in the shader.
-  // (ray: as in hallsAir.)
-  function openings(L, f, wins, clip, ray) {
-    const q = cellB.map((x, i) => x + (L[i] + f[i]) / R), out = (i) => Math.max(...SOLID_PL[i].map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3]));
-    const dot = (p, x, y, z) => p[0] * x + p[1] * y + p[2] * z;
-    // (Each solid's openings as they are, first, and how far a ray goes in
-    // them; then each stopped at the others.)
-    const raw = WIN_AT.map((at) => {
-      const w = (wins >>> at) & ((1 << WIN_BITS) - 1), me = (w & ((1 << SOLID_BITS) - 1)) - 1;
-      let b = NONE;
-      const r = ray && { reach: -1, nx: 0, ny: 0, nz: 0 };
-      if (me >= 0) for (let k = 0; k < 4; k++) if ((w >>> SOLID_BITS) & (1 << k)) b = windowAir(SOLIDS[me].wfirst + k, L, f, b, r);
-      return { me, b, r };
-    });
-    let a = NONE;
-    for (const { me, b: b0, r: rr } of raw) {
-      if (me < 0) continue;
-      let b = b0;
-      const own = out(me);
-      let r = rr ? rr.reach : -1, rn = rr && [rr.nx, rr.ny, rr.nz];
-      // (Where the ray leaves this solid, and that plane's normal.)
-      let oIn = -1e30, oOut = 1e30, oN = [0, 0, 0];
-      if (r >= 0)
-        for (const pl of SOLID_PL[me]) {
-          const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3]) * R;
-          if (rd > 0 && -g / rd < oOut) (oOut = -g / rd), (oN = pl);
-          else if (rd < 0) oIn = Math.max(oIn, g / -rd);
-          else if (rd === 0 && g > 0) oOut = -1e30;
-        }
-      for (let c = clip & ((1 << CROSS_AT) - 1); c; c >>>= SOLID_BITS) {
-        const i = (c & ((1 << SOLID_BITS) - 1)) - 1;
-        if (i === me) continue;
-        const through = (YIELDS[i] >>> me) & 1, keep = SOLIDS[i].keep ?? 0;
-        const inside = Math.min(R * (keep - out(i)), ...raw.filter((x) => x.me === i).map((x) => x.b));
-        b = Math.max(b, through ? Math.min(inside, R * own) : inside);
-        if (r >= 0) {
-          // (Where the ray strikes that solid, or, where this one runs on
-          // through it, where it leaves this one.)
-          let sIn = -1e30, sOut = 1e30, sN = [0, 0, 0];
-          for (const pl of SOLID_PL[i]) {
-            const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3] - keep) * R;
-            if (rd < 0) {
-              if (g / -rd > sIn) (sIn = g / -rd), (sN = pl);
-            } else if (rd > 0) sOut = Math.min(sOut, -g / rd);
-            else if (g > 0) sOut = -1;
-          }
-          let x = Math.max(sIn, 0), n = sN;
-          if (through && x >= oIn && x < oOut) (x = oOut), (n = oN.map((v) => -v));
-          else if (x === 0) {
-            // (Inside it here: air only in its own openings, and as far as
-            // the ray stays in them.)
-            let ri = -1;
-            for (const o of raw) if (o.me === i && o.r.reach > ri) (ri = o.r.reach), (n = [o.r.nx, o.r.ny, o.r.nz]);
-            if (ri >= 0) x = ri;
-          }
-          if (x < sOut && x < r) (r = x > 0 ? x : -1), (rn = n);
-        }
-      }
-      a = Math.min(a, b);
-      if (ray && r > ray.reach) (ray.reach = r), ([ray.nx, ray.ny, ray.nz] = rn.slice(0, 3));
-    }
-    return a;
   }
 
   // (ray: see hallsAir. Every cell answers it.)
