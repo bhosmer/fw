@@ -23,10 +23,10 @@
 // Deeper in, the cells are halls; cells the other solids cross are solid.
 
 import * as P from '../pieces.js';
-import { madeHalls, R, M } from './halls.js';
-import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
-import { hexahedron, GROUND } from './hexahedron.js';
-import { townShapeJs, townShapeGlsl, TOWN_SHAPES } from './town.js';
+import { makeHalls, HALLS, R, M } from './halls.js';
+import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
+import { hexahedron, HEXAHEDRON, GROUND } from './hexahedron.js';
+import { townShapeJs, townShapeGlsl, townShapes, TOWN_TYPES } from './town.js';
 
 const wrapId = (id) => wrapIdR(id, R);
 const C = R / 2;
@@ -40,16 +40,93 @@ export const ROW_ID = ROW + R * C;
 const MID = C + R * C;
 const ABOVE = 200; // how many rows over the city's are known to be over it
 
-// The arcology, made: all that follows is worked out from its building (and,
-// as its definition grows, from the rest of it) and the halls it is built of
-// (see makeHalls), so that a variant of it is another call of this. Gives
-// the space, and for the checks its table and its parts (_V2).
-export function makeArcology(made = madeHalls) {
-  const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = made;
+// The relief cut into the masses' faces (see LEVELS in makeArcology): its
+// two levels, the city's own and the next finer.
+const RELIEF = {
+  city: { sb: 4, sby: 2, quant: 1, splits: 3, min: 1, depths: [0, 0.25, 0.5], weights: [0.25, 0.4, 0.35] },
+  finer: { sb: 24, sby: 24, quant: 2, splits: 3, min: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
+};
+// The town on the roof band (see TOWN in makeArcology). A cell's lots,
+// [x0, z0, x1, z1] in units, by plan (after real towns' blocks: a grid of
+// small lots; a 2 by 2 of larger; strips, along x or z, as of row houses on
+// a street; one whole block; a strip beside a grid), picked by the cell's
+// hash from pick; the share of lots built on, by cluster (two cells
+// square), from density; how far inside its lot a building keeps (margin);
+// and the kinds of building (see town.js).
+const TOWN_DEF = {
+  plans: [
+    [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8])),
+    [0, 1].flatMap((j) => [0, 1].map((i) => [12 * i, 12 * j, 12 * i + 12, 12 * j + 12])),
+    [0, 1, 2].map((j) => [0, 8 * j, 24, 8 * j + 8]),
+    [0, 1, 2].map((i) => [8 * i, 0, 8 * i + 8, 24]),
+    [[0, 0, 24, 24]],
+    [[0, 0, 8, 24], ...[0, 1, 2].flatMap((j) => [1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8]))],
+  ],
+  pick: [0, 0, 1, 1, 2, 3, 4, 5],
+  density: [15, 45, 80],
+  margin: 1,
+  types: TOWN_TYPES,
+};
+// The arcology's definition: its building (see hexahedron.js), the halls it
+// is built of (see halls.js), its relief and its town.
+export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF });
+
+// What the rest of the arcology needs of a definition's relief and town,
+// beyond its kinds (define checks those): a variant that breaks one is
+// refused here, saying which, rather than built wrong (or into a shader
+// the GPU will not take).
+function check(def) {
+  const bad = (what) => {
+    throw new Error(`arcology: ${what}`);
+  };
+  const whole = (x) => Number.isInteger(x) && x > 0;
+  for (const [name, lv] of Object.entries(def.relief)) {
+    if (!['sb', 'sby', 'quant', 'splits', 'min'].every((k) => whole(lv[k]))) bad(`relief.${name}: sb, sby, quant, splits and min must be whole numbers over 0`);
+    if (!lv.depths.length || lv.weights.length !== lv.depths.length) bad(`relief.${name}: as many weights as depths, at least one`);
+    if (lv.weights.some((w) => !(w >= 0)) || Math.abs(lv.weights.reduce((a, b) => a + b) - 1) > 1e-9) bad(`relief.${name}: weights of 0 or more, adding up to 1`);
+  }
+  // (The city's rows are halved, and the finer level's measure: whole numbers
+  // in both copies only if even; its depths are in whole twelfths, as the
+  // city's in quarters, of a cell; and the shader looks at no more than six
+  // ridge rows under a rectangle, as many as the finer level's smallest
+  // rectangles, three quanta, can span: none smaller has been tried.)
+  const { city, finer } = def.relief;
+  if (city.sby % 2 || finer.quant % 2) bad('relief: city.sby and finer.quant must be even');
+  if (!city.depths.every((d) => Number.isInteger(d * 4) && d >= 0)) bad('relief.city: depths in quarters of a cell');
+  if (!finer.depths.every((d) => Number.isInteger(d / 2) && d >= 0)) bad('relief.finer: depths in twelfths of a cell (even numbers)');
+  if (finer.min < 3) bad('relief.finer: min under 3 (the shader looks under no more than six ridge rows)');
+  const t = def.town;
+  // (A building stands a unit inside its lot (see PREAMBLE in town.js): the
+  // margin may be no more.)
+  if (!(t.margin > 0 && t.margin <= 1)) bad('town.margin must be over 0 and at most 1 (buildings stand a unit inside their lots)');
+  if (!t.types.length) bad('town.types: none');
+  if (!t.density.length || !t.density.every((d) => Number.isInteger(d) && d >= 0 && d <= 100)) bad('town.density: whole percentages, at least one');
+  if (!t.pick.length || !t.pick.every((i) => Number.isInteger(i) && i >= 0 && i < t.plans.length)) bad(`town.pick: plans by their index (0 to ${t.plans.length - 1}), at least one`);
+  t.plans.forEach((plan, i) => {
+    if (!plan.length || plan.length > 16) bad(`town.plans[${i}]: one lot to sixteen (lots' hashes are told apart by 4 bits)`);
+    if (!plan.every((r) => r.length === 4 && r.every((x) => Number.isInteger(x) && x >= 0 && x <= R) && r[0] < r[2] && r[1] < r[3])) bad(`town.plans[${i}]: lots [x0, z0, x1, z1], whole units within the cell`);
+    // (Lots tile the cell, each point in the first lot whose far sides it is
+    // short of: as both copies find a point's lot.)
+    for (let x = 0; x <= R; x += 0.5) for (let z = 0; z <= R; z += 0.5) {
+      const r = plan.find((r) => (x < r[2] || r[2] === R) && (z < r[3] || r[3] === R));
+      if (!r || x < r[0] || z < r[1] || x > r[2] || z > r[3]) bad(`town.plans[${i}]: lots must tile the cell, in order (at ${x}, ${z})`);
+      if (x < R && z < R && plan.filter((q) => x + 0.25 > q[0] && x + 0.25 < q[2] && z + 0.25 > q[1] && z + 0.25 < q[3]).length !== 1) bad(`town.plans[${i}]: lots overlap or leave a gap (at ${x}, ${z})`);
+    }
+  });
+  return def;
+}
+
+// The arcology, made from ARCOLOGY with what set changes (see define in
+// util.js): all that follows is worked out from that, so that a variant of
+// it is another call of this. Gives the space, its definition, and for the
+// checks its table and its parts (_V2).
+export function makeArcology(set) {
+  const def = check(frozen(define(ARCOLOGY, set)));
+  const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = makeHalls(def.halls);
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
   // lower's apex a cell under the plaza's floor (see GROUND).
-  const SOLIDS = hexahedron();
+  const SOLIDS = hexahedron(def.building);
   const ORIGIN = [C, G - 1, C];
 
   // Each plane's direction: an axis (0, 1, 2) where its normal is one, or else
@@ -149,11 +226,7 @@ export function makeArcology(made = madeHalls) {
   // cells), whose boxes make the masses and the ragged silhouettes; and the
   // next (in its units), smaller boxes cut into those. What keeps anything
   // from being cut loose is in the setup after BARE_PL.
-  const LEVELS = [
-    { sb: 4, sby: 2, quant: 1, splits: 3, min: 1, depths: [0, 0.25, 0.5], weights: [0.25, 0.4, 0.35] },
-    { sb: 24, sby: 24, quant: 2, splits: 3, min: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
-  ];
-  for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));
+  const LEVELS = [def.relief.city, def.relief.finer].map((lv) => ({ ...lv, cumulative: lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y)) }));
   const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
   const POCKET_SALT = 0x27d4eb2d, ROW_SALT = 0x165667b1, DEPTH_SALT = 0xd3a2646c;
 
@@ -744,7 +817,7 @@ export function makeArcology(made = madeHalls) {
   // -+, --). Each cell is laid out in lots by one of TOWN_PLANS, and each lot
   // holds up to TOWN_SHAPES boxes (a building) standing in it, by its hash,
   // all at least TOWN_MARGIN inside it.
-  const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = 1;
+  const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = def.town.margin;
   const TOWN = (() => {
     const s = SOLIDS.find((x) => x.town);
     if (!s) return null;
@@ -752,28 +825,17 @@ export function makeArcology(made = madeHalls) {
     if (!Number.isInteger(floor) || H < 1 || H > R || R !== 24) throw new Error('arcology: a town that does not fit');
     return { solid: s, floor, H };
   })();
-  // A cell's lots, [x0, z0, x1, z1] in units, by plan (after real towns' blocks:
-  // a grid of small lots; a 2 by 2 of larger; strips, along x or z, as of row
-  // houses on a street; one whole block; a strip beside a grid), picked by the
-  // cell's hash from TOWN_PICK.
-  const TOWN_PLANS = [
-    [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8])),
-    [0, 1].flatMap((j) => [0, 1].map((i) => [12 * i, 12 * j, 12 * i + 12, 12 * j + 12])),
-    [0, 1, 2].map((j) => [0, 8 * j, 24, 8 * j + 8]),
-    [0, 1, 2].map((i) => [8 * i, 0, 8 * i + 8, 24]),
-    [[0, 0, 24, 24]],
-    [[0, 0, 8, 24], ...[0, 1, 2].flatMap((j) => [1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8]))],
-  ];
-  const TOWN_PICK = [0, 0, 1, 1, 2, 3, 4, 5];
+  // (Its lots, plans, densities and kinds of building: see TOWN_DEF.)
+  const TOWN_PLANS = def.town.plans, TOWN_PICK = def.town.pick, TOWN_DENSITY = def.town.density, TOWN_SHAPES = townShapes(def.town.types);
   // Box k of a lot r, by the lot's hashes h, h2 and its cluster's density
-  // (see TOWN_TYPES in town.js, whence the shader's too).
-  const townShape = townShapeJs(TOWN ? TOWN.H : 1);
+  // (see town.js, whence the shader's too).
+  const townShape = townShapeJs(TOWN ? TOWN.H : 1, false, def.town.types);
   // A box's distance at p.
   const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
   // A cell's plan and its density (by its cluster, two cells square), by its hashes.
   function townCell() {
     const hc = hashCell([fdiv(cellB[0], 2), fdiv(cellB[2], 2), 9], TOWN_SALT), hl = hashCell([cellB[0], cellB[2], 11], TOWN_SALT);
-    return { dens: [15, 45, 80][hc % 3], plan: TOWN_PLANS[TOWN_PICK[hl % 8]] };
+    return { dens: TOWN_DENSITY[hc % TOWN_DENSITY.length], plan: TOWN_PLANS[TOWN_PICK[hl % TOWN_PICK.length]] };
   }
   const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_SALT);
   const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
@@ -782,7 +844,7 @@ export function makeArcology(made = madeHalls) {
   // (For the checks: how many rays the solids without relief have stopped
   // in the city's pockets: see cityPockets.)
   const SEEN = { clipped: 0 };
-  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS };
   const VOLUME = (() => {
     const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
     const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -1003,7 +1065,7 @@ const int FACE_AT = ${FACE_AT}, OPEN_AT = ${OPEN_AT}, CROSS_AT = ${CROSS_AT};
 const int TOWN_AT = ${TOWN_AT}, TOWN_CORNER_AT = ${TOWN_CORNER_AT}, TOWN_SHAPES = ${TOWN_SHAPES};
 const ivec4 TOWN_LOT[${TOWN_PLANS.flat().length}] = ivec4[${TOWN_PLANS.flat().length}](${TOWN_PLANS.flat().map((r) => `ivec4(${r.join(', ')})`).join(', ')});
 const int TOWN_PLAN_AT[${TOWN_PLANS.length + 1}] = int[${TOWN_PLANS.length + 1}](${TOWN_PLANS.map((_, i) => TOWN_PLANS.slice(0, i).flat().length).concat([TOWN_PLANS.flat().length]).join(', ')});
-const int TOWN_PICK[8] = int[8](${TOWN_PICK.join(', ')});
+const int TOWN_PICK[${TOWN_PICK.length}] = int[${TOWN_PICK.length}](${TOWN_PICK.join(', ')});
 const int TOWN_H = ${TOWN ? TOWN.H : 1};
 const uint TOWN_SALT = ${TOWN_SALT}u;
 const float TOWN_MARGIN = ${glf(TOWN_MARGIN)};
@@ -1756,8 +1818,9 @@ float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3
 }
 
 // Box k of a lot r of the town, in units over the cell's corner and the
-// floor (made from TOWN_TYPES in town.js, as the JS's is).
-${townShapeGlsl()}
+// floor (made from the definition's kinds of building: see town.js, as the
+// JS's is).
+${townShapeGlsl(def.town.types)}
 
 // A box of the town as a solid at p (its distance; for a ray, where it strikes).
 float boxSolid(vec3 lo, vec3 hi, vec3 p) {
@@ -1803,8 +1866,8 @@ float townAir(ivec3 L, vec3 f, uint w, bool ray, inout float reach, inout vec3 n
     }
     float box = gD;
     uint hc = hashCell(ivec3(fdiv(gCellB.x, 2), fdiv(gCellB.z, 2), 9), TOWN_SALT), hl = hashCell(ivec3(gCellB.x, gCellB.z, 11), TOWN_SALT);
-    uint dens = hc % 3u == 0u ? 15u : hc % 3u == 1u ? 45u : 80u;
-    int plan = TOWN_PICK[hl % 8u], l0 = TOWN_PLAN_AT[plan], l1 = TOWN_PLAN_AT[plan + 1];
+    uint dens = ${TOWN_DENSITY.map((d, i) => (i < TOWN_DENSITY.length - 1 ? `hc % ${TOWN_DENSITY.length}u == ${i}u ? ${d}u : ` : `${d}u`)).join('')};
+    int plan = TOWN_PICK[hl % ${TOWN_PICK.length}u], l0 = TOWN_PLAN_AT[plan], l1 = TOWN_PLAN_AT[plan + 1];
     vec3 lo, hi;
     if (pass == 0) {
       // (The point's own lot: the first holding it.)
@@ -2698,7 +2761,9 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     name: 'arcology',
     glsl: hallsGlsl + glsl,
     cellAir,
-    roomRule,
+    // (Its rooms and their openings as the halls', where it lets them be.)
+    room: (id, seed) => hallsRoom(id, seed, roomRule),
+    openings: (id, seed) => hallsOpenings(id, seed, roomRule),
     volume: VOLUME,
     // What fraction of a surface opens at a level (see the detail asked after
     // in main, shaders.js):
@@ -2752,7 +2817,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     // Sunlight comes down into it as far as the plaza (in level-0 cells).
     sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
   };
-  return { arcology, VOLUME, _V2 };
+  return { arcology, def, VOLUME, _V2 };
 }
 
 // The arcology as it is (and its table and parts, for the checks).

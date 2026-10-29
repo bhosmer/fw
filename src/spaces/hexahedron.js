@@ -51,31 +51,10 @@ const box = (lo, hi) => [0, 1, 2].flatMap((a) => {
   return [offset(e.map((x) => -x), lo, 0), offset(e, hi, 0)];
 });
 
-// Heights, in cells over the lower's apex.
-const APEX_LO = 0, ROOF_LO = 16.25, ROOF_HI = 17, PLATE_LO = 18.5, PLATE_HI = 19.25, APEX_HI = 34.25;
-export const GROUND = 1; // the ground, over the lower's apex
-// Plan: the upper's corners, and the lower's (turned 60 degrees). (26/15 is
-// within 0.04 degrees of root 3: the triangles are equilateral to that.)
-const UP = [[-15, -26 / 3], [15, -26 / 3], [0, 52 / 3]];
-const DOWN = UP.map(([x, z]) => [x, -z]);
-// The star's inner hexagon, where the two triangles' edges cross: the pillars.
-const HEX = [[10, 0], [5, 26 / 3], [-5, 26 / 3], [-10, 0], [-5, -26 / 3], [5, -26 / 3]];
-const PILLAR = 1.75 / 2; // half the pillar's side
-// How the pillars meet the plate and the roof band (fringe.md; Basil chose
-// it from several, 2026-10-26): each pillar rises to the plate's top, its
-// plate-high part tapering upward by TAPER on each side, a buttress the plate
-// is joined to; the bands' undercuts stop BEARING short of it, so that they
-// bear on it, and its channels run on through the roof band.
-const BEARING = 6 / 24, TAPER = 6 / 24;
-// What the plate's and the roof band's edges carry (fringe.md): rows of
-// segments (see OPENINGS' segments in arcology.js), units over the band's
-// bottom (18 high to the open storey's floor; the roof band's slab, the
-// town's, another 12 over it); rows from its bottom start 2 under it (to open through
-// it). Basil chose the cornice (2026-10-26): heavy, uninhabited structure;
-// its variations elaborate it structurally, with vertical joints a cell or
-// more apart (fine upright cuts shimmer); of them, the steps. The rest are
-// the night's other candidates.
-const EDGE = 'steps';
+// The edges' candidates: rows of segments (see OPENINGS' segments in
+// arcology.js), units over the band's bottom (18 high to the open storey's
+// floor; the roof band's slab, the town's, another 12 over it); rows from
+// its bottom start 2 under it (to open through it).
 const S = (rows, block, cut, inset, deep, none = 0) => ({ kind: 'segments', rows, block, cut, inset, deep, none });
 const EDGES = {
   // The cornice: the band's lower part set back in long runs, in two steps.
@@ -99,36 +78,65 @@ const EDGES = {
   trench: [S([6, 18, 6], 36, 3, 1, [2, 6])],
   mixed: { plate: [S([4, 18, 10], 36, 6, 2, [8, 10])], roof: [S([2, 9, 5], 48, 4, 2, [3, 6], 10)] },
 };
-// (y: the heights a pillar wears a band's at; a band's own are its own.)
-const edge = (which) => EDGES[EDGE][which] ?? EDGES[EDGE];
-// The central column (Basil, 2026-10-27/28: the structure needs it to look
-// as if it could stand; square, for variety with the pyramids' turn;
-// rusticated, unlike the pyramids and the pillars: a grid of raised blocks
-// between grooves, three to a face, and rings, the blocks framing pocks: a
-// shallow panel in nearly every block, deeper medium and small pocks within
-// and across it, each pock's edges jittered, so that overlapping ones join in
-// L, T and stepped shapes): a square prism on the axis, CORE each side of
-// it, from the ground (and a cell under it) through the open storey to the
-// plate's top. (CORE off
-// the cells' sides: a face on one would leave the cells inside it wholly
-// inside the column, where the halls are, and which cut no openings.) Units
-// of a 24th of a cell (see OPENINGS in arcology.js); the rings a pitch apart,
-// one centred in the open storey; the panels' rows between them.
-// The plaza (Basil, 2026-10-28: the photo's roof top, a section of
-// cityscape, clusters of low structures with open floor between; the
-// drawing's PARK and PROMENADE, planting, left for now): carved one level
-// finer from a slab TOWN_H over the open storey's floor, to the band's edge
-// (see TOWN in arcology.js).
-const TOWN_H = 0.5;
-const CORE = 2.875;
-const RING = { pitch: 36, up: 6, deep: 6 };
-const CORE_FACE = [
-  { kind: 'flutes', pitch: 46, groove: 8, deep: 4 },
-  { kind: 'rings', ...RING, from: (((ROOF_HI + PLATE_LO) / 2 - GROUND) * T - RING.up / 2) % RING.pitch },
-  { kind: 'segments', rows: [35, 36, 26], block: 92, cut: 23, inset: 4, deep: [2, 2], none: 10, jitter: 4 },
-  { kind: 'segments', rows: [11, 12, 10], block: 60, cut: 12, inset: 2, deep: [3, 5], none: 50, jitter: 3 },
-  { kind: 'segments', rows: [5, 12, 10], block: 48, cut: 12, inset: 2, deep: [4, 6], none: 60, jitter: 3 },
-];
+export const GROUND = 1; // the ground, over the lower's apex
+
+// The building's definition: its numbers, as the measurement gave them and
+// Basil chose among the candidates (a variant of the building changes some
+// of them: see define in util.js).
+export const HEXAHEDRON = {
+  // Heights, in cells over the lower's apex.
+  heights: { apexLo: 0, roofLo: 16.25, roofHi: 17, plateLo: 18.5, plateHi: 19.25, apexHi: 34.25 },
+  // Plan: the upper's corners (the lower's turned 60 degrees: the same,
+  // mirrored). (26/15 is within 0.04 degrees of root 3: the triangles are
+  // equilateral to that.)
+  up: [[-15, -26 / 3], [15, -26 / 3], [0, 52 / 3]],
+  // The star's inner hexagon, where the two triangles' edges cross: the
+  // pillars; and half a pillar's side.
+  hex: [[10, 0], [5, 26 / 3], [-5, 26 / 3], [-10, 0], [-5, -26 / 3], [5, -26 / 3]],
+  pillar: 1.75 / 2,
+  // How the pillars meet the plate and the roof band (fringe.md; Basil chose
+  // it from several, 2026-10-26): each pillar rises to the plate's top, its
+  // plate-high part tapering upward by taper on each side, a buttress the
+  // plate is joined to; the bands' undercuts stop bearing short of it, so
+  // that they bear on it, and its channels run on through the roof band.
+  bearing: 6 / 24,
+  taper: 6 / 24,
+  // What the plate's and the roof band's edges carry (fringe.md): one of
+  // edges. Basil chose the cornice (2026-10-26): heavy, uninhabited
+  // structure; its variations elaborate it structurally, with vertical
+  // joints a cell or more apart (fine upright cuts shimmer); of them, the
+  // steps. The rest are the night's other candidates.
+  edge: 'steps',
+  edges: EDGES,
+  // The plaza on the roof band (Basil, 2026-10-28: the photo's roof top, a
+  // section of cityscape, clusters of low structures with open floor
+  // between; the drawing's PARK and PROMENADE, planting, left for now):
+  // carved one level finer from a slab townH over the open storey's floor,
+  // to the band's edge (see TOWN in arcology.js).
+  townH: 0.5,
+  // The central column (Basil, 2026-10-27/28: the structure needs it to look
+  // as if it could stand; square, for variety with the pyramids' turn;
+  // rusticated, unlike the pyramids and the pillars: a grid of raised blocks
+  // between grooves, three to a face, and rings, the blocks framing pocks: a
+  // shallow panel in nearly every block, deeper medium and small pocks within
+  // and across it, each pock's edges jittered, so that overlapping ones join
+  // in L, T and stepped shapes): a square prism on the axis, core each side
+  // of it, from the ground (and a cell under it) through the open storey to
+  // the plate's top. (core off the cells' sides: a face on one would leave
+  // the cells inside it wholly inside the column, where the halls are, and
+  // which cut no openings.) Units of a 24th of a cell (see OPENINGS in
+  // arcology.js); the rings a pitch apart, one centred in the open storey
+  // (their `from` worked out so, unless given); the panels' rows between
+  // them.
+  core: 2.875,
+  coreFace: [
+    { kind: 'flutes', pitch: 46, groove: 8, deep: 4 },
+    { kind: 'rings', pitch: 36, up: 6, deep: 6 },
+    { kind: 'segments', rows: [35, 36, 26], block: 92, cut: 23, inset: 4, deep: [2, 2], none: 10, jitter: 4 },
+    { kind: 'segments', rows: [11, 12, 10], block: 60, cut: 12, inset: 2, deep: [3, 5], none: 50, jitter: 3 },
+    { kind: 'segments', rows: [5, 12, 10], block: 48, cut: 12, inset: 2, deep: [4, 6], none: 60, jitter: 3 },
+  ],
+};
 
 function prism(corners, y0, y1) {
   const mid = tw([0, (y0 + y1) / 2, 0]);
@@ -157,7 +165,16 @@ function pyramid(corners, yb, apex) {
 // arcology.js, or a list of them; S6). A mass's sloped faces carry
 // relief (see arcology.js), kept clear of its base: ylo, yhi bound the
 // relief's height.
-export function hexahedron() {
+// (def: a whole definition, as HEXAHEDRON: makeArcology merges a variant's
+// changes into it.)
+export function hexahedron(def = HEXAHEDRON) {
+  if (!Object.hasOwn(def.edges, def.edge)) throw new Error(`hexahedron: no edge ${def.edge} (there are ${Object.keys(def.edges).join(', ')})`);
+  const { apexLo: APEX_LO, roofLo: ROOF_LO, roofHi: ROOF_HI, plateLo: PLATE_LO, plateHi: PLATE_HI, apexHi: APEX_HI } = def.heights;
+  const UP = def.up, DOWN = UP.map(([x, z]) => [x, -z]), HEX = def.hex, PILLAR = def.pillar, BEARING = def.bearing, TAPER = def.taper;
+  const TOWN_H = def.townH, CORE = def.core;
+  // (y: the heights a pillar wears a band's at; a band's own are its own.)
+  const edge = (which) => def.edges[def.edge][which] ?? def.edges[def.edge];
+  const CORE_FACE = def.coreFace.map((f) => (f.kind === 'rings' && f.from === undefined ? { ...f, from: (((ROOF_HI + PLATE_LO) / 2 - GROUND) * T - f.up / 2) % f.pitch } : f));
   const solids = [];
   const upper = pyramid(UP, PLATE_HI, APEX_HI), lower = pyramid(DOWN, ROOF_LO, APEX_LO);
   solids.push({ name: 'upper', planes: [...upper.faces, upper.base], relief: [0, 1, 2], ylo: PLATE_HI, yhi: APEX_HI });
@@ -172,8 +189,10 @@ export function hexahedron() {
   // it) to the plate's top, a buttress at the plate (see BEARING). Their
   // radial direction, as whole numbers.
   for (const [x, z] of HEX) {
-    // ((5, 26/3) runs along (15, 26).)
-    const u = z === 0 ? [Math.sign(x), 0, 0] : [15 * Math.sign(x), 0, 26 * Math.sign(z)];
+    // (In whole numbers: (5, 26/3) runs along (15, 26).)
+    const r = [x, z].map((v) => Math.round(v * T));
+    if (r.some((v, i) => Math.abs(v - [x, z][i] * T) > 1e-9)) throw new Error(`hexahedron: a pillar off the 24ths, at ${x}, ${z}`);
+    const g = gcd(r[0], r[1]), u = [r[0] / g, 0, r[1] / g];
     const t = [-u[2], 0, u[0]];
     const c = [x, 0, z];
     const sides = [u, u.map((v) => -v), t, t.map((v) => -v)];

@@ -78,7 +78,7 @@
 //   - a tunnel may run on into the next cell, where that cell's own
 //     description of it must agree
 
-import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
+import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
 import { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } from '../pieces.js';
 
 export const R = 24; // children per cell edge
@@ -102,12 +102,12 @@ export const HALLS = {
   // In a room: below none, nothing; then piers, benches; above, a kiosk.
   furniture: { none: 0.4, piers: 0.62, benches: 0.82 },
 };
-// The halls, made from a spec like HALLS (by default, it): their space, and
-// the parts other spaces build on (see the end), so that a variant of them
-// is another call of this.
-export function makeHalls(spec = HALLS) {
-  const HALLS = spec;
-  const { salt, wall, slab, furniture: stands } = HALLS;
+// The halls, made from HALLS with what set changes (see define in util.js):
+// their space, and the parts other spaces build on (see the end), so that a
+// variant of them is another call of this.
+export function makeHalls(set) {
+  const spec = frozen(define(HALLS, set));
+  const { salt, wall, slab, furniture: stands } = spec;
 
   // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
   // cell, whatever its level.)
@@ -125,7 +125,7 @@ float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 // (And only where the space allows a room: spaceRoom, which each space
 // defines; the halls everywhere.)
 bool spaceRoom(ivec3 id, uint seed);
-bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(HALLS.solid)}; }
+bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= ${glf(spec.solid)}; }
 
 // Which of three bays, each six units wide, holds u (integer division is slow).
 int bay(int u, float fu) { return int(clamp(floor((float(u - M) + fu) * (1.0 / 6.0)), 0.0, 2.0)); }
@@ -259,7 +259,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
   nrm = vec3(0.0);
   uint hc = hashCell(id, seed);
   bool here = built(id, seed);
-  int H = here && h01(hc) < ${glf(HALLS.low)} ? HLO : HHI;
+  int H = here && h01(hc) < ${glf(spec.low)} ? HLO : HHI;
 
   // Of the pieces of air the point is in, the ray stays in air to the end of
   // whichever it is in for longest. Each piece is first asked only its
@@ -448,7 +448,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
 
   const ancestors = new Map(); // level -> where its cell sits in its parent
   // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
-  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= HALLS.solid;
+  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= spec.solid;
 
   // dg is the point along the diagonals (see Position.levels). Without it they
   // are worked out from L and f, which is only good far from any such surface.
@@ -460,7 +460,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
   // of three windows or arches, the middle one.) The same hashes as above.
   function hallsRoom(id, seed, rule) {
     if (!built(id, seed, rule)) return null;
-    const H = h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
+    const H = h01(hashCell(id, seed)) < spec.low ? HLO : HHI;
     // (As furniture has it: piers, unless over or under a light well.)
     const t = h01(hashCell(id, seed ^ salt.furniture));
     const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab)), over = h01(hashCell(id, seed ^ salt.slab));
@@ -500,7 +500,7 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
     at(L, f, dg);
     if (ray) aim(ray);
     const here = built(id, seed, rule);
-    const H = here && h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
+    const H = here && h01(hashCell(id, seed)) < spec.low ? HLO : HHI;
     let room = NONE;
     const hup = hashCell(id, seed ^ salt.slab);
     const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab);
@@ -614,8 +614,8 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     },
     fogK: 250, // visibility, in cells of the room we are in
     // For finding ways (see planner.js): a cell's room and its openings.
-    room: (id, seed, rule) => hallsRoom(id, seed, rule),
-    openings: (id, seed, rule) => hallsOpenings(id, seed, rule),
+    room: (id, seed) => hallsRoom(id, seed),
+    openings: (id, seed) => hallsOpenings(id, seed),
   };
   return { space: halls, spec, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built };
 }

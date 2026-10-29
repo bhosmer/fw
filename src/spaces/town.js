@@ -107,26 +107,26 @@ const TAKEN = new Set(['h', 'h2', 'k', 'r', 'dens', 'lo', 'hi', 't', 'x0', 'z0',
 
 // The types in the order their needs are asked: each before the one it
 // gives way to (so one pass follows any chain of them).
-function demotion() {
+function demotion(types) {
   const at = new Map();
-  TOWN_TYPES.forEach((t, i) => {
+  types.forEach((t, i) => {
     if (at.has(t.name)) throw new Error(`town: two types named ${t.name}`);
     if (!t.needs !== !t.else) throw new Error(`town: ${t.name} has ${t.needs ? 'needs and nothing to give way to' : 'something to give way to and no needs'}`);
-    if (t.needs && !TOWN_TYPES.some((u) => u.name === t.else)) throw new Error(`town: ${t.name} gives way to ${t.else}, which is no type`);
+    if (t.needs && !types.some((u) => u.name === t.else)) throw new Error(`town: ${t.name} gives way to ${t.else}, which is no type`);
     for (const v of [...Object.keys(t.vars ?? {}), ...Object.keys(t.each ?? {})]) if (TAKEN.has(v)) throw new Error(`town: ${t.name} names a var ${v}, which is taken`);
     at.set(t.name, i);
   });
   const post = [], done = new Set(), on = new Set();
   const visit = (i) => {
     if (done.has(i)) return;
-    if (on.has(i)) throw new Error(`town: ${TOWN_TYPES[i].name} gives way in a circle`);
+    if (on.has(i)) throw new Error(`town: ${types[i].name} gives way in a circle`);
     on.add(i);
-    if (TOWN_TYPES[i].needs) visit(at.get(TOWN_TYPES[i].else));
+    if (types[i].needs) visit(at.get(types[i].else));
     on.delete(i);
     done.add(i);
     post.push(i);
   };
-  TOWN_TYPES.forEach((_, i) => visit(i));
+  types.forEach((_, i) => visit(i));
   return { order: post.reverse(), at };
 }
 
@@ -134,17 +134,18 @@ function demotion() {
 // working it out (for GLSL's declarations): on a lot as big as a cell, any
 // hashes, its first box.
 const JS_HELPERS = 'const bit = (x, n) => (x >>> n) & 1, field = (x, n, m) => (x >>> n) % m, top = (y) => Math.min(24, y), div = (a, b) => Math.floor(a / b), min = Math.min, max = Math.max;';
-const KINDS = (() => {
+function kinds(types) {
   const lot = `const h = 0x9e3779b9, h2 = 0x7f4a7c15, x0 = 0, z0 = 0, x1 = 24, z1 = 24, k = 0;\n${Object.entries(PREAMBLE).map(([v, e]) => `const ${v} = ${e};`).join('\n')}`;
-  return TOWN_TYPES.map((t) => {
+  return types.map((t) => {
     const vs = Object.entries({ ...t.vars, ...t.each });
     const f = new Function(`${JS_HELPERS}\n${lot}\n${vs.map(([v, e]) => `const ${v} = ${e};`).join('\n')}\nreturn {${vs.map(([v]) => `${v}: typeof ${v}`).join(', ')}};`);
     return f();
   });
-})();
+}
 
-// The most boxes a building has.
-export const TOWN_SHAPES = Math.max(...TOWN_TYPES.map((t) => (t.box ? t.most : t.boxes.length)));
+// The most boxes a building of a catalogue has (by default, TOWN_TYPES).
+export const townShapes = (types = TOWN_TYPES) => Math.max(...types.map((t) => (t.box ? t.most : t.boxes.length)));
+export const TOWN_SHAPES = townShapes();
 
 // An expression in GLSL: the helpers written out where they are used, as
 // whole numbers and their shifts and modulos, in the forms the shader has
@@ -166,9 +167,10 @@ function glsl(e) {
   return out + e.slice(at);
 }
 
-// Write the function in either language: `js` (true) or GLSL.
-function write(js) {
-  const { order, at } = demotion();
+// Write the function in either language, `js` (true) or GLSL, for a
+// catalogue of types.
+function write(js, types) {
+  const { order, at } = demotion(types), KINDS = kinds(types);
   const index = (n) => at.get(n);
   const lot = new Set(['x0', 'z0', 'x1', 'z1', 'k', ...Object.keys(PREAMBLE)]);
   const out = [];
@@ -177,12 +179,12 @@ function write(js) {
   const box = (b) => (js ? `return [${b.map(name).join(', ')}];` : `lo = vec3(${b.slice(0, 3).map(name).join(', ')}); hi = vec3(${b.slice(3).map(name).join(', ')}); return true;`);
   const none = js ? 'return null;' : 'return false;';
   for (const [v, e] of Object.entries(PREAMBLE)) out.push(decl(v, words(e, lot, `the preamble's ${v}`), 'number'));
-  out.push(js ? `let t = field(h, 7, ${TOWN_TYPES.length});` : `int t = ${glsl(`field(h, 7, ${TOWN_TYPES.length})`)};`);
+  out.push(js ? `let t = field(h, 7, ${types.length});` : `int t = ${glsl(`field(h, 7, ${types.length})`)};`);
   for (const i of order) {
-    const t = TOWN_TYPES[i];
+    const t = types[i];
     if (t.needs) out.push(`if (t == ${i} && !(${name(words(t.needs, lot, `${t.name}'s needs`))})) t = ${index(t.else)};`);
   }
-  TOWN_TYPES.forEach((t, i) => {
+  types.forEach((t, i) => {
     const names = new Set(lot);
     out.push(`if (t == ${i}) {`);
     for (const [v, e] of Object.entries(t.vars ?? {})) out.push('  ' + decl(v, words(e, names, `${t.name}'s ${v}`), KINDS[i][v])), names.add(v);
@@ -204,7 +206,8 @@ function write(js) {
 // The JavaScript: townShape(h, h2, r, dens, k) gives box k of lot r, or
 // null (none when h2 % 100 >= dens: the cluster's density). checked: the
 // helpers throw where their numbers are out of their range (for the tests).
-export function townShapeJs(H, checked = false) {
+// types: the catalogue (by default, TOWN_TYPES); likewise for the GLSL.
+export function townShapeJs(H, checked = false, types = TOWN_TYPES) {
   const helpers = checked
     ? `const bit = (x, n) => (x >>> n) & 1, top = (y) => Math.min(${H}, y), min = Math.min, max = Math.max;
 const field = (x, n, m) => { if (!(m > 0 && n >= 0 && n < 32)) throw new Error('town: field(' + n + ', ' + m + ')'); return (x >>> n) % m; };
@@ -213,7 +216,7 @@ const div = (a, b) => { if (!(b > 0 && a >= 0)) throw new Error('town: div(' + a
   const body = `${helpers}
 return function townShape(h, h2, [x0, z0, x1, z1], dens, k) {
 if (h2 % 100 >= dens) return null;
-${write(true)}
+${write(true, types)}
 };
 //# sourceURL=townShape.gen.js`;
   return new Function(body)();
@@ -221,11 +224,11 @@ ${write(true)}
 
 // The GLSL: townShape(h, h2, r, dens, k, lo, hi), true if lot r has box k
 // (then lo, hi). Needs TOWN_H.
-export function townShapeGlsl() {
+export function townShapeGlsl(types = TOWN_TYPES) {
   return `bool townShape(uint h, uint h2, ivec4 r, uint dens, int k, out vec3 lo, out vec3 hi) {
   lo = vec3(0.0); hi = vec3(0.0);
   if (h2 % 100u >= dens) return false;
   int x0 = r.x, z0 = r.y, x1 = r.z, z1 = r.w;
-${write(false).split('\n').map((l) => '  ' + l).join('\n')}
+${write(false, types).split('\n').map((l) => '  ' + l).join('\n')}
 }`;
 }

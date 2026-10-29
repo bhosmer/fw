@@ -94,7 +94,7 @@ export class Planner {
     if (r === undefined) {
       this.work++;
       const id = this.id(k, c);
-      r = this.flight.space.notRoom?.(k, id) ? null : this.flight.space.room(id, this.frame(k).seed, this.flight.space.roomRule);
+      r = this.flight.space.notRoom?.(k, id) ? null : this.flight.space.room(id, this.frame(k).seed);
       this.rooms.set(n, r);
     }
     return r;
@@ -244,7 +244,7 @@ export class Planner {
         const cc = i.map((x, q) => c[q] * R + x - sub.own[q]);
         const rr = this.room(k + 1, cc);
         if (!rr) continue;
-        const o = this.flight.space.openings(this.id(k + 1, cc), sub.seed, this.flight.space.roomRule).find((o) => o.e[a] === e[a]);
+        const o = this.flight.space.openings(this.id(k + 1, cc), sub.seed).find((o) => o.e[a] === e[a]);
         if (!o) continue;
         // Its points, in level-k units: out in front of the mouth (in our
         // lane), just inside, in its own lane, its middle.
@@ -267,7 +267,7 @@ export class Planner {
   // of its level (across), or coarser air (up: see air); niches left out.
   around(k, c) {
     const out = [];
-    for (const o of this.flight.space.openings(this.id(k, c), this.frame(k).seed, this.flight.space.roomRule)) {
+    for (const o of this.flight.space.openings(this.id(k, c), this.frame(k).seed)) {
       const d = c.map((x, a) => x + o.e[a]);
       const air = this.air(k, d);
       if (air) out.push({ o, d, up: air });

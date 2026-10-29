@@ -45,3 +45,55 @@ export function levelSeed(level) {
 // A number as a GLSL float literal, and a hash salt as a GLSL uint literal.
 export const glf = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
 export const hexu = (x) => `0x${(x >>> 0).toString(16).padStart(8, '0')}u`;
+
+// A definition (of a world: see makeArcology): the defaults, with what set
+// changes. Objects are changed part by part; anything else (numbers,
+// strings, arrays, functions) is replaced whole, by a copy (so that what is
+// given is left as it was). A part the defaults do not have, or of another
+// kind, is refused, saying where and what there is.
+const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const kind = (x) => (Array.isArray(x) ? 'array' : x === null ? 'nothing' : Number.isNaN(x) ? 'NaN' : typeof x);
+const copy = (x) => (Array.isArray(x) ? x.map(copy) : plain(x) ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, copy(v)])) : x);
+export function define(defaults, set, path = '') {
+  if (set === undefined) return defaults;
+  const k0 = kind(defaults), k1 = kind(set);
+  if (k1 !== k0) throw new Error(`definition: ${path.slice(0, -1) || 'it'} is ${k0 === 'object' ? 'a set of parts' : k0 === 'nothing' ? 'nothing' : `${/^[aeiou]/.test(k0) ? 'an' : 'a'} ${k0}`}, not ${k1 === 'function' ? 'a function' : JSON.stringify(set) ?? String(set)}`);
+  if (!plain(defaults)) return copy(set);
+  const out = { ...defaults };
+  for (const [k, v] of Object.entries(set)) {
+    if (!Object.hasOwn(defaults, k)) throw new Error(`definition: there is no ${path}${k} (there are ${Object.keys(defaults).map((x) => path + x).join(', ')})`);
+    out[k] = define(defaults[k], v, `${path}${k}.`);
+  }
+  return out;
+}
+// Changes given by dotted paths ({ 'town.density': [10, 30, 60] }, as from
+// a link) as the nested object define takes, the values copied. (No part may
+// be named as objects' own workings are, and none set both whole and part by
+// part, in either order.)
+const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
+export function byPaths(changes) {
+  const out = {}, whole = new Set(), seen = new Set();
+  for (const [p, v] of Object.entries(changes)) {
+    const keys = p.split('.');
+    if (keys.some((k) => UNSAFE.has(k) || k === '')) throw new Error(`definition: no such part as ${p}`);
+    keys.slice(0, -1).forEach((_, i) => {
+      if (whole.has(keys.slice(0, i + 1).join('.'))) throw new Error(`definition: ${p} runs through a part also set whole`);
+    });
+    if (seen.has(p) || [...seen].some((q) => q.startsWith(`${p}.`))) throw new Error(`definition: ${p} is set twice (whole, and part by part)`);
+    let o = out;
+    for (const k of keys.slice(0, -1)) o = Object.hasOwn(o, k) ? o[k] : (o[k] = {});
+    o[keys.at(-1)] = copy(v);
+    whole.add(p);
+    keys.forEach((_, i) => seen.add(keys.slice(0, i + 1).join('.')));
+  }
+  return out;
+}
+// A definition made fast, parts and all (functions, and typed arrays, aside),
+// so that what was made from it cannot drift from it.
+export function frozen(x) {
+  if (x !== null && typeof x === 'object' && !ArrayBuffer.isView(x)) {
+    Object.values(x).forEach(frozen);
+    Object.freeze(x);
+  }
+  return x;
+}

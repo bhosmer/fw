@@ -46,20 +46,10 @@ test('no building has more boxes than are asked for', () => {
 // differently, or not at all, is refused.
 test('the town\'s catalogue refuses what it cannot write', () => {
   for (const e of ['ix0 >> 1', 'ix0 << 1', 'ix0 % 3', 'ix0 & 1', 'ix0 / 2', 'W, D', 'bit(h)', 'bit(h + 1, 2)', 'field(h2, 3)', 'h + 1', 'ix0++', '1.5', '0x10', 'ix0 = 1', 'nothing']) {
-    TOWN_TYPES.push({ name: 'test', boxes: [['ix0', '0', 'iz0', 'ix1', e, 'iz1']] });
-    try {
-      assert.throws(() => townShapeJs(_V2.TOWN.H), /town:/, `${e} let through`);
-    } finally {
-      TOWN_TYPES.pop();
-    }
+    assert.throws(() => townShapeJs(_V2.TOWN.H, false, [...TOWN_TYPES, { name: 'test', boxes: [['ix0', '0', 'iz0', 'ix1', e, 'iz1']] }]), /town:/, `${e} let through`);
   }
   for (const t of [{ name: 'block', boxes: [] }, { name: 'test', needs: 'W >= 1', boxes: [] }, { name: 'test', needs: 'W >= 1', else: 'toString', boxes: [] }, { name: 'test', vars: { lo: '1' }, boxes: [] }]) {
-    TOWN_TYPES.push(t);
-    try {
-      assert.throws(() => townShapeJs(_V2.TOWN.H), /town:/, `${JSON.stringify(t)} let through`);
-    } finally {
-      TOWN_TYPES.pop();
-    }
+    assert.throws(() => townShapeJs(_V2.TOWN.H, false, [...TOWN_TYPES, t]), /town:/, `${JSON.stringify(t)} let through`);
   }
 });
 
@@ -72,7 +62,7 @@ test('the town stands as it did', () => {
   const mix = (x) => (d = Math.imul(d ^ (x & 0xffff), 16777619) >>> 0);
   for (let it = 0; it < 3000; it++) {
     const h = Math.floor(rnd() * 2 ** 32), h2 = Math.floor(rnd() * 2 ** 32);
-    for (const r of _V2.TOWN_PLANS.flat()) for (const dens of [15, 45, 80]) for (let k = 0; k < TOWN_SHAPES; k++) (shape(h, h2, r, dens, k) ?? [99]).forEach(mix);
+    for (const r of _V2.TOWN_PLANS.flat()) for (const dens of _V2.TOWN_DENSITY) for (let k = 0; k < TOWN_SHAPES; k++) (shape(h, h2, r, dens, k) ?? [99]).forEach(mix);
   }
   assert.equal(d.toString(16), '223afdea');
 });

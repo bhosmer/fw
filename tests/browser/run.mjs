@@ -259,12 +259,12 @@ check('the shader\'s town is the JavaScript\'s', async () => {
   const cases = [];
   for (let it = 0; it < 80; it++) {
     const h = it < 2 ? [0, 0xffffffff][it] : Math.floor(rnd() * 2 ** 32), h2 = it < 2 ? [0, 0xffffffff][it] : Math.floor(rnd() * 2 ** 32);
-    for (const r of lots) for (const dens of [15, 45, 80, 100]) for (let k = 0; k < T.TOWN_SHAPES; k++) cases.push([h, h2, r, dens, k]);
+    for (const r of lots) for (const dens of [..._V2.TOWN_DENSITY, 100]) for (let k = 0; k < T.townShapes(_V2.townTypes); k++) cases.push([h, h2, r, dens, k]);
   }
   const fs = `#version 300 es
 precision highp float; precision highp int;
 const int TOWN_H = ${TOWN.H};
-${T.townShapeGlsl()}
+${T.townShapeGlsl(_V2.townTypes)}
 uniform highp usampler2D uIn;
 uniform int uW;
 out ivec4 o;
