@@ -16,6 +16,8 @@
 // An expression may hold whole numbers, + - *, comparisons, && || !, ?: and
 // parentheses, the names it is given, and the language's helpers.
 
+import { glf } from './util.js';
+
 const OPS = new Set(['+', '-', '*', '<', '>', '<=', '>=', '==', '!=', '?', ':', '(', ')', ',', '&&', '||', '!']);
 const TOKEN = /[A-Za-z_]\w*|\d+|>>>?|<<|\+\+|--|&&|\|\||[<>=!]=|\S/g;
 
@@ -313,13 +315,18 @@ export const reask = (js, d, ask) =>
 // What the cell writers (the halls' pieces, the arcology's cityPieces)
 // write alike, in GLSL or JavaScript (js): a function's opening line, from
 // its parameters' types; a declaration (changing: one that changes after);
-// a counted loop; a piece's distance (D), no piece (NOTHING), and the ray's
-// state (RAY: whether there is one; X: how far it goes in the piece).
+// a counted loop; a number, as a float (in JavaScript exactly, -0 too);
+// a vector of floats as a function's argument (in JavaScript, three
+// arguments: so only in a call) and one of whole numbers (an array); a piece's distance (D), no piece (NOTHING), and the
+// ray's state (RAY: whether there is one; X: how far it goes in the piece).
 export function writer(js) {
   return {
     fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
     decl: (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`,
     loop: (v, from, to) => `for (${js ? 'let' : 'int'} ${v} = ${from}; ${v} < ${to}; ${v}++) {`,
+    num: (x) => (js ? (Object.is(x, -0) ? '-0' : String(x)) : glf(x)),
+    vec3Arg: (xs) => (js ? xs.join(', ') : `vec3(${xs.join(', ')})`),
+    ivec3: (xs) => (js ? `[${xs.join(', ')}]` : `ivec3(${xs.join(', ')})`),
     D: js ? 'S.d' : 'gD',
     NOTHING: js ? 'NONE' : '1e9',
     RAY: js ? 'S.ray' : 'gRay',

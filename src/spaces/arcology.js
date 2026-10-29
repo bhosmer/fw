@@ -1053,43 +1053,43 @@ export function makeArcology(set) {
   const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
 
   // The city's own pieces, in either language (js: true, or GLSL), written
-  // once: each of the building's solids from its planes (upright or along a
-  // slant: see PLANES), as solidN, and solid(k); the plaza's air (see
-  // plaza), from the solids' bounds and the near cells' lists (see NEAR);
-  // and a ground cell's (see groundAir). (The JavaScript's, made into
-  // functions below; the point along the slants, SL, as setPoint sets it.)
-  // A solid's plane is worked out in each language's own way: in GLSL in
-  // whole numbers, then the small parts in floats, times one over its
-  // length; in JavaScript in doubles, divided by it.
+  // once: where the middle city cell is (fromMiddle); each of the
+  // building's solids from its planes (upright or along a slant: see
+  // PLANES), as solidN, and solid(k); the plaza's air (see plaza), from the
+  // solids' bounds and the near cells' lists (see NEAR); and the ground's
+  // cells (see groundCell). (The JavaScript's, made into functions below;
+  // the point along the slants, SL, as setPoint sets it.)
   function cityPieces(js) {
+    // (Where the languages differ: what twin.writer writes, the solids'
+    // dispatch (a switch, or a list), which of the near cells the cell is (a
+    // scan, or a lookup), the point along a slant, and the point q.
+    // Otherwise the text is both's: in JavaScript float, min and max are as
+    // GLSL has them, and points are arrays.)
+    const { fn, decl, loop, num, vec3Arg, ivec3, D, NOTHING, RAY, X } = twin.writer(js);
+    const middle = [
+      '// Where the middle city cell is from this one, in lattice units.',
+      fn('ivec3', 'fromMiddle', ['ivec3 id']),
+      `  return ${ivec3([`(id.x - ${MID}) * R`, `(id.y - ${ROW_ID}) * R`, `(id.z - ${MID}) * R`])};`,
+      '}',
+    ];
+    // (A plane, from its offset as a whole number and the rest: times one
+    // over its length, its normal from the plane as stored.)
+    const plane = (p, whole, rest) => `solidPlane((float(${whole}) + ${num(p.scale)} * ${rest}) * ${num(1 / p.len)}, ${vec3Arg(p.n.map((x) => num(x / p.len)))});`;
     const solids = SOLIDS.map((sd, j) => {
-      const lines = planesOf(sd).map((p) => {
-        // (In JavaScript, -0 kept as such.)
-        const nrm = js ? p.n.map((x) => (Object.is(x / p.len, -0) ? '-0' : String(x / p.len))).join(', ') : `vec3(${p.n.map((x) => glf(x / p.len)).join(', ')})`;
+      const lines = planesOf(sd).flatMap((p) => {
         if (p.dir < 3) {
-          const a = js ? `[${p.dir}]` : `.${'xyz'[p.dir]}`;
-          return js
-            ? `  solidPlane((${p.scale} * L${a} - (${p.K} - ${p.scale} * o${a}) + ${p.scale} * f${a}) / ${p.len}, ${nrm});`
-            : `  solidPlane((float(${p.scale} * L${a} - (${p.K} - ${p.scale} * o${a})) + ${glf(p.scale)} * f${a}) * ${glf(1 / p.len)}, ${nrm});`;
+          const a = 'xyz'[p.dir];
+          return [plane(p, `${p.scale} * L.${a} - (${p.K} - ${p.scale} * o.${a})`, `f.${a}`)];
         }
-        const m = p.m, i = p.dir - 3, o = js ? ['o[0]', 'o[1]', 'o[2]'] : ['o.x', 'o.y', 'o.z'];
-        const k = `${p.K} - ${p.scale} * (${m[0]} * ${o[0]} + ${m[1]} * ${o[1]} + ${m[2]} * ${o[2]})`;
-        return js
-          ? `  solidPlane((${p.scale} * SL.Ls[${i}] - (${k}) + ${p.scale} * SL.Fs[${i}]) / ${p.len}, ${nrm});`
-          : `  fr = slantAt(${i}, n);\n  solidPlane((float(${p.scale} * n - (${k})) + ${glf(p.scale)} * fr) * ${glf(1 / p.len)}, ${nrm});`;
+        const m = p.m, i = p.dir - 3;
+        const k = `${p.K} - ${p.scale} * (${m[0]} * o.x + ${m[1]} * o.y + ${m[2]} * o.z)`;
+        return [js ? `n = SL.Ls[${i}];\n  fr = SL.Fs[${i}];` : `fr = slantAt(${i}, n);`, plane(p, `${p.scale} * n - (${k})`, 'fr')];
       });
-      return js
-        ? `function solid${j}(L, f, o) {\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`
-        : `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  int n;\n  float fr;\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
+      return [fn('float', `solid${j}`, ['ivec3 L', 'vec3 f', 'ivec3 o']), ...[decl('int', 'n', true), decl('float', 'fr', true), 'solidPiece();', ...lines, 'return solidDone();'].map((l) => '  ' + l), '}'].join('\n');
     });
     const solid = js
       ? `const SOLID_FNS = [${SOLIDS.map((_, j) => `solid${j}`).join(', ')}];\nfunction solid(k, L, f, o) {\n  return SOLID_FNS[k](L, f, o);\n}`
       : `float solid(int k, ivec3 L, vec3 f, ivec3 o) {\n  switch (k) {\n${SOLIDS.map((_, j) => `    case ${j}: return solid${j}(L, f, o);`).join('\n')}\n  }\n  return 1e9;\n}`;
-    // (Where the languages differ: what twin.writer writes, which of the
-    // near cells the cell is (a scan, or a lookup), and the point q.
-    // Otherwise the text is both's: in JavaScript float, min and max are as
-    // GLSL has them, and points are arrays.)
-    const { fn, decl, loop, D, NOTHING, RAY, X } = twin.writer(js);
     const near = js
       ? [decl('int', 'n = NEAR_AT.get(o.map((x) => x / R).join()) ?? -1')]
       : [decl('int', 'n = -1', true), `${loop('j', 0, 'NNEAR')} if (NEAR_CELLS[j] == o / R) n = j; }`];
@@ -1132,6 +1132,19 @@ export function makeArcology(set) {
       '}',
     ];
     const ground = [
+      '// The ground away from the building (Basil, 2026-10-28: no cavities in it',
+      "// but very near the building): a level-(CITY + 1) cell of the plaza's row,",
+      "// beyond the table's bounds across (see VOLUME), holds no halls. The floor",
+      "// is on its cells' sides: under it, solid; over it, the plaza's air, which",
+      "// is the city's own: this level adds none (so that the floor is the city's",
+      '// surface alone, not a tie between two levels on one plane). (own: the',
+      "// cell's place in its city cell.)",
+      fn('bool', 'groundCell', ['ivec3 own', 'ivec3 up']),
+      `  if (up.y != ${ROW_ID}) return false;`,
+      '  ' + decl('ivec3', 'o = fromMiddle(up)'),
+      '  ' + decl('int', 'vx = o.x + own.x - VOL_LO.x, vz = o.z + own.z - VOL_LO.z'),
+      '  return vx < 0 || vz < 0 || vx >= VOL_SIZE.x || vz >= VOL_SIZE.z;',
+      '}',
       fn('float', 'groundAir', ['ivec3 L', 'vec3 f']),
       "  // (No nearer air than the cell's sides, past which another cell may have",
       "  // some: under the floor too, which is on cells' sides.)",
@@ -1139,8 +1152,8 @@ export function makeArcology(set) {
       '  return max(e, 0.0);',
       '}',
     ];
-    const text = (lines) => (js ? twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'SLO[k]', 'SHI[k]']) : lines.join('\n'));
-    return { solids: `${solids.join('\n')}\n${solid}`, plaza: text(plaza), ground: text(ground) };
+    const text = (lines) => (js ? twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'id', 'own', 'up', 'SLO[k]', 'SHI[k]', 'VOL_LO', 'VOL_SIZE']) : lines.join('\n'));
+    return { middle: text(middle), solids: text([...solids, solid]), plaza: text(plaza), ground: text(ground) };
   }
   const CITY_GLSL = cityPieces(false);
 
@@ -1281,10 +1294,7 @@ float solidOut(int i, vec3 q) {
   return s;
 }
 
-// Where the middle city cell is from this one, in lattice units.
-ivec3 fromMiddle(ivec3 id) {
-  return (id - ivec3(${MID}, ${ROW_ID}, ${MID})) * R;
-}
+${CITY_GLSL.middle}
 // Where the halls may have rooms (see spaceRoom in halls.js): not in the
 // ground away from the building (Basil, 2026-10-28): at the city's level, in
 // the plaza's row and under it, only in the city cells by the building's
@@ -1309,18 +1319,6 @@ uvec4 relief(ivec3 id, ivec3 up) {
 int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); } // floor, b > 0
 int cdiv(int a, int b) { return -fdiv(-a, b); } // ceiling, b > 0
 
-// The ground away from the building (Basil, 2026-10-28: no cavities in it
-// but very near the building): a level-(CITY + 1) cell of the plaza's row,
-// beyond the table's bounds across (see VOLUME), holds no halls. The floor
-// is on its cells' sides: under it, solid; over it, the plaza's air, which
-// is the city's own: this level adds none (so that the floor is the city's
-// surface alone, not a tie between two levels on one plane). (own: the
-// cell's place in its city cell.)
-bool groundCell(ivec3 own, ivec3 up) {
-  if (up.y != ${ROW_ID}) return false;
-  ivec3 v = fromMiddle(up) + own - VOL_LO;
-  return v.x < 0 || v.z < 0 || v.x >= VOL_SIZE.x || v.z >= VOL_SIZE.z;
-}
 ${CITY_GLSL.ground}
 
 // The rectangle of face k at level lv that the point is in (u along the
@@ -2163,7 +2161,14 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // written below, made into functions, as by the rest.)
   const SL = { Ls: null, Fs: null };
 
-  const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
+  // The city's own pieces in JavaScript (see cityPieces), made into
+  // functions.
+  const NEAR_AT = new Map(NEAR_CELLS.map((c, n) => [c.join(), n]));
+  const CITY_JS = cityPieces(true);
+  const { fromMiddle, plaza, groundCell, groundAir } = new Function(
+    'P', 'SL', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE',
+    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${CITY_JS.middle}\n${CITY_JS.solids}\n${CITY_JS.plaza}\n${CITY_JS.ground}\nreturn { fromMiddle, plaza, groundCell, groundAir };\n//# sourceURL=cityPieces.gen.js`,
+  )(P, SL, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size);
 
   // The point along the diagonals (the shared pieces', see pieces.at), and
   // along the slants (from dg, or else from L and f).
@@ -2188,15 +2193,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return w === null ? null : { h, w };
   }
   const wellAir = (L, f, { h }) => slabHole(L, f, -M, G + 1, h, CITY);
-
-  // The city's own pieces in JavaScript (see cityPieces), made into
-  // functions.
-  const NEAR_AT = new Map(NEAR_CELLS.map((c, n) => [c.join(), n]));
-  const CITY_JS = cityPieces(true);
-  const { plaza, groundAir } = new Function(
-    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS',
-    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${CITY_JS.solids}\n${CITY_JS.plaza}\n${CITY_JS.ground}\nreturn { plaza, groundAir };\n//# sourceURL=cityPieces.gen.js`,
-  )(P, SL, fromMiddle, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS);
 
   let cellB = [0, 0, 0];
   // The sides a skin cell's pockets (or a cell's openings) run on
@@ -2699,13 +2695,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       if (ray && r > ray.reach) (ray.reach = r), ([ray.nx, ray.ny, ray.nz] = rn.slice(0, 3));
     }
     return a;
-  }
-
-  // See groundCell in the shader.
-  function groundCell(own, up) {
-    if (up[1] !== ROW_ID) return false;
-    const o = fromMiddle(up), v = [0, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
-    return v[0] < 0 || v[1] < 0 || v[0] >= VOLUME.size[0] || v[1] >= VOLUME.size[2];
   }
 
   // (ray: see hallsAir. Every cell answers it.)

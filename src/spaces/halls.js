@@ -399,8 +399,7 @@ function families(spec) {
 function pieces(js, levels, salt) {
   // (An expression (checked: see families), in the language.)
   const e = (x) => (js || typeof x === 'number' ? String(x) : twin.glsl(LANG, x));
-  const num = (x) => (js ? String(x) : glf(x));
-  const { fn, decl, loop, D, NOTHING } = twin.writer(js);
+  const { fn, decl, loop, num, D, NOTHING } = twin.writer(js);
   // (The kind the hash's number t picks: for each kind, the lines give(kind)
   // writes, one kind's only; none: what is returned instead, below the first
   // kind's share, when that kind is nothing.)
