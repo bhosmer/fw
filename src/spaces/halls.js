@@ -83,7 +83,7 @@ import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define,
 import * as P from '../pieces.js';
 import * as twin from '../twin.js';
 
-const { S, at, aim, through, h01, beyond, NONE } = P;
+const { h01 } = P;
 
 export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
@@ -323,12 +323,13 @@ function families(spec) {
   return out;
 }
 
-// The halls' pieces in either language (js: true, or GLSL), from their kinds
-// (see families): roomHigh (a room's height, by the cell's hash), wallShape
+// The halls in either language (js: true, or GLSL), from their kinds (see
+// families): roomHigh (a room's height, by the cell's hash), wallShape
 // (which opening a wall has: its middle, half width, sill, rise and top),
-// wallOpening, slabOpening, furniture and roomAir (see hallsCell); and, in
-// JavaScript, furnitureKind (for the planner).
-function pieces(js, kinds) {
+// wallOpening, slabOpening, furniture and roomAir, the pieces; the cell
+// (hallsCell in GLSL, hallsAir in JavaScript); and, in JavaScript,
+// furnitureKind (for the planner).
+function pieces(js, kinds, salt) {
   // (An expression (checked: see families), in the language.)
   const e = (x) => (js || typeof x === 'number' ? String(x) : twin.glsl(LANG, x));
   const num = (x) => (js ? String(x) : glf(x));
@@ -453,9 +454,94 @@ function pieces(js, kinds) {
       return [...(not.length ? [`if (${not.join(' || ')}) return null;`] : []), `return '${k.name}';`];
     }, 'null'), '}');
   }
+  // The halls cell: its room, and of the
+  // openings in its faces, those in the nearer face on each axis. Of the
+  // pieces of air the point is in, the ray stays in air to the end of
+  // whichever it is in for longest. Each piece is first asked only its
+  // distance; only one the point turns out to be in is asked again, for
+  // where the ray leaves it (asking that of every piece costs far more).
+  // (Where the languages differ: a cell's hash, salted or not; whether a
+  // cell has a room; a neighbour's id, d from this one; and a piece the
+  // point is in, d its distance as first asked, asked again for the ray.
+  // Otherwise the text is both's: in JavaScript float and abs are as GLSL
+  // has them, min and max the language's own, and a whole number is halved
+  // by div.)
+  const hash = (id, s) => `hashCell(${id}, ${s === undefined ? 'seed' : `seed ^ ${js ? `0x${(s >>> 0).toString(16)}` : hexu(s)}`})`;
+  const hasRoom = (id) => (js ? `built(${id}, seed, rule)` : `built(${id}, seed)`);
+  const next = (d) => (js ? `wrapId([${d.map((x, a) => (x === 0 ? `id[${a}]` : `id[${a}] + (${x})`)).join(', ')}])` : `wrapId(id + ivec3(${d.join(', ')}))`);
+  const most = (f, xs) => xs.reduce((a, x) => `${f}(${a}, ${x})`);
+  const half = (x) => (js ? `div(${x}, 2)` : twin.HELPERS.div.glsl([x, '2']));
+  const through = (d, ask) => (js ? [`through(ray, ${d}, () => ${ask});`] : [`if (ray && ${d} + gO <= 0.0) {`, '  gRay = true;', `  ${ask};`, '  gRay = false;', '  if (gX > reach) { reach = gX; nrm = gN; }', '}']);
+  const wall = (x) => (x
+    ? `wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, ${js ? '0, 2' : 'EX, EZ'})`
+    : `wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, ${js ? '2, 0' : 'EZ, EX'})`);
+  const slabIn = 'slabOpening(L, f, hy, H, hwy)', roomIn = 'roomAir(L, f, H, hf, h01(hdn), h01(hup))';
+  // (In GLSL, the cell asks its pieces with gRay clear but where it says,
+  // and gives it back as it was: see hallsCell below.)
+  out.push(js ? 'function hallsAir(L, f, id, seed, dg, rule, ray) {' : 'float hallsCellIn(ivec3 L, vec3 f, ivec3 id, uint seed, bool ray, out float reach, out vec3 nrm) {');
+  out.push(...(js ? ['at(L, f, dg);', 'if (ray) aim(ray);'] : ['reach = -1.0;', 'nrm = vec3(0.0);']).map((l) => '  ' + l));
+  out.push(
+    ...[
+      decl('bool', `here = ${hasRoom('id')}`),
+      // (A cell with no room is measured as a room filling it.)
+      decl('int', `H = here ? roomHigh(${hash('id')}) : HHI`),
+      decl('uint', `hup = ${hash('id', salt.slab)}`),
+      decl('uint', `hdn = ${hash(next([0, -1, 0]), salt.slab)}`),
+      decl('uint', `hf = ${hash('id', salt.furniture)}`),
+      decl('float', `room = ${NOTHING}`, true),
+      'if (here) {',
+      `  room = ${roomIn};`,
+      ...through('room', roomIn).map((l) => '  ' + l),
+      '}',
+      // Openings reach only one unit into the room; deeper in, they change
+      // nothing.
+      'if (room < -1.0) return room;',
+      // Only the nearer face on each axis can matter to a point in this cell.
+      decl('bool', `hx = beyond(L.x, f.x, C), hz = beyond(L.z, f.z, C), hy = beyond(L.y, f.y, M + ${half('H')})`),
+      decl('uint', `hwx = ${hash('hx ? id : ' + next([-1, 0, 0]), salt.wallX)}, hwz = ${hash('hz ? id : ' + next([0, 0, -1]), salt.wallZ)}, hwy = hy ? hup : hdn`, true),
+      // A face has an opening only if there is a room on one side of it at
+      // least. From a room, an opening into a solid cell is a niche.
+      'if (!here) {',
+      `  if (!${hasRoom(next(['hx ? 1 : -1', 0, 0]))}) hwx = 0${js ? '' : 'u'};`,
+      `  if (!${hasRoom(next([0, 0, 'hz ? 1 : -1']))}) hwz = 0${js ? '' : 'u'};`,
+      `  if (!${hasRoom(next([0, 'hy ? 1 : -1', 0]))}) hwy = 0${js ? '' : 'u'};`,
+      '}',
+      decl('float', `ax = ${wall(true)}, az = ${wall(false)}, ay = ${slabIn}`),
+      ...through('ax', wall(true)),
+      ...through('az', wall(false)),
+      ...through('ay', slabIn),
+      // From inside the slab over a low room, the nearest air may be the
+      // room above. This cell says nothing else about its neighbours' rooms.
+      decl('float', `above = ${most('max', ['float(M - L.x) - f.x', 'float(L.x - (R - M)) + f.x', 'float(M - L.z) - f.z', 'float(L.z - (R - M)) + f.z', 'float(R + M - L.y) - f.y'])}`),
+      decl('float', `a = ${most('min', ['room', 'above', 'ax', 'az', 'ay'])}`),
+      'if (a <= 0.0) return a;',
+      // In solid, a must not overstate how far the nearest air is, and the
+      // `above` only looked at part of it. Air it did not look at is at least
+      // this far: the far-side openings of this cell, which come no nearer
+      // than M + 1 to their own side (so C - M - 1 from the middle across,
+      // and H / 2 - 1 from it up or down, H being at least HLO); and
+      // whatever the neighbours hold, none of which comes within M of the
+      // cell boundary unseen.
+      js ? 'const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 q = vec3(L) + f;',
+      decl('float', `unseen = ${most('min', ['abs(q.x - float(C)) + float(C - M - 1)', 'abs(q.z - float(C)) + float(C - M - 1)', `abs(q.y - float(M + ${half('H')})) + float(${half('HLO')} - 1)`, `${most('min', ['q.x', 'float(R) - q.x', 'q.y', 'float(R) - q.y', 'q.z', 'float(R) - q.z'])} + float(M)`])}`),
+      `return ${most('min', ['a', 'unseen'])};`,
+    ].map((l) => '  ' + l),
+    '}',
+  );
+  if (!js)
+    out.push(
+      'float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {',
+      '  bool ray = gRay;',
+      '  gRay = false;',
+      '  float d = hallsCellIn(L, f, id, seed, ray, reach, nrm);',
+      '  gRay = ray;',
+      '  return d;',
+      '}',
+    );
+
   // (In JavaScript, a point's coordinates are arrays.)
   const text = out.join('\n');
-  return js ? text.replace(/\b([Lf])\.([xyz])\b/g, (_, v, a) => `${v}[${'xyz'.indexOf(a)}]`) : text;
+  return js ? text.replace(/\b([Lfq])\.([xyz])\b/g, (_, v, a) => `${v}[${'xyz'.indexOf(a)}]`) : text;
 }
 
 // The halls, made from HALLS with what set changes (see define in util.js):
@@ -470,11 +556,22 @@ export function makeHalls(set) {
   const to = (part, name) => kinds[part].find((k) => k.name === name).to;
   const C = R / 2;
   const HHI = R - 2 * M;
-  // The pieces in JavaScript, made into functions.
-  const { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind } = new Function(
-    'P', 'C', 'M', 'R', 'HLO', 'FAR', 'H2',
-    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\n${twin.jsHelpers(LANG)}\n${pieces(true, kinds)}\nreturn { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind };\n//# sourceURL=hallsPieces.gen.js`,
-  )(P, C, M, R, HLO, FAR, Math.SQRT1_2);
+  // Does this cell have a room in it? (rule: where the space allows a room,
+  // as spaceRoom in the GLSL; none, everywhere.)
+  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= threshold(spec.solid);
+  // The halls in JavaScript, made into functions (the flight asks the cell
+  // every frame: asking the GPU would mean waiting for it; the tests compare
+  // the two languages); and of them, hallsAir:
+  // the halls cell's distance at L + f (dg: its diagonals, see pieces.at; rule:
+  // where the space allows a room, as spaceRoom in the GLSL; none,
+  // everywhere). And if ray is given ({ dir }), for a ray along dir from
+  // there: how far it goes in the piece of air it is in (reach, in lattice
+  // units; less than 0, in solid), and the surface it meets there (nx, ny,
+  // nz); known says whether the cell answers that (here, always).
+  const { roomHigh, wallShape, furnitureKind, hallsAir } = new Function(
+    'P', 'C', 'M', 'R', 'HLO', 'HHI', 'FAR', 'H2', 'hashCell', 'wrapId', 'built',
+    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\nconst float = (x) => x, abs = Math.abs;\n${twin.jsHelpers(LANG)}\n${pieces(true, kinds, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
+  )(P, C, M, R, HLO, HHI, FAR, Math.SQRT1_2, hashCell, wrapId, built);
 
   // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
   // cell, whatever its level.)
@@ -499,101 +596,11 @@ bool built(ivec3 id, uint seed) { return spaceRoom(id, seed) && h01(hashCell(id,
 // put a point half a unit on the wrong side.)
 bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 
-${pieces(false, kinds)}
+${pieces(false, kinds, salt)}
 
-float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {
-  reach = -1.0;
-  nrm = vec3(0.0);
-  uint hc = hashCell(id, seed);
-  bool here = built(id, seed);
-  int H = here ? roomHigh(hc) : HHI;
-
-  // Of the pieces of air the point is in, the ray stays in air to the end of
-  // whichever it is in for longest. Each piece is first asked only its
-  // distance; only one the point turns out to be in is asked again, for
-  // where the ray leaves it (asking that of every piece costs far more).
-  bool ray = gRay;
-  gRay = false;
-  float room = 1e9;
-  uint hup = hashCell(id, seed ^ ${hexu(salt.slab)});
-  uint hdn = hashCell(wrapId(id - ivec3(0, 1, 0)), seed ^ ${hexu(salt.slab)});
-  uint hf = hashCell(id, seed ^ ${hexu(salt.furniture)});
-  if (here) {
-    room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
-    if (ray && room + gO <= 0.0) {
-      gRay = true;
-      roomAir(L, f, H, hf, h01(hdn), h01(hup));
-      gRay = false;
-      reach = gX;
-      nrm = gN;
-    }
-  }
-  // Openings reach only one unit into the room; deeper in, they change nothing.
-  if (room < -1.0) {
-    gRay = ray;
-    return room;
-  }
-
-  // Only the nearer face on each axis can matter to a point in this cell.
-  bool hx = beyond(L.x, f.x, C), hz = beyond(L.z, f.z, C), hy = beyond(L.y, f.y, M + H / 2);
-  ivec3 ox = hx ? id : wrapId(id - ivec3(1, 0, 0));
-  ivec3 oz = hz ? id : wrapId(id - ivec3(0, 0, 1));
-  uint hwx = hashCell(ox, seed ^ ${hexu(salt.wallX)}), hwz = hashCell(oz, seed ^ ${hexu(salt.wallZ)});
-  uint hwy = hy ? hup : hdn;
-  if (!here) {
-    // A face has an opening only if there is a room on one side of it at
-    // least. From a room, an opening into a solid cell is a niche.
-    if (!built(wrapId(id + ivec3(hx ? 1 : -1, 0, 0)), seed)) hwx = 0u;
-    if (!built(wrapId(id + ivec3(0, 0, hz ? 1 : -1)), seed)) hwz = 0u;
-    if (!built(wrapId(id + ivec3(0, hy ? 1 : -1, 0)), seed)) hwy = 0u;
-  }
-  float ax = wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, EX, EZ);
-  float az = wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, EZ, EX);
-  float ay = slabOpening(L, f, hy, H, hwy);
-  gRay = ray;
-  if (ray && ax + gO <= 0.0) {
-    wallOpening(1, L.x, f.x, L.z, f.z, L.y, f.y, hx, hwx, EX, EZ);
-    if (gX > reach) { reach = gX; nrm = gN; }
-  }
-  if (ray && az + gO <= 0.0) {
-    wallOpening(0, L.z, f.z, L.x, f.x, L.y, f.y, hz, hwz, EZ, EX);
-    if (gX > reach) { reach = gX; nrm = gN; }
-  }
-  if (ray && ay + gO <= 0.0) {
-    slabOpening(L, f, hy, H, hwy);
-    if (gX > reach) { reach = gX; nrm = gN; }
-  }
-
-  // From inside the slab over a low room, the nearest air may be the room
-  // above. This cell says nothing else about its neighbours' rooms.
-  float above = max(max(max(float(M - L.x) - f.x, float(L.x - (R - M)) + f.x),
-                        max(float(M - L.z) - f.z, float(L.z - (R - M)) + f.z)), float(R + M - L.y) - f.y);
-
-  float a = min(min(min(room, above), ax), min(az, ay));
-  if (a <= 0.0) return a;
-
-  // In solid, a must not overstate how far the nearest air is, and the above
-  // only looked at part of it. Air it did not look at is at least this far:
-  // the far-side openings of this cell, which come no nearer than M + 1 to
-  // their own side (so C - M - 1 from the middle across, and H / 2 - 1 from
-  // it up or down, H being at least HLO); and whatever the neighbours hold,
-  // none of which comes within M of the cell boundary unseen.
-  vec3 q = vec3(L) + f;
-  vec3 e = min(q, float(R) - q);
-  float unseen = min(min(abs(q.x - float(C)), abs(q.z - float(C))) + float(C - M - 1), abs(q.y - float(M + H / 2)) + float(HLO / 2 - 1));
-  unseen = min(unseen, min(e.x, min(e.y, e.z)) + float(M));
-  return min(a, unseen);
-}
 `;
 
-  // The same cell, in JavaScript (its pieces written above from the same
-  // rows). The flight asks this every frame (asking the GPU would mean
-  // waiting for it), so it must agree with the GLSL above: the tests compare
-  // the two.
-
   const ancestors = new Map(); // level -> where its cell sits in its parent
-  // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
-  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= threshold(spec.solid);
 
   // For finding a way through the halls (see planner.js): a cell's room, if
   // it has one (its height, its middle in its lattice units, and whether
@@ -634,61 +641,6 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
       out.push({ e, at, nb });
     }
     return out;
-  }
-
-  // The halls cell's distance at L + f (dg: its diagonals, see pieces.at). And
-  // if ray is given ({ dir }), for a ray along dir from there: how far it goes
-  // in the piece of air it is in (reach, in lattice units; less than 0, in
-  // solid), and the surface it meets there (nx, ny, nz); known says whether
-  // the cell answers that (here, always).
-  function hallsAir(L, f, id, seed, dg, rule, ray) {
-    at(L, f, dg);
-    if (ray) aim(ray);
-    const here = built(id, seed, rule);
-    const H = here ? roomHigh(hashCell(id, seed)) : HHI;
-    let room = NONE;
-    const hup = hashCell(id, seed ^ salt.slab);
-    const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab);
-    const hf = hashCell(id, seed ^ salt.furniture);
-    if (here) {
-      room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
-      through(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
-    }
-    // Openings reach only one unit into the room; deeper in, they change nothing.
-    if (room < -1) return room;
-
-    // Only the nearer face on each axis can matter to a point in this cell.
-    const hx = beyond(L[0], f[0], C), hz = beyond(L[2], f[2], C), hy = beyond(L[1], f[1], M + (H >> 1));
-    const ox = hx ? id : wrapId([id[0] - 1, id[1], id[2]]);
-    const oz = hz ? id : wrapId([id[0], id[1], id[2] - 1]);
-    let hwx = hashCell(ox, seed ^ salt.wallX), hwz = hashCell(oz, seed ^ salt.wallZ), hwy = hy ? hup : hdn;
-    if (!here) {
-      // A face has an opening only if there is a room on one side of it at
-      // least. From a room, an opening into a solid cell is a niche.
-      if (!built(wrapId([id[0] + (hx ? 1 : -1), id[1], id[2]]), seed, rule)) hwx = 0;
-      if (!built(wrapId([id[0], id[1], id[2] + (hz ? 1 : -1)]), seed, rule)) hwz = 0;
-      if (!built(wrapId([id[0], id[1] + (hy ? 1 : -1), id[2]]), seed, rule)) hwy = 0;
-    }
-    const wx = () => wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx, 0, 2);
-    const wz = () => wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz, 2, 0);
-    const wy = () => slabOpening(L, f, hy, H, hwy);
-    const ax = wx(), az = wz(), ay = wy();
-    through(ray, ax, wx);
-    through(ray, az, wz);
-    through(ray, ay, wy);
-
-    // From inside the slab over a low room, the nearest air may be the room
-    // above. This cell says nothing else about its neighbours' rooms.
-    const above = Math.max(M - L[0] - f[0], L[0] - (R - M) + f[0], M - L[2] - f[2], L[2] - (R - M) + f[2], R + M - L[1] - f[1]);
-
-    const a = Math.min(room, above, ax, az, ay);
-    if (a <= 0) return a;
-
-    // In solid, a must not overstate how far the nearest air is (see the GLSL).
-    const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];
-    const edge = Math.min(q[0], R - q[0], q[1], R - q[1], q[2], R - q[2]);
-    const unseen = Math.min(Math.abs(q[0] - C) + (C - M - 1), Math.abs(q[2] - C) + (C - M - 1), Math.abs(q[1] - (M + (H >> 1))) + ((HLO >> 1) - 1), edge + M);
-    return Math.min(a, unseen);
   }
 
   const halls = {
