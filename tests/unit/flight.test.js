@@ -99,31 +99,37 @@ test('the thread is the way we came, within reach', () => {
   for (let i = 0; i < pts.length; i += 3) assert.ok(Math.hypot(pts[i], pts[i + 1], pts[i + 2]) < range);
 });
 
+// The halls with nothing finer than level 0: there, a wall never opens.
+const bare = { ...halls, cellAir: (L, f, id, seed, dg, level, up) => (level <= 0 ? halls.cellAir(L, f, id, seed, dg, level, up) : 1) };
+
+// Fly straight ahead at speed until the room we are in is more than levels
+// up, calling each(flight) after every step; at most n steps.
+function press(flight, levels, n, each) {
+  for (let i = 0; i < n && !(flight.pos.F - flight.room > levels); i++) {
+    flight.step(0.1, [0, 0, -8]);
+    flight.sense();
+    each?.(flight);
+  }
+}
+
 // Flying at a surface that never opens takes us ever finer, and the space we
 // are really in ever further up: further than sense() looks as a rule.
 test('held at a surface for ever, we still know where the air is', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(bare, controls());
   flight.begin(true);
-  let deepest = 0;
-  wander(flight, 1500, (f) => {
-    f.sense();
-    assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}`);
-    deepest = Math.max(deepest, f.pos.F - f.room);
-  }, 10, 0.1, 8);
-  // (Past where it used to be lost: UP + FAR = 72 levels up. Which wander
-  // gets there depends on how the halls are laid out, and on every digit of
-  // the flight's arithmetic: seed 10 at SOLID 0.65.)
-  assert.ok(deepest > 72, `the room was never more than ${deepest} levels up`);
+  press(flight, 80, 1000, (f) => assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}`));
+  // (Past where it used to be lost: UP + FAR = 72 levels up.)
+  assert.ok(flight.pos.F - flight.room > 72, `the room was never more than ${flight.pos.F - flight.room} levels up`);
 });
 
 test('sent somewhere deep, we find the room we are in', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(bare, controls());
   flight.begin(true);
-  wander(flight, 480, null, 10, 0.1, 8); // (to where the room is 81 levels up)
+  press(flight, 80, 1000);
   const { F, frac } = flight.pos;
   const digits = new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()]));
   // (As a link would: nothing known but where.)
-  const there = new Flight(halls, controls());
+  const there = new Flight(bare, controls());
   Object.assign(there.pos, { F, frac: frac.slice(), digits });
   there.begin();
   assert.ok(there.clearance > 0 && there.room < F - 72, `clearance ${there.clearance}, room ${there.room} at ${F}`);
