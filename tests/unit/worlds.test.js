@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { WORLDS, makeWorld } from '../../src/worlds.js';
 import { Flight } from '../../src/flight.js';
+import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
 
@@ -17,7 +18,7 @@ function places(space, seed, n = 8) {
   const out = [];
   for (let i = 0; i < n; i++) {
     let flight = new Flight(space, controls());
-    flight.elsewhere(rnd);
+    elsewhere(flight, rnd);
     for (let k = 0; k < 4; k++) {
       flight.sense();
       out.push(flight);

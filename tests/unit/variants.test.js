@@ -6,6 +6,7 @@ import halls, { makeHalls } from '../../src/spaces/halls.js';
 import { viewFrag } from '../../src/shaders.js';
 import { levelSeed } from '../../src/util.js';
 import { Flight } from '../../src/flight.js';
+import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
 import { VARIANTS, makeWorld, fromLink } from '../../src/worlds.js';
@@ -150,7 +151,7 @@ test('a variant keeps what a world must', () => {
   let inAir = 0;
   for (let i = 0; i < 6; i++) {
     const flight = new Flight(space, { yaw: 0, pitch: 0, boost: () => 1 });
-    flight.elsewhere(rnd);
+    elsewhere(flight, rnd);
     for (let s = 0; s < 30; s++) flight.step(1 / 30, [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5].map((x) => x * 4));
     flight.sense();
     const c = Math.max(flight.clearance, 1e-3);

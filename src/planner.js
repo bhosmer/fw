@@ -17,10 +17,8 @@
 // units across from the corner of our cell, until they are turned into
 // offsets from us in level-F cells for the pilot.
 
-import { M } from './spaces/halls.js';
 import { levelSeed, wrapId } from './util.js';
 
-const PAST = M + 1; // how far either side of an opening its points are (a unit past its walls)
 const ACROSS = 60; // most rooms of one level looked through, from one
 const TRIES = 12; // most ways into the walls tried, looking for a way through them
 const UP = 4; // most levels up looked, for the air a cell is in
@@ -39,6 +37,17 @@ export class Planner {
     // cell: see cell): the same ones are asked about over and over.
     this.rooms = new Map();
     this.airs = new Map();
+  }
+
+  // The rooms' walls, half their thickness (as the space has it), and how
+  // far either side of an opening its points are (a unit past its walls).
+  get M() {
+    const m = this.flight.space.halfWall;
+    if (!(m > 0)) throw new Error('planner: a space whose rooms have no walls to plan by (halfWall)');
+    return m;
+  }
+  get past() {
+    return this.M + 1;
   }
 
   // Each search starts afresh (we will have moved), and may look at only
@@ -139,7 +148,7 @@ export class Planner {
       }
       const { c: p, i } = this.parent(j, x);
       const r = this.room(j - 1, p);
-      if (r && i[0] >= M && i[0] < this.R - M && i[2] >= M && i[2] < this.R - M && i[1] >= M && i[1] < M + r.H) found = { k: j - 1, c: p };
+      if (r && i[0] >= this.M && i[0] < this.R - this.M && i[2] >= this.M && i[2] < this.R - this.M && i[1] >= this.M && i[1] < this.M + r.H) found = { k: j - 1, c: p };
       x = p;
     }
     // Above the ground there is only sky.
@@ -191,7 +200,7 @@ export class Planner {
   through(c, o) {
     const R = this.R, C = R / 2;
     const at = c.map((x, a) => x * R + o.at[a]);
-    const front = at.map((x, a) => x - o.e[a] * PAST), beyond = at.map((x, a) => x + o.e[a] * PAST);
+    const front = at.map((x, a) => x - o.e[a] * this.past), beyond = at.map((x, a) => x + o.e[a] * this.past);
     const d = c.map((x, a) => x + o.e[a]);
     // (Only in a room with piers: elsewhere, nothing is in the way.)
     const lane = (p, x, k) => (this.room(k, x)?.piers ? [p.map((v, a) => (o.e[a] !== 0 || a === 1 ? v : x[a] * R + C))] : []);
@@ -206,7 +215,7 @@ export class Planner {
     for (const s of steps) {
       const [lane0, [front], [beyond], lane1] = this.through(s.c, { ...s.o, k: s.k });
       for (const p of [...lane0, front, beyond]) pts.push([s.k, p]);
-      if (s.up) pts.push([s.k, beyond.map((x, a) => x + s.o.e[a] * 2 * PAST)]);
+      if (s.up) pts.push([s.k, beyond.map((x, a) => x + s.o.e[a] * 2 * this.past)]);
       else for (const p of lane1) pts.push([s.k, p]);
     }
     const s = steps.at(-1);
@@ -225,7 +234,7 @@ export class Planner {
     const sub = this.frame(k + 1), r = this.frame(k) && this.room(k, c);
     if (!sub || !r) return [];
     const R = this.R, C = R / 2;
-    const lo = [M, M, M], hi = [R - M, M + r.H, R - M];
+    const lo = [this.M, this.M, this.M], hi = [R - this.M, this.M + r.H, R - this.M];
     const ways = [];
     for (const a of [0, 1, 2]) for (const side of [-1, 1]) {
       if ((only && only[a] !== side) || this.late()) continue;
@@ -251,7 +260,7 @@ export class Planner {
         const base = c.map((x, q) => x * R + i[q]);
         const mouth = base.map((x, q) => x + o.at[q] / R);
         const front = mouth.map((x, q) => x + e[q] * 1.5);
-        const inside = mouth.map((x, q) => x - (e[q] * PAST) / R);
+        const inside = mouth.map((x, q) => x - (e[q] * this.past) / R);
         const lane = inside.map((x, q) => (e[q] !== 0 || q === 1 ? x : base[q] + C / R));
         const mid = base.map((x, q) => x + rr.middle[q] / R);
         const face = [0, 0, 0];
@@ -377,7 +386,7 @@ export class Planner {
   toward(j, c, k, d, key, rnd) {
     const R = this.R, own = this.frame(j).own, box = this.room(k, d);
     // How far a cell of level j is from the room's box, in level-j cells.
-    const lo = d.map((v, a) => v * R + M), hi = d.map((v, a) => v * R + (a === 1 ? M + box.H : R - M));
+    const lo = d.map((v, a) => v * R + this.M), hi = d.map((v, a) => v * R + (a === 1 ? this.M + box.H : R - this.M));
     const far = (x) => x.reduce((s, v, a) => s + Math.max(0, lo[a] - (own[a] + v), own[a] + v + 1 - hi[a]), 0);
     const seen = new Map([[this.key(j, c), null]]);
     let open = [c];
@@ -446,7 +455,7 @@ export class Planner {
     for (const { c, e, at } of near.slice(0, n)) {
       const r = this.room(k, c);
       if (!r) continue;
-      const out = at.map((x, a) => x + e[a] * 3 * R), front = at.map((x, a) => x + e[a] * PAST), inside = at.map((x, a) => x - e[a] * PAST);
+      const out = at.map((x, a) => x + e[a] * 3 * R), front = at.map((x, a) => x + e[a] * this.past), inside = at.map((x, a) => x - e[a] * this.past);
       const lane = inside.map((x, a) => (e[a] !== 0 || a === 1 ? x : c[a] * R + R / 2));
       const points = [out, front, inside, ...(r.piers ? [lane] : []), this.middle(c, r)].map((p) => [k, p]);
       ways.push({ points, to: { k, c }, down: false, face: e.map((x) => -x) });
@@ -461,7 +470,7 @@ export class Planner {
     if (!r) return false;
     const R = this.R;
     return [0, 1, 2].every((a) => {
-      const lo = c[a] * R + M + margin, hi = c[a] * R + (a === 1 ? M + r.H : R - M) - margin;
+      const lo = c[a] * R + this.M + margin, hi = c[a] * R + (a === 1 ? this.M + r.H : R - this.M) - margin;
       return fr.here[a] > lo && fr.here[a] < hi;
     });
   }

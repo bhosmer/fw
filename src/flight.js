@@ -1,10 +1,12 @@
-// Where we are and how we move: what is around us at every scale, how far
-// the way ahead is open, each step and the trail of them. Nothing here draws
-// or waits on the GPU, so all of it can run anywhere (main.js shows it; the
-// tests fly it in Node).
-import { Position, DIAGONALS } from './position.js';
-import { levelSeed, wrapId } from './util.js';
-import { SLACK } from './shaders.js';
+// Where we are and how we move: what is around us at every scale (sensing),
+// and how far the way ahead is open, each step and the trail of them
+// (motion), which go by what sensing finds. Nothing here draws or waits on
+// the GPU, so all of it can run anywhere (main.js shows it; the tests fly it
+// in Node). What it asks of the world is in air.js; where a visit starts, in
+// arrival.js; what of it to draw, in view.js; what the tour asks of it, in
+// pilot.js.
+import { Position } from './position.js';
+import { airAt } from './air.js';
 
 // Levels looked at each frame, relative to the working level F: UP coarser
 // ones (so a wall we are pressed against, many scales up, is still known
@@ -24,8 +26,6 @@ const FAR = 60;
 // number holds (R^223 is about the most). Somewhere with no air in sight the
 // room is looked for up to here.
 const DEEPEST = 200;
-// How many levels coarser than the room we are in to look for a way out.
-const OUT = 4;
 
 // F follows our clearance: it is kept above REFINE_BELOW level-(F + 1)
 // cells and below COARSEN_ABOVE level-F cells.
@@ -94,47 +94,10 @@ export class Flight {
     this.pos.slants = space.slants ?? [];
   }
 
-  // One level's air distance at the point v from the camera, in level-F
-  // cells (what levelAir in shaders.js gives), worked out here so that
-  // nothing waits on the GPU. And if ray is given ({ dir }), what the world
-  // says of a ray from there along dir (see hallsAir in spaces/halls.js).
+  // One level's air distance at the point v from the camera (see airAt in
+  // probe.js), in the space we are in.
   airAt(rec, v = [0, 0, 0], ray = null) {
-    if (ray) ray.known = false; // (a world that does not say, does not know)
-    const R = this.R;
-    const L = [0, 0, 0], f = [0, 0, 0], id = [0, 0, 0], cell = [0, 0, 0];
-    for (let a = 0; a < 3; a++) {
-      const s = rec.f[a] + v[a] * rec.sig;
-      const r = Math.floor(s + 0.5);
-      f[a] = s - r;
-      const I = rec.L[a] + r;
-      // A point on a cell boundary belongs to the cell it is just inside.
-      const c = Math.floor((I - (f[a] < 0 ? 1 : 0) + 0.5) / R);
-      L[a] = I - c * R;
-      id[a] = rec.id[a] + c;
-      cell[a] = c;
-    }
-    // The same along the diagonals (see Position.levels).
-    const dg = { Lp: [0, 0, 0], fp: [0, 0, 0], Lm: [0, 0, 0], fm: [0, 0, 0] };
-    DIAGONALS.forEach(([a, b], p) => {
-      const sp = rec.fp[p] + (v[a] + v[b]) * rec.sig, sm = rec.fm[p] + (v[a] - v[b]) * rec.sig;
-      const rp = Math.floor(sp + 0.5), rm = Math.floor(sm + 0.5);
-      dg.fp[p] = sp - rp;
-      dg.fm[p] = sm - rm;
-      dg.Lp[p] = rec.Lp[p] + rp - (cell[a] + cell[b]) * R;
-      dg.Lm[p] = rec.Lm[p] + rm - (cell[a] - cell[b]) * R;
-    });
-    // And along the space's slants.
-    dg.Ls = [];
-    dg.fs = [];
-    (this.space.slants ?? []).forEach((m, k) => {
-      const s = rec.fs[k] + (m[0] * v[0] + m[1] * v[1] + m[2] * v[2]) * rec.sig;
-      const r = Math.floor(s + 0.5);
-      dg.fs[k] = s - r;
-      dg.Ls[k] = rec.Ls[k] + r - (m[0] * cell[0] + m[1] * cell[1] + m[2] * cell[2]) * R;
-    });
-    // (And the id of the cell's parent: see gUp in shaders.js.)
-    const up = rec.pid.map((p, a) => p + Math.floor((rec.id[a] - R * Math.floor(rec.id[a] / R) + cell[a]) / R));
-    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level, wrapId(up, R), ray);
+    return airAt(this.space, rec, v, ray);
   }
 
   // How far we are above the ground: the one plane over which there is only
@@ -235,23 +198,6 @@ export class Flight {
     return this.here.some((r) => (this.airAt(r, [0, 0, 0], ray), ray.known && ray.reach >= 0));
   }
 
-  // The way directly away from the nearest built surface (for the tour). Out
-  // in the open, none: there is nothing to keep off.
-  awayFrom() {
-    if (!(this.clearance > this.sky)) return [0, 0, 0];
-    const h = 0.25 * this.clearance;
-    const at = (v) => Math.max(this.sky + v[1], ...this.here.map((r) => -this.airAt(r, v) / r.sig));
-    const g = [0, 1, 2].map((a) => {
-      const v = [0, 0, 0];
-      v[a] = h;
-      const up = at(v);
-      v[a] = -h;
-      return up - at(v);
-    });
-    const l = Math.hypot(...g);
-    return l > 0 ? g.map((x) => x / l) : [0, 0, 0];
-  }
-
   // The levels around us, from the coarsest that matters: FAR above those we
   // draw, or the room we are in if that is further (but not past DEEPEST).
   around() {
@@ -333,50 +279,6 @@ export class Flight {
     this.fog = this.fogTarget;
   }
 
-  // Start somewhere new: a first visit is somewhere different each time,
-  // in the same world. Across, not up or down (which would take us out of
-  // the storey under the ground, or into the sky): our cell and its parent
-  // are anywhere in theirs. rand() gives numbers in [0, 1).
-  elsewhere(rand) {
-    const { pos, R } = this;
-    const reset = () => {
-      pos.F = 0;
-      pos.digits.clear();
-      pos.frac = this.space.start.slice();
-    };
-    // (Somewhere with room as it is, each try, working no coarser than the
-    // digits picked: walking on from somewhere without, as begin(true) does,
-    // or working at a scale they no longer tell apart, would bring many tries
-    // to the same place.)
-    const picked = [-1, 0];
-    for (let tries = 0; tries < 40; tries++) {
-      reset();
-      for (const j of picked) {
-        const d = pos.digit(j);
-        d[0] = Math.floor(rand() * R);
-        d[2] = Math.floor(rand() * R);
-      }
-      this.begin();
-      if (pos.F >= picked[0] && this.clearance >= 0.08) return this.faceOpen();
-    }
-    // (Failing that, where a first visit always began.)
-    reset();
-    this.begin(true);
-  }
-
-  // Turn level, to whichever of the four ways along the walls is open
-  // furthest. (Not the diagonals: in a closed room, the furthest of all is
-  // into a corner.)
-  faceOpen() {
-    let best = -1;
-    for (let k = 0; k < 4; k++) {
-      const yaw = (k * Math.PI) / 2;
-      const open = this.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
-      if (open > best) (best = open), (this.controls.yaw = yaw);
-    }
-    this.controls.pitch = 0;
-  }
-
   // Ease the things that should not jump: travel speed, and how far we can
   // see. (Until we have been somewhere with air in sight, there is no telling
   // how far we should see, and so nothing to ease toward.)
@@ -455,88 +357,5 @@ export class Flight {
     this.sense();
     this.settle(dt);
     return len;
-  }
-
-  // The levels to draw, seen out to maxT, at most n of them, each with how
-  // far away its nearest air is (near), from where we are now (which may be
-  // a step on from where sense() last looked); and all the levels around us,
-  // drawn or not. A level with no air in sight is solid as far as this frame
-  // is concerned.
-  visible(maxT, n) {
-    const { pos } = this;
-    const all = this.around();
-    let recs = all.filter((r) => r.level >= pos.F - UP);
-    for (const r of recs) r.near = Math.max(0, (this.airAt(r) - SLACK) / r.sig);
-    recs = recs.filter((r) => r.near < maxT);
-    if (recs.length > n) recs = this.mostVisible(recs, n);
-    return { recs, all };
-  }
-
-  // More levels have air in sight than can be drawn. In order, keep: what is
-  // right in front of us; the space we are in and the two levels that give
-  // its far walls their facade and texture; the spaces outside it; then the
-  // rest.
-  mostVisible(recs, n) {
-    const levels = recs.map((r) => r.level);
-    const within = (this.sensed.find((s) => s.air < 0) ?? this.sensed[0]).level;
-    const order = [
-      ...levels.filter((l) => l >= this.pos.F - 1).reverse(),
-      within, within + 1, within + 2,
-      ...levels.filter((l) => l < within).reverse(),
-      ...levels.slice().reverse(),
-    ];
-    const keep = new Set();
-    for (const l of order) if (keep.size < n && levels.includes(l)) keep.add(l);
-    return recs.filter((r) => keep.has(r.level));
-  }
-
-  // Which way is out: toward the nearest air of a level coarser than the
-  // room we are in, or under the ground, up to the sky. A direction, how
-  // far, in level-F cells, as the crow flies (the way there may well wind),
-  // and whether it is the sky; null out in the open.
-  outward() {
-    if (this.sky > 0 || this.room === null) return null;
-    let best = { dist: -this.sky, dir: [0, 1, 0], sky: true };
-    // (levels() works out from F, so it is asked for everything up to there.)
-    for (const r of this.pos.levels(this.room - OUT, this.pos.F)) {
-      if (r.level >= this.room) break;
-      const dist = this.airAt(r) / r.sig;
-      if (!(dist > 0) || dist >= best.dist) continue;
-      const h = 0.25 * dist;
-      const g = [0, 1, 2].map((a) => {
-        const v = [0, 0, 0];
-        v[a] = h;
-        const up = this.airAt(r, v);
-        v[a] = -h;
-        return up - this.airAt(r, v);
-      });
-      const len = Math.hypot(...g);
-      if (len > 0) best = { dist, dir: g.map((x) => -x / len), sky: false };
-    }
-    return best;
-  }
-
-  // The air of a level too coarse to draw, as the shader is to see it: the
-  // plane of its nearest surface. all: the levels around us (see visible).
-  outerAir(all) {
-    let best = null;
-    for (const r of all) {
-      if (r.level >= this.pos.F - UP) break;
-      const dist = -this.airAt(r) / r.sig;
-      if (dist > 0 && (!best || dist > best.dist)) best = { r, dist };
-    }
-    if (!best) return null;
-    const { r, dist } = best;
-    const h = 0.25 * dist;
-    const g = [0, 1, 2].map((a) => {
-      const v = [0, 0, 0];
-      v[a] = h;
-      const up = this.airAt(r, v);
-      v[a] = -h;
-      return this.airAt(r, v) - up;
-    });
-    const len = Math.hypot(...g);
-    if (!(len > 0)) return null;
-    return { level: r.level, dist, normal: g.map((x) => x / len) };
   }
 }

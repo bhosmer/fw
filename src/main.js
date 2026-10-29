@@ -2,9 +2,12 @@ import { Renderer, TAA_N } from './renderer.js';
 import { Controls } from './controls.js';
 import { WORLDS, makeWorld, fromLink, ADDED } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
-import { Pilot } from './pilot.js';
+import { Pilot, awayFrom, outward } from './pilot.js';
 import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
+import { elsewhere } from './arrival.js';
+import { visible, outerAir } from './view.js';
+import { trace, check, checkRays, compareRays } from './debug.js';
 import { Pacing } from './pacing.js';
 
 const help = document.getElementById('help');
@@ -66,9 +69,6 @@ const R = space.R;
 
 // Of the levels around us, the most that are drawn.
 const N_VIEW = 12;
-// How far from the camera, in a level's lattice units, fw.check compares the
-// shader with the JavaScript.
-const CHECK_REACH = 2000;
 
 const FOV_TAN = Math.tan((70 * Math.PI) / 360);
 const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
@@ -109,7 +109,7 @@ let schemeShown = 0; // when the scheme last changed, to name it for a moment
 function viewNow() {
   const fogLen = flight.fog * SCHEMES[scheme].fog;
   const maxT = 4 * Math.max(flight.fog, fogLen);
-  const { recs, all } = flight.visible(maxT, N_VIEW);
+  const { recs, all } = visible(flight, maxT, N_VIEW);
   const { fwd, right, up } = controls.camera();
   const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
@@ -125,7 +125,7 @@ function viewNow() {
     // (What fraction of the pixels each way the view is drawn at: see upscale.)
     upscale: snapping ? 1 : upscale,
     scheme: SCHEMES[scheme],
-    outer: flight.outerAir(all),
+    outer: outerAir(flight, all),
     sky: flight.skyHeight(),
     // (Deep down R^F is Infinity, and none times that no number at all.)
     sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
@@ -146,7 +146,7 @@ const whereNow = () => ({
   scale: flight.scale,
   sky: flight.sky,
   room: flight.room === null ? Infinity : Math.pow(R, pos.F - flight.room),
-  out: pilot.way === 'out' ? flight.outward() : null,
+  out: pilot.way === 'out' ? outward(flight) : null,
 });
 
 // The tour's eyes: a sparse picture of distances, a few times a second, read
@@ -251,7 +251,7 @@ function flip() {
 
 // Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
 function respawn() {
-  flight.elsewhere(Math.random);
+  elsewhere(flight, Math.random);
   renderer.reset();
   if (pilot.on) pilot.start(pos.F);
   controls.drop();
@@ -303,7 +303,7 @@ addEventListener('hashchange', () => {
   if (loadLocation()) flight.begin(), renderer.reset();
 });
 if (location.hash.length > 1 && loadLocation()) flight.begin();
-else flight.elsewhere(Math.random);
+else elsewhere(flight, Math.random);
 
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
@@ -364,7 +364,7 @@ function tick(now) {
     // tour picks its way on from wherever we end up facing), and the keys
     // and the wheel add their own travel to its.
     const steered = now - controls.turned < 800;
-    const tour = pilot.fly(dt, controls, flight.scale, () => flight.awayFrom(), steered).map((x) => x * controls.boost());
+    const tour = pilot.fly(dt, controls, flight.scale, () => awayFrom(flight), steered).map((x) => x * controls.boost());
     const hand = controls.wish();
     moved = flight.step(dt, tour.map((x, a) => x + hand[a]), controls.nudge(dt));
     pilot.moved(flight.lastMove, pos.F);
@@ -500,7 +500,7 @@ window.fw = {
         log.push({ t: i / 60, F: pos.F, phase: pilot.phase, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }
-      flight.step(1 / 60, pilot.fly(1 / 60, controls, flight.scale, () => flight.awayFrom()));
+      flight.step(1 / 60, pilot.fly(1 / 60, controls, flight.scale, () => awayFrom(flight)));
       pilot.moved(flight.lastMove, pos.F);
     }
     return log;
@@ -526,118 +526,11 @@ window.fw = {
     shown = '';
     return px;
   },
-  // March a ray the way the shader does, but here, where it can be watched:
-  // returns each step's position along the ray and every level's clearance.
-  // (We go back to where we were afterwards.)
-  trace(dir, steps = 60, finest = Infinity) {
-    const was = { F: pos.F, frac: pos.frac.slice(), digits: new Map([...pos.digits].map(([j, d]) => [j, d.slice()])) };
-    const log = [];
-    let t = 0;
-    for (let i = 0; i < steps; i++) {
-      flight.sense();
-      const unit = Math.pow(R, -pos.F);
-      const seen = flight.sensed.filter((s) => s.level <= finest);
-      const d = Math.max(...seen.map((s) => -s.air / s.sig));
-      log.push({ t, d: d * unit, levels: seen.filter((s) => s.level >= -1).map((s) => [s.level, s.air]) });
-      if (d <= 0) break;
-      pos.move(dir.map((x) => x * 0.9 * d));
-      t += 0.9 * d * unit;
-    }
-    Object.assign(pos, was);
-    flight.sense();
-    return log;
-  },
-  // Compare the JavaScript cell function with the shader's along a random
-  // flight, at the camera and at points round it out to a few cells away
-  // (where cells, diagonals and slants are found from the camera's): returns
-  // the worst disagreement found, in lattice units (and of those, the worst
-  // where the JavaScript says there is more air than the shader: more
-  // than there is, for the flight), and how many comparisons away from the
-  // camera were made.
-  check(n = 300, round = 15) {
-    let seed = 99;
-    const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-    let worst = { diff: 0 }, more = { diff: 0 }, compared = 0;
-    for (let i = 0; i < n; i++) {
-      if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
-      this.fly(0.05 + rnd() * 0.4, { f: 1 });
-      const recs = pos.levels(pos.F - UP, pos.F + DOWN);
-      const points = [[0, 0, 0]];
-      for (let k = 0; k < round; k++) {
-        const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], r = Math.pow(10, -3 + 4 * rnd()) / Math.hypot(...d);
-        points.push(d.map((x) => x * r));
-      }
-      renderer.probe(recs, points).forEach((gpu, k) => recs.forEach((r, j) => {
-        // (Only where the shader's numbers can tell: a level's lattice units
-        // from the camera in single precision, no further than its cells
-        // can be seen anyway.)
-        if (Math.max(...points[k].map(Math.abs)) * r.sig > CHECK_REACH) return;
-        compared += k > 0;
-        const cpu = flight.airAt(r, points[k]);
-        const diff = Math.abs(cpu - gpu[j]) / Math.max(1, Math.abs(cpu));
-        if (diff <= worst.diff && !(cpu < gpu[j] && diff > more.diff)) return;
-        const found = { diff, level: r.level, v: points[k], cpu, gpu: gpu[j], at: { F: pos.F, frac: pos.frac.slice(), digits: [...pos.digits].map(([j, d]) => [j, d.slice()]) } };
-        if (diff > worst.diff) worst = found;
-        if (cpu < gpu[j] && diff > more.diff) more = found;
-      }));
-    }
-    return { ...worst, more, compared };
-  },
-  // The same for rays, where the JavaScript answers them (see hallsAir in
-  // spaces/halls.js): along random directions, the axes and diagonals, from
-  // the camera and points round it, how far each level says a ray goes in
-  // its air and the surface it meets. The worst disagreement in reach, as a
-  // multiple of what single precision can tell there (more along a ray
-  // that grazes the surface); how many disagree about whether the point is
-  // in air at all (apart), or about the surface; and how many were compared,
-  // and of those, how many in air, by level.
-  checkRays(n = 150, round = 15) {
-    let seed = 7;
-    const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-    const AXES = [[1, 0, 0], [0, -1, 0], [0, 0, 1], [Math.SQRT1_2, Math.SQRT1_2, 0], [0, -Math.SQRT1_2, -Math.SQRT1_2]];
-    const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
-    for (let i = 0; i < n; i++) {
-      if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
-      this.fly(0.05 + rnd() * 0.4, { f: 1 });
-      const e = i % 3 === 0 ? AXES[(i / 3) % AXES.length] : [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
-      const points = [[0, 0, 0]];
-      for (let k = 0; k < round; k++) {
-        const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], r = Math.pow(10, -3 + 4 * rnd()) / Math.hypot(...d);
-        points.push(d.map((x) => x * r));
-      }
-      this.compareRays(pos.levels(pos.F - UP, pos.F + DOWN), points, e.map((x) => x / Math.hypot(...e)), sum);
-    }
-    return sum;
-  },
-  // (The comparing, for the levels recs at points round the camera along
-  // dir, added into sum. Not on a surface, nor where nudging the point by
-  // what single precision cannot tell changes the answer: there the two
-  // may rightly choose differently.)
-  compareRays(recs, points, dir, sum) {
-    renderer.probe(recs, points, dir).forEach((gpus, k) => recs.forEach((r, j) => {
-      const far = Math.max(...points[k].map(Math.abs)) * r.sig;
-      if (far > CHECK_REACH) return;
-      const tol = Math.max(1e-5, 1e-6 * (far + R));
-      const ray = { dir };
-      const a = flight.airAt(r, points[k], ray), gpu = gpus[j];
-      if (!ray.known || Math.abs(a) < tol) return;
-      const nudge = (s) => {
-        const q = { dir };
-        flight.airAt(r, points[k].map((x) => x + (s * tol) / r.sig), q);
-        return q.reach;
-      };
-      const slant = Math.max(Math.abs(dir[0] * ray.nx + dir[1] * ray.ny + dir[2] * ray.nz), 1e-3);
-      if ([nudge(1), nudge(-1)].some((x) => Math.abs(x - ray.reach) * slant > tol)) return;
-      sum.compared++;
-      if (ray.reach >= 0 !== gpu.reach >= 0) return void sum.apart++;
-      if (ray.reach < 0) return;
-      sum.inAir[r.level] = (sum.inAir[r.level] ?? 0) + 1;
-      const ratio = (Math.abs(ray.reach - gpu.reach) * slant) / tol;
-      if (ratio > sum.ratio) Object.assign(sum, { ratio, level: r.level, F: pos.F, v: points[k], dir, cpu: ray.reach, gpu: gpu.reach });
-      if (ratio < 1 && Math.hypot(ray.nx - gpu.n[0], ray.ny - gpu.n[1], ray.nz - gpu.n[2]) > 1e-3) sum.facing++;
-    }));
-    return sum;
-  },
+  // (The checks of the JavaScript against the shader: see debug.js.)
+  trace: (...a) => trace(window.fw, ...a),
+  check: (...a) => check(window.fw, ...a),
+  checkRays: (...a) => checkRays(window.fw, ...a),
+  compareRays: (...a) => compareRays(window.fw, ...a),
   // (Testing upscaling: the fraction of pixels drawn, as the frame time would set it.)
   set upscale(v) { upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
   get upscale() { return upscale; },

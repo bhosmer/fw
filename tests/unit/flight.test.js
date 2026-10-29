@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Flight } from '../../src/flight.js';
+import { elsewhere } from '../../src/arrival.js';
 import halls from '../../src/spaces/halls.js';
 import { rand } from './rand.js';
 import * as P from '../../src/pieces.js';
@@ -146,7 +147,7 @@ test('a first visit begins somewhere different each time, with room ahead', () =
   const places = new Set();
   for (let i = 0; i < 30; i++) {
     const flight = new Flight(halls, controls());
-    flight.elsewhere(rnd);
+    elsewhere(flight, rnd);
     assert.ok(flight.clearance >= 0.08 && flight.sky < 0, `clearance ${flight.clearance}, sky ${flight.sky}`);
     // (Facing the most open of the four ways along the walls.)
     const open = (yaw) => flight.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
@@ -244,7 +245,7 @@ test('the way found open is air all the way', async () => {
   for (const space of [halls, arcology]) {
   const flight = new Flight(space, controls());
   if (space === halls) flight.begin(true);
-  else flight.elsewhere(rand(3));
+  else elsewhere(flight, rand(3));
   const rnd = rand(51);
   let i = 0;
   wander(flight, space === halls ? 1500 : 600, (f) => {

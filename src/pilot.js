@@ -13,6 +13,8 @@
 // smaller spaces, or out, making for open space and the openings to spaces
 // bigger than the one it is in, and so out to the sky.
 
+import { gradient } from './air.js';
+
 const CRUISE = 0.35; // of how far off what is in view is, per second
 const CAP = 200; // open space counts up to this many clearances
 const TURN = 0.7; // most yaw, radians per second
@@ -45,6 +47,40 @@ const unit = (v) => {
 };
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+// What the tour asks of where the flight is, beyond what it sees.
+
+// How many levels coarser than the room we are in to look for a way out.
+const OUT = 4;
+
+// The way directly away from the nearest built surface. Out in the open,
+// none: there is nothing to keep off.
+export function awayFrom(flight) {
+  if (!(flight.clearance > flight.sky)) return [0, 0, 0];
+  const h = 0.25 * flight.clearance;
+  const g = gradient((v) => Math.max(flight.sky + v[1], ...flight.here.map((r) => -flight.airAt(r, v) / r.sig)), h);
+  const l = Math.hypot(...g);
+  return l > 0 ? g.map((x) => x / l) : [0, 0, 0];
+}
+
+// Which way is out: toward the nearest air of a level coarser than the room
+// we are in, or under the ground, up to the sky. A direction, how far, in
+// level-F cells, as the crow flies (the way there may well wind), and
+// whether it is the sky; null out in the open.
+export function outward(flight) {
+  if (flight.sky > 0 || flight.room === null) return null;
+  let best = { dist: -flight.sky, dir: [0, 1, 0], sky: true };
+  // (levels() works out from F, so it is asked for everything up to there.)
+  for (const r of flight.pos.levels(flight.room - OUT, flight.pos.F)) {
+    if (r.level >= flight.room) break;
+    const dist = flight.airAt(r) / r.sig;
+    if (!(dist > 0) || dist >= best.dist) continue;
+    const g = gradient((v) => flight.airAt(r, v), 0.25 * dist);
+    const len = Math.hypot(...g);
+    if (len > 0) best = { dist, dir: g.map((x) => -x / len), sky: false };
+  }
+  return best;
+}
 
 export class Pilot {
   constructor(R) {

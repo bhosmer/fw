@@ -613,7 +613,9 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       return this.ancestorDigit(0)[1] + 1;
     },
     fogK: 250, // visibility, in cells of the room we are in
-    // For finding ways (see planner.js): a cell's room and its openings.
+    // For finding ways (see planner.js): its rooms' walls, half their
+    // thickness; a cell's room and its openings.
+    halfWall: M,
     room: (id, seed) => hallsRoom(id, seed),
     openings: (id, seed) => hallsOpenings(id, seed),
   };

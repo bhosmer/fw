@@ -1,5 +1,7 @@
 # Rendering plan
 
+(History: the plan the drawing was built by, October 2026. Some of what it describes has since changed, e.g. the resolution governor; for how the code is put together now, see architecture.md.)
+
 Status: reviewed 2026-10-13 by an independent agent; the order of work below
 is the reviewed one and supersedes the "Proposal" section, which is kept for
 the reasoning. Steps 0, 1 and 2 are done.
