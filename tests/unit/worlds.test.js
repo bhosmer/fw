@@ -74,6 +74,49 @@ for (const space of WORLDS) {
     }
   });
 
+  // For a ray: where a level says how far a ray from a point goes in its air
+  // (known), it is in air there just when that is not less than 0; it goes
+  // no less far than the distance (each plane is at least that far off
+  // along any ray); all of the way is air at that level; and the surface it
+  // meets there faces back along it. Along random directions, the axes and
+  // the diagonals (where a plane is met exactly edge on).
+  test(`${space.name}: what a level says of a ray holds`, () => {
+    const rnd = rand(17);
+    const dirs = [[1, 0, 0], [0, 1, 0], [0, 0, -1], [Math.SQRT1_2, 0, Math.SQRT1_2], [0, -Math.SQRT1_2, Math.SQRT1_2]];
+    let rays = 0, inAir = 0;
+    for (const flight of places(space, 7)) {
+      const c = Math.max(flight.clearance, 1e-3);
+      for (const r of flight.here) {
+        for (let k = 0; k < 12; k++) {
+          const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], l = Math.hypot(...d);
+          const v = d.map((x) => (x / l) * c * 2 * rnd());
+          const e = k < dirs.length ? dirs[k] : [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
+          const m = Math.hypot(...e);
+          const dir = e.map((x) => x / m);
+          const ray = { dir };
+          const a = flight.airAt(r, v, ray);
+          assert.equal(a, flight.airAt(r, v), 'the distance is the same, asked with a ray or not');
+          if (!ray.known) continue;
+          rays++;
+          const where = `level ${r.level} at F ${flight.pos.F}, v ${v}, dir ${dir}`;
+          assert.equal(ray.reach >= 0, a <= 0, `in air (${a}) but reach ${ray.reach}, ${where}`);
+          if (ray.reach < 0) continue;
+          inAir++;
+          assert.ok(ray.reach >= -a - 1e-9, `reach ${ray.reach} less than the distance ${-a}, ${where}`);
+          assert.ok(Math.abs(Math.hypot(ray.nx, ray.ny, ray.nz) - 1) < 1e-9 && ray.nx * dir[0] + ray.ny * dir[1] + ray.nz * dir[2] <= 1e-12, `normal ${[ray.nx, ray.ny, ray.nz]}, ${where}`);
+          // (Covered by balls of air, each as big as the distance says.)
+          const end = ray.reach / r.sig;
+          for (let t = 0, n = 0; t < end * (1 - 1e-6) && n < 4000; n++) {
+            const b = flight.airAt(r, v.map((x, i) => x + dir[i] * t));
+            assert.ok(b <= 1e-9, `solid (${b}) at ${t * r.sig} of reach ${ray.reach}, ${where}`);
+            t += Math.max(-b / r.sig, end * 1e-6);
+          }
+        }
+      }
+    }
+    if (space.name === 'halls') assert.ok(rays > 1000 && inAir > 300, `${rays} rays, ${inAir} in air: the test reaches what it means to`);
+  });
+
   test(`${space.name}: the world is the same every time`, () => {
     const [a, b] = [places(space, 5, 2), places(space, 5, 2)];
     a.forEach((f, i) => f.here.forEach((r, j) => assert.equal(f.airAt(r, [0.1, 0.2, 0.3]), b[i].airAt(b[i].here[j], [0.1, 0.2, 0.3]))));

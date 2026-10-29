@@ -79,6 +79,7 @@
 //     description of it must agree
 
 import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR } from '../util.js';
+import { S, at, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } from '../pieces.js';
 
 export const R = 24; // children per cell edge
 const wrapId = (id) => wrapIdR(id, R);
@@ -317,28 +318,13 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
 }
 `;
 
-// The same cell, in JavaScript, piece for piece. The engine asks this for
-// the camera's clearance every frame (asking the GPU would mean waiting for
-// it), so it must agree with the GLSL above (the tests compare the two). Only
-// the distances are wanted here, so a plane is only its distance.
+// The same cell, in JavaScript, piece for piece (see pieces.js). The flight
+// asks this every frame (asking the GPU would mean waiting for it), so it
+// must agree with the GLSL above: the tests compare the two.
 const C = R / 2;
 const HHI = R - 2 * M;
-const NONE = 1e9;
-const h01 = (h) => (h >>> 8) / 16777216;
-const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 const bay = (u, fu) => Math.min(2, Math.max(0, Math.floor((u - M + fu) / 6)));
-
-// The point being asked about, along the diagonals (set by cellAir), and
-// the same diag() as the shaders have.
-let dLp, dFp, dLm, dFm;
-const diag = (p, sa, sb, ca, cb, k) =>
-  sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];
-
-// Pieces, as in the shaders (airPiece and the rest).
-let gD;
-const piece = () => (gD = -Infinity);
-const plane = (s) => (gD = Math.max(gD, s));
-const span = (x, f, x0, x1) => (plane(x0 - x - f), plane(x - x1 + f));
+const H2 = Math.SQRT1_2;
 
 function wallShape(h, u, fu) {
   const t = h01(h);
@@ -349,18 +335,20 @@ function wallShape(h, u, fu) {
   return { cu: C, hw: C - M, y0: 0, sp: 1000, top: HLO };
 }
 
-function wallOpening(p, a, fa, u, fu, y, fy, high, h) {
+// (ea and eu: the axes, 0 to 2, of the wall's normal and across the wall.)
+function wallOpening(p, a, fa, u, fu, y, fy, high, h, ea, eu) {
   const s = wallShape(h, u, fu);
   if (!s) return NONE;
   const { cu, hw, y0, sp, top } = s;
   const x = u - cu, yy = y - M - y0;
-  piece();
-  span(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1);
-  span(x, fu, -hw, hw);
-  span(yy, fy, 0, top);
-  plane(diag(p, 1, 1, cu, M + y0, sp + hw) * Math.SQRT1_2);
-  plane(diag(p, -1, 1, cu, M + y0, sp + hw) * Math.SQRT1_2);
-  return gD;
+  const ux = eu === 0 ? H2 : 0, uz = eu === 2 ? H2 : 0;
+  airPiece();
+  airSpan(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1, ea);
+  airSpan(x, fu, -hw, hw, eu);
+  airSpan(yy, fy, 0, top, 1);
+  airPlane(diag(p, 1, 1, cu, M + y0, sp + hw) * H2, ux, H2, uz);
+  airPlane(diag(p, -1, 1, cu, M + y0, sp + hw) * H2, -ux, H2, -uz);
+  return S.d;
 }
 
 function slabOpening(L, f, up, H, h) {
@@ -368,51 +356,84 @@ function slabOpening(L, f, up, H, h) {
   if (t < 0.66) return NONE;
   const oculus = t < 0.88;
   const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-  piece();
-  span(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1);
-  span(L[0] - C, f[0], -w, w);
-  span(L[2] - C, f[2], -w, w);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) plane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2);
-  return gD;
+  airPiece();
+  airSpan(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1, 1);
+  airSpan(L[0] - C, f[0], -w, w, 0);
+  airSpan(L[2] - C, f[2], -w, w, 2);
+  for (let j = 0; j < 4; j++) {
+    const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
+    airPlane(diag(2, sx, sz, C, C, dg) * H2, sx * H2, 0, sz * H2);
+  }
+  return S.d;
 }
 
-// (Only the nearest of each set: that is all a distance needs.)
+// Solid things standing in the room, as in the GLSL: for a distance, the
+// one in our quarter of the room is the nearest; a ray may strike any of a
+// set, so then all are asked.
 function furniture(L, f, h, under, over) {
   const t = h01(h);
   if (t < 0.4) return NONE;
+  let d = NONE;
   if (t < 0.62) {
     if (Math.max(under, over) >= 0.88) return NONE;
-    const cx = beyond(L[0], f[0], C) ? 17 : 7, cz = beyond(L[2], f[2], C) ? 17 : 7;
-    piece();
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) plane(diag(2, sx, sz, cx, cz, 2) * Math.SQRT1_2);
-    return gD;
+    const nx = beyond(L[0], f[0], C) ? 1 : 0, nz = beyond(L[2], f[2], C) ? 1 : 0;
+    for (let k = 0; k < 4; k++) {
+      const kx = k & 1, kz = k >> 1;
+      if (!S.ray && (kx !== nx || kz !== nz)) continue;
+      const cx = kx === 1 ? 17 : 7, cz = kz === 1 ? 17 : 7;
+      solidPiece();
+      for (let j = 0; j < 4; j++) {
+        const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
+        solidPlane(diag(2, sx, sz, cx, cz, 2) * H2, sx * H2, 0, sz * H2);
+      }
+      d = Math.min(d, solidDone());
+    }
+    return d;
   }
   if (under >= 0.66) return NONE;
   if (t < 0.82) {
     const turn = ((h >>> 5) & 1) === 1;
     const p = turn ? L[2] : L[0], q = turn ? L[0] : L[2];
     const fp = turn ? f[2] : f[0], fq = turn ? f[0] : f[2];
-    const p0 = beyond(p, fp, C) ? 13 : 6, q0 = beyond(q, fq, C) ? 15 : 8;
-    piece();
-    span(p, fp, p0, p0 + 5);
-    span(q, fq, q0, q0 + 1);
-    span(L[1], f[1], M - 1, M + 1);
-    return gD;
+    const ep = turn ? 2 : 0, eq = turn ? 0 : 2;
+    const np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;
+    for (let k = 0; k < 4; k++) {
+      const kp = k & 1, kq = k >> 1;
+      if (!S.ray && (kp !== np || kq !== nq)) continue;
+      const p0 = kp === 1 ? 13 : 6, q0 = kq === 1 ? 15 : 8;
+      solidPiece();
+      solidSpan(p, fp, p0, p0 + 5, ep);
+      solidSpan(q, fq, q0, q0 + 1, eq);
+      solidSpan(L[1], f[1], M - 1, M + 1, 1);
+      d = Math.min(d, solidDone());
+    }
+    return d;
   }
-  piece();
-  span(L[0], f[0], C - 2, C + 2);
-  span(L[2], f[2], C - 2, C + 2);
-  span(L[1], f[1], M - 1, M + 3);
-  return gD;
+  solidPiece();
+  solidSpan(L[0], f[0], C - 2, C + 2, 0);
+  solidSpan(L[2], f[2], C - 2, C + 2, 2);
+  solidSpan(L[1], f[1], M - 1, M + 3, 1);
+  return solidDone();
 }
 
 function roomAir(L, f, H, h, under, over) {
-  piece();
-  span(L[0], f[0], M, R - M);
-  span(L[2], f[2], M, R - M);
-  span(L[1], f[1], M, M + H);
-  const box = gD;
+  airPiece();
+  airSpan(L[0], f[0], M, R - M, 0);
+  airSpan(L[2], f[2], M, R - M, 2);
+  airSpan(L[1], f[1], M, M + H, 1);
+  const box = S.d;
   return Math.max(box, -furniture(L, f, h, under, over));
+}
+
+// Of a piece the point is in (its distance d, as first asked), asked again
+// for a ray (ask: the same piece with the ray set): the ray stays in air to
+// the end of whichever it is in for longest.
+function further(ray, d, ask) {
+  if (!ray || d > 0) return;
+  S.ray = true;
+  ask();
+  S.ray = false;
+  if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);
 }
 
 const ancestors = new Map(); // level -> where its cell sits in its parent
@@ -460,40 +481,58 @@ export function hallsOpenings(id, seed, rule) {
   return out;
 }
 
-export function hallsAir(L, f, id, seed, dg, rule) {
-  if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
-  else {
-    const pairs = [[0, 1], [2, 1], [0, 2]];
-    dLp = pairs.map(([a, b]) => L[a] + L[b]);
-    dFp = pairs.map(([a, b]) => f[a] + f[b]);
-    dLm = pairs.map(([a, b]) => L[a] - L[b]);
-    dFm = pairs.map(([a, b]) => f[a] - f[b]);
+// The halls cell's distance at L + f (dg: its diagonals, see pieces.at). And
+// if ray is given ({ dir }), for a ray along dir from there: how far it goes
+// in the piece of air it is in (reach, in lattice units; less than 0, in
+// solid), and the surface it meets there (nx, ny, nz); known says whether
+// the cell answers that (here, always).
+export function hallsAir(L, f, id, seed, dg, rule, ray) {
+  at(L, f, dg);
+  if (ray) {
+    (ray.known = true), (ray.reach = -1), (ray.nx = ray.ny = ray.nz = 0);
+    (S.dx = ray.dir[0]), (S.dy = ray.dir[1]), (S.dz = ray.dir[2]);
   }
   const here = built(id, seed, rule);
   const H = here && h01(hashCell(id, seed)) < 0.65 ? HLO : HHI;
   let room = NONE;
   const hup = hashCell(id, seed ^ 0x967a889b);
   const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ 0x967a889b);
-  if (here) room = roomAir(L, f, H, hashCell(id, seed ^ 0x51ed270b), h01(hdn), h01(hup));
+  const hf = hashCell(id, seed ^ 0x51ed270b);
+  if (here) {
+    room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
+    further(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
+  }
+  // Openings reach only one unit into the room; deeper in, they change nothing.
   if (room < -1) return room;
 
+  // Only the nearer face on each axis can matter to a point in this cell.
   const hx = beyond(L[0], f[0], C), hz = beyond(L[2], f[2], C), hy = beyond(L[1], f[1], M + H / 2);
   const ox = hx ? id : wrapId([id[0] - 1, id[1], id[2]]);
   const oz = hz ? id : wrapId([id[0], id[1], id[2] - 1]);
   let hwx = hashCell(ox, seed ^ 0x68bc21eb), hwz = hashCell(oz, seed ^ 0x02e5be93), hwy = hy ? hup : hdn;
   if (!here) {
+    // A face has an opening only if there is a room on one side of it at
+    // least. From a room, an opening into a solid cell is a niche.
     if (!built(wrapId([id[0] + (hx ? 1 : -1), id[1], id[2]]), seed, rule)) hwx = 0;
     if (!built(wrapId([id[0], id[1], id[2] + (hz ? 1 : -1)]), seed, rule)) hwz = 0;
     if (!built(wrapId([id[0], id[1] + (hy ? 1 : -1), id[2]]), seed, rule)) hwy = 0;
   }
-  const ax = wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx);
-  const az = wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz);
-  const ay = slabOpening(L, f, hy, H, hwy);
+  const wx = () => wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx, 0, 2);
+  const wz = () => wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz, 2, 0);
+  const wy = () => slabOpening(L, f, hy, H, hwy);
+  const ax = wx(), az = wz(), ay = wy();
+  further(ray, ax, wx);
+  further(ray, az, wz);
+  further(ray, ay, wy);
+
+  // From inside the slab over a low room, the nearest air may be the room
+  // above. This cell says nothing else about its neighbours' rooms.
   const above = Math.max(M - L[0] - f[0], L[0] - (R - M) + f[0], M - L[2] - f[2], L[2] - (R - M) + f[2], R + M - L[1] - f[1]);
 
   const a = Math.min(room, above, ax, az, ay);
   if (a <= 0) return a;
 
+  // In solid, a must not overstate how far the nearest air is (see the GLSL).
   const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];
   const edge = Math.min(q[0], R - q[0], q[1], R - q[1], q[2], R - q[2]);
   const unseen = Math.min(Math.abs(q[0] - C) + (C - M - 1), Math.abs(q[2] - C) + (C - M - 1), Math.abs(q[1] - (M + H / 2)) + (HLO / 2 - 1), edge + M);
@@ -509,7 +548,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   return hallsCell(L, f, id, seed, reach, nrm);
 }
 `,
-  cellAir: (L, f, id, seed, dg) => hallsAir(L, f, id, seed, dg),
+  cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, null, ray),
   maxInterior: 0.375,
   longestWay: 1.4,
   close: 0.3,

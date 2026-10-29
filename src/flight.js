@@ -78,8 +78,9 @@ export class Flight {
 
   // One level's air distance at the point v from the camera, in level-F
   // cells (what levelAir in shaders.js gives), worked out here so that
-  // nothing waits on the GPU.
-  airAt(rec, v = [0, 0, 0]) {
+  // nothing waits on the GPU. And if ray is given ({ dir }), what the world
+  // says of a ray from there along dir (see hallsAir in spaces/halls.js).
+  airAt(rec, v = [0, 0, 0], ray = null) {
     const R = this.R;
     const L = [0, 0, 0], f = [0, 0, 0], id = [0, 0, 0], cell = [0, 0, 0];
     for (let a = 0; a < 3; a++) {
@@ -114,7 +115,7 @@ export class Flight {
     });
     // (And the id of the cell's parent: see gUp in shaders.js.)
     const up = rec.pid.map((p, a) => p + Math.floor((rec.id[a] - R * Math.floor(rec.id[a] / R) + cell[a]) / R));
-    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level, wrapId(up, R));
+    return this.space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level, wrapId(up, R), ray);
   }
 
   // How far we are above the ground: the one plane over which there is only

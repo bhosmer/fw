@@ -22,6 +22,7 @@
 // up of masses small and large, as in the photograph of Soleri's model.
 // Deeper in, the cells are halls; cells the other solids cross are solid.
 
+import * as P from '../pieces.js';
 import halls, { hallsGlsl, hallsAir, hallsRoom, hallsOpenings, built, R, M } from './halls.js';
 import { hashCell, levelSeed, wrapId as wrapIdR } from '../util.js';
 import { hexahedron, GROUND } from './hexahedron.js';
@@ -2497,20 +2498,31 @@ function windowAir(j, L, f, d) {
   return Math.min(d, a, Math.max(cap, 0));
 }
 
-function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d) {
+function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
   const kind = m & 3;
   if (kind === DEEP) {
     const open = (m >>> OPEN_AT) & 63;
     if (open === 63) return d;
-    piece();
-    if (!(open & 1)) plane(L[0] - R + f[0]);
-    if (!(open & 2)) plane(-L[0] - f[0]);
-    if (!(open & 4)) plane(L[1] - R + f[1]);
-    if (!(open & 8)) plane(-L[1] - f[1]);
-    if (!(open & 16)) plane(L[2] - R + f[2]);
-    if (!(open & 32)) plane(-L[2] - f[2]);
-    d = Math.max(d, gD);
-    return d > 0 ? Math.min(d, Math.max(-gD, 0)) : d;
+    // (Cut off at its closed sides, the halls' air and a ray through it.)
+    const sides = () => {
+      P.airPiece();
+      if (!(open & 1)) P.airPlane(L[0] - R + f[0], 1, 0, 0);
+      if (!(open & 2)) P.airPlane(-L[0] - f[0], -1, 0, 0);
+      if (!(open & 4)) P.airPlane(L[1] - R + f[1], 0, 1, 0);
+      if (!(open & 8)) P.airPlane(-L[1] - f[1], 0, -1, 0);
+      if (!(open & 16)) P.airPlane(L[2] - R + f[2], 0, 0, 1);
+      if (!(open & 32)) P.airPlane(-L[2] - f[2], 0, 0, -1);
+      return P.S.d;
+    };
+    const g = sides();
+    d = Math.max(d, g);
+    if (ray && ray.reach >= 0) {
+      P.S.ray = true;
+      sides();
+      P.S.ray = false;
+      if (P.S.x < ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+    }
+    return d > 0 ? Math.min(d, Math.max(-g, 0)) : d;
   }
   const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
   cellOpen = (wrun >>> OPEN_AT) & 63;
@@ -2586,22 +2598,27 @@ function groundAir(L, f, own) {
   return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
 }
 
-function cellAir(L, f, id, seed, dg, level, up) {
-  if (level < CITY) return NONE;
+// (ray: see hallsAir. Only the halls' cells, and cells all solid, answer it
+// yet; elsewhere it is not known.)
+function cellAir(L, f, id, seed, dg, level, up, ray) {
+  const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
+  if (ray) ray.known = false;
+  if (level < CITY) return solid(NONE);
   if (level === CITY + 1) {
     const m = relief(id, up);
     if (m[0]) {
-      const d = hallsAir(L, f, id, seed, dg, roomRule);
+      // (The halls only in deep cells, as the shader has them.)
+      const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, roomRule, ray) : NONE;
       setPoint(L, f, dg);
-      return reliefCell(L, f, id, seed, m, d);
+      return reliefCell(L, f, id, seed, m, d, ray);
     }
   }
   if (level === CITY + 1 && up) {
     const own = id.map((x) => x - R * Math.floor((x + 0.5) / R));
-    if (groundCell(own, up)) return groundAir(L, f, own);
+    if (groundCell(own, up)) return solid(groundAir(L, f, own));
   }
-  if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return L[1] + R * (id[1] - ROW_ID - ROWS) + f[1];
-  if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule);
+  if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
+  if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule, ray);
   setPoint(L, f, dg);
   return Math.min(plaza(L, f, id), id[1] === ROW_ID ? well(L, f, id, seed) : NONE, cityPockets(L, f, fromMiddle(id)));
 }
