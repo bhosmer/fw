@@ -95,7 +95,7 @@ export class Flight {
   }
 
   // One level's air distance at the point v from the camera (see airAt in
-  // probe.js), in the space we are in.
+  // air.js), in the space we are in.
   airAt(rec, v = [0, 0, 0], ray = null) {
     return airAt(this.space, rec, v, ray);
   }

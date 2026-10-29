@@ -2115,8 +2115,10 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
 }
 `;
 
-  // The same, in JavaScript, piece for piece, on the shared pieces (see
-  // src/pieces.js).
+  // The same, in JavaScript, on the shared pieces (see src/pieces.js): in
+  // the same order and choices as the shader's, but not everywhere in the
+  // same form (the two agree as the parity checks show, not by
+  // construction: see .claude/design/t10-review.md).
   let dLp, dFp, dLm, dFm, dLs, dFs;
   const diag = (p, sa, sb, ca, cb, k) =>
     sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];

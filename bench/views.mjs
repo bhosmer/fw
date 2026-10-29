@@ -1,5 +1,5 @@
-// The bench's views (bench.mjs), proposed 2026-10-22 and awaiting Basil's
-// confirmation (brief E4). Hashes as the app writes them into its URL.
+// The bench's views (bench.mjs), as proposed 2026-10-22 (no target is set
+// against them: E4 was dropped). Hashes as the app writes them into its URL.
 export const VIEWS = {
   // On the plaza where a first visit starts on main, under the great building.
   start: { world: 'arcology', hash: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTEsImZyYWMiOlswLjk3OTE2NjY2NjY2NjY2NjYsMC4xNzk2ODc1LDAuMjcwODMzMzMzMzMzMzMzM10sImRpZ2l0cyI6W1stMSxbMTMsMywyMV1dXSwieWF3IjowLCJwaXRjaCI6MH0=' },

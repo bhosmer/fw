@@ -16,8 +16,9 @@
 //                  the piece of air it is in (and nrm the surface there);
 //                  otherwise reach is negative. See "Rays" below. The id
 //                  of the cell's parent is in gUp.
-//   cellAir        the distance alone, in JavaScript (see below), given
-//                  (L, f, id, seed, dg, level, up), up the parent's id
+//   cellAir        the same in JavaScript (see below), given (L, f, id,
+//                  seed, dg, level, up, ray), up the parent's id; the ray
+//                  ({ dir }, or none) told how far it goes (see hallsAir)
 //   volume         optionally, a table the space looks things up in rather
 //                  than work them out: { size, data, words }, data a
 //                  Uint32Array of `words` numbers (2 or 4) for each of
@@ -72,7 +73,7 @@
 // those the engine has both the piece's distance and, for a ray, where it
 // leaves the piece or strikes the solid, so the two always agree; and it
 // shrinks or grows everything with distance. The JavaScript below is the
-// same, piece for piece, with each plane only a distance. Rules:
+// same, piece for piece, on the same pieces (src/pieces.js). Rules:
 //   - pieces of one cell that join must overlap, not just touch
 //   - a solid may only stand in the room piece, clear of every tunnel
 //   - a tunnel may run on into the next cell, where that cell's own

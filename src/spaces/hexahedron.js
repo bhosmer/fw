@@ -1,7 +1,8 @@
 // The Hexahedron, after Soleri's drawing (his elevations, drawing.jpg): a
 // description only, as convex solids bounded by planes, for the arcology to
-// build (see arcology.js). Nothing here is the engine's, and nothing in the
-// engine knows about this building.
+// build (see arcology.js). Nothing here is the engine's; the engine knows of
+// this building only its definition (HEXAHEDRON) and where its ground is
+// (GROUND).
 //
 // Every number comes from the measurement page (.claude/measure/, the joint
 // fit of the drawing's two elevations, with the silhouettes taken by their

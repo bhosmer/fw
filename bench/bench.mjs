@@ -1,5 +1,5 @@
 // GPU milliseconds per frame in a handful of named views, this tree against
-// another (by default main at 91b9aa4, the perf baseline), in headless Chrome
+// another (by default main at 91b9aa4), in headless Chrome
 // at one pixel per CSS pixel (1280 x 720). Runs are interleaved, the two trees
 // taking turns at each view, and each view's time is the least of its rounds.
 //

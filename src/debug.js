@@ -8,8 +8,9 @@ import { UP, DOWN } from './flight.js';
 // JavaScript are compared.
 const CHECK_REACH = 2000;
 
-// March a ray the way the shader does, but here, where it can be watched:
-// returns each step's position along the ray and every level's clearance.
+// Step a ray by the clearance (as the older way of drawing did: see
+// refProg), here, where it can be watched: returns each step's position
+// along the ray and every level's clearance.
 // (We go back to where we were afterwards.)
 export function trace(ctx, dir, steps = 60, finest = Infinity) {
   const { pos, flight } = ctx, R = flight.R;

@@ -1,7 +1,8 @@
 // Free flight, by mouse alone or with keys: dragging looks, dragging with the
 // right button (or with ctrl or cmd held) slides sideways and up and down, the
 // wheel travels forward and back. Or by touch (see below). There is no body, so no gravity and no
-// collision; the only thing scale does is set how fast we travel (see main.js).
+// collision; the only thing scale does is set how fast we travel (see step in
+// flight.js).
 
 const PITCH_MAX = 1.55;
 const SHIFT = (25 * Math.PI) / 180; // the most of the pitch that slides the picture rather than tilts it (see camera)

@@ -192,7 +192,6 @@ function scaleLabel(F) {
 // Where we are and which way we face live in the URL, so a place can be
 // bookmarked or sent to someone.
 function saveLocation() {
-  // (Only the digits that are not what they would be anyway.)
   // (Only the digits that are not what they would be anyway, in either
   // world compared; and which is shown.)
   const anyway = (j, d) => [world, other].every((w) => !w || w.space.ancestorDigit(j).every((x, a) => x === d[a]));
