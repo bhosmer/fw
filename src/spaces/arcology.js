@@ -1074,6 +1074,16 @@ export function makeArcology(set) {
       FER: FACES.flatMap((F) => F.er),
       FNS: FACES.map((F) => [F.nl, F.gm * F.mlen]),
       FNH: FACES.map((F) => [F.n[1], Math.hypot(F.n[0], F.n[2])]),
+      // (A terrace's height for t twelfths deep, t 0 to 16, in twelfths: the
+      // most whole number of them the face rises over t, worked out in whole
+      // numbers: H |ny| <= t |n|, so H^2 ny^2 <= t^2 n . n.)
+      FTH: FACES.flatMap((F) => Array.from({ length: 17 }, (_, t) => {
+        const nn = dot(F.n, F.n), ny2 = F.n[1] * F.n[1];
+        let H = Math.floor((t * Math.sqrt(nn)) / Math.abs(F.n[1]));
+        while ((H + 1) * (H + 1) * ny2 <= t * t * nn) H++;
+        while (H * H * ny2 > t * t * nn) H--;
+        return H;
+      })),
     };
   })();
   // (A table's GLSL declaration: its type, and each row's.)
@@ -1703,7 +1713,7 @@ export function makeArcology(set) {
     //   measure and units) comes within W(t) of face k's e-th ridge at either
     //   height.
     // - terraceH: a terrace's height for t twelfths, in twelfths, rounded
-    //   down (see terrace).
+    //   down, exactly (FTH; see terrace).
     // - bandOf: a city terrace of face k, t twelfths deep over rows a to b
     //   (h12): its band [lo, hi] and the height its wall stands at (anchor).
     //   On a face all terraces' ramps have one slope, so one is no deeper
@@ -1756,7 +1766,7 @@ export function makeArcology(set) {
       '}',
       '// Depth profiles: see h12, terraceH, band, underRidge and rectDepth in the JS.',
       one(fn('int', 'h12', ['int lv', 'int y']), `return lv == 0 ? 12 * y : ${idiv('y', '2')};`),
-      one(fn('int', 'terraceH', ['int k', 'int t']), 'return int(floor(float(t) * FNS[k].x / abs(FNH[k].x) + 1e-3));'),
+      one(fn('int', 'terraceH', ['int k', 'int t']), 'return FTH[k * 17 + t];'),
       "// (A city terrace's band and anchor: lo, hi, at; false if not cut.)",
       fn('bool', 'bandOf', ['int k', 'int a', 'int b', 'int t', 'out ivec3 B']),
       ...ins([
@@ -1906,6 +1916,8 @@ const int RR_FROM[2] = int[2](${RR_FROM.join(', ')}), RR_N[2] = int[2](${RR_N.jo
 const int FOUR = ${FOUR.k};
 // Each level's depths (its own units).
 ${table('float', 'DEPTHS', '2 * ND', glf, RELIEF_ROWS)}
+// Each face's terraces' heights for t twelfths deep, t 0 to 16 (see FTH in the JS).
+${table('int', 'FTH', 'NF * 17', String, RELIEF_ROWS)}
 const uint TILE_SALT = ${TILE_SALT}u;
 const float DMAX = ${glf(DMAX)}, BAND_IN = ${glf(BAND_IN)}, BAND_OUT = ${glf(BAND_OUT)};
 // The faces with openings (see WINDOWS): h and t as slants (index, sign); K,
