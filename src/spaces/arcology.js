@@ -40,938 +40,943 @@ export const ROW_ID = ROW + R * C;
 const MID = C + R * C;
 const ABOVE = 200; // how many rows over the city's are known to be over it
 
-// The building, its solids' planes moved to the city's lattice: from the
-// middle city cell's corner, its axis at the middle of that cell, the
-// lower's apex a cell under the plaza's floor (see GROUND).
-const SOLIDS = hexahedron();
-const ORIGIN = [C, G - 1, C];
+// The arcology, made: all that follows is worked out from its building (and,
+// as its definition grows, from the rest of it), so that a variant of it is
+// another call of this. Gives the space, and for the checks its table and
+// its parts (_V2).
+export function makeArcology() {
+  // The building, its solids' planes moved to the city's lattice: from the
+  // middle city cell's corner, its axis at the middle of that cell, the
+  // lower's apex a cell under the plaza's floor (see GROUND).
+  const SOLIDS = hexahedron();
+  const ORIGIN = [C, G - 1, C];
 
-// Each plane's direction: an axis (0, 1, 2) where its normal is one, or else
-// a slant (3 on): the normal itself, in whole numbers, so that the plane
-// lies on a whole value of what is carried (a divisor of it, the primitive
-// direction, could leave the plane between two whole values, where the small
-// parts cancel). Scale: 1 or -1.
-const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
-export const SLANTS = [];
-function slantOf(n) {
-  const sign = Math.sign(n.find((x) => x !== 0));
-  const m = n.map((x) => x * sign);
-  let k = SLANTS.findIndex((t) => t.every((x, a) => x === m[a]));
-  if (k < 0) k = SLANTS.push(m) - 1;
-  return { k, sign };
-}
-const PLANES = []; // { dir, scale, m, n, K, len }
-SOLIDS.forEach((s) => {
-  s.first = PLANES.length;
-  for (const { n, K } of s.planes) {
-    const nz = n.filter((x) => x !== 0);
-    let dir, scale, m;
-    if (nz.length === 1 && Math.abs(nz[0]) === 1) (dir = n.findIndex((x) => x !== 0)), (scale = nz[0]), (m = n.map(Math.abs));
-    else {
-      const { k, sign } = slantOf(n);
-      (dir = k + 3), (scale = sign), (m = SLANTS[k]);
+  // Each plane's direction: an axis (0, 1, 2) where its normal is one, or else
+  // a slant (3 on): the normal itself, in whole numbers, so that the plane
+  // lies on a whole value of what is carried (a divisor of it, the primitive
+  // direction, could leave the plane between two whole values, where the small
+  // parts cancel). Scale: 1 or -1.
+  const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
+  const SLANTS = [];
+  function slantOf(n) {
+    const sign = Math.sign(n.find((x) => x !== 0));
+    const m = n.map((x) => x * sign);
+    let k = SLANTS.findIndex((t) => t.every((x, a) => x === m[a]));
+    if (k < 0) k = SLANTS.push(m) - 1;
+    return { k, sign };
+  }
+  const PLANES = []; // { dir, scale, m, n, K, len }
+  SOLIDS.forEach((s) => {
+    s.first = PLANES.length;
+    for (const { n, K } of s.planes) {
+      const nz = n.filter((x) => x !== 0);
+      let dir, scale, m;
+      if (nz.length === 1 && Math.abs(nz[0]) === 1) (dir = n.findIndex((x) => x !== 0)), (scale = nz[0]), (m = n.map(Math.abs));
+      else {
+        const { k, sign } = slantOf(n);
+        (dir = k + 3), (scale = sign), (m = SLANTS[k]);
+      }
+      // (In the lattice: n . X < K, X from the middle city cell's corner.)
+      PLANES.push({ dir, scale, m, n, K: K + n[0] * ORIGIN[0] + n[1] * ORIGIN[1] + n[2] * ORIGIN[2], len: Math.hypot(...n) });
     }
-    // (In the lattice: n . X < K, X from the middle city cell's corner.)
-    PLANES.push({ dir, scale, m, n, K: K + n[0] * ORIGIN[0] + n[1] * ORIGIN[1] + n[2] * ORIGIN[2], len: Math.hypot(...n) });
-  }
-  s.last = PLANES.length;
-});
-
-// Whether a level-(CITY + 1) cell, its corner c (lattice units from the
-// middle cell's corner), is wholly inside a solid (all its corners are),
-// and whether it is wholly outside it (all outside one of its planes).
-const corners = (c) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [c[0] + (i & 1), c[1] + ((i >> 1) & 1), c[2] + ((i >> 2) & 1)]);
-const side = (p, q) => p.n[0] * q[0] + p.n[1] * q[1] + p.n[2] * q[2] - p.K;
-const planesOf = (s) => PLANES.slice(s.first, s.last);
-const cellIn = (s, c) => corners(c).every((q) => planesOf(s).every((p) => side(p, q) <= 0));
-const cellOut = (s, c) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= 0));
-
-// Each solid's bounds in the lattice (the cells it may touch).
-for (const s of SOLIDS) {
-  s.lo = [Infinity, Infinity, Infinity];
-  s.hi = [-Infinity, -Infinity, -Infinity];
-  for (let x = ORIGIN[0] - 40; x < ORIGIN[0] + 40; x++)
-    for (let y = ORIGIN[1] - 2; y < ORIGIN[1] + 40; y++)
-      for (let z = ORIGIN[2] - 40; z < ORIGIN[2] + 40; z++) {
-        const c = [x, y, z];
-        if (cellOut(s, c)) continue;
-        for (let a = 0; a < 3; a++) (s.lo[a] = Math.min(s.lo[a], c[a])), (s.hi[a] = Math.max(s.hi[a], c[a] + 1));
-      }
-}
-const TOP = Math.max(...SOLIDS.map((s) => s.hi[1]));
-
-// The city cells, across from the middle one, that the building stands in:
-// no light well opens in those (it would come up into it).
-const BUILT = new Set();
-for (const { lo, hi } of SOLIDS)
-  for (let a = Math.floor(lo[0] / R); a <= Math.floor((hi[0] - 1) / R); a++)
-    for (let b = Math.floor(lo[2] / R); b <= Math.floor((hi[2] - 1) / R); b++) BUILT.add(`${a},${b}`);
-const BUILT_CELLS = [...BUILT].map((k) => k.split(',').map(Number));
-// See nearBuilt in the shader (o: a city cell across from the middle one, x and z).
-const nearBuilt = ([x, z]) => BUILT_CELLS.some(([a, b]) => Math.max(Math.abs(a - x), Math.abs(b - z)) <= 1);
-// See spaceRoom in the shader.
-const CITY_SEED = levelSeed(CITY);
-const roomRule = (id, seed) => seed !== CITY_SEED || id[1] > ROW_ID || nearBuilt([id[0] - MID, id[2] - MID]);
-
-// For each city cell (across from the middle one) with any solid near it,
-// the solids that reach into the air it answers for (its plaza piece, see
-// plaza): only those are asked about.
-const NEAR = new Map();
-SOLIDS.forEach(({ lo: [x0, y0, z0], hi: [x1, y1, z1] }, k) => {
-  for (let a = Math.floor((x0 - 2 * R) / R); a <= Math.floor((x1 + R) / R); a++)
-    for (let b = Math.floor((y0 - R - M) / R); b <= Math.floor((y1 + M) / R); b++)
-      for (let c = Math.floor((z0 - 2 * R) / R); c <= Math.floor((z1 + R) / R); c++) {
-        if (b < 0 || b >= ROWS) continue;
-        const lo = [a * R - R, b * R + (b === 0 ? G : -M), c * R - R], hi = [a * R + 2 * R, b * R + R + M, c * R + 2 * R];
-        if (x1 <= lo[0] || x0 >= hi[0] || y1 <= lo[1] || y0 >= hi[1] || z1 <= lo[2] || z0 >= hi[2]) continue;
-        const key = `${a},${b},${c}`;
-        if (!NEAR.has(key)) NEAR.set(key, []);
-        NEAR.get(key).push(k);
-      }
-});
-const NEAR_CELLS = [...NEAR.keys()].map((k) => k.split(',').map(Number));
-const NEAR_START = [0];
-for (const k of NEAR.keys()) NEAR_START.push(NEAR_START.at(-1) + NEAR.get(k).length);
-const NEAR_BLOCKS = [...NEAR.values()].flat();
-
-// Pockets: a face is cut, along it and up it, into rectangles: super-blocks
-// sb long in rows sby high (rows by true height), each row shifted along by
-// its own whole number of quanta (so that no line runs on up the face), each
-// split `splits` times at whole quanta (along it, quanta of its own measure).
-// Each rectangle is cut into the face to its own depth (depths, as often as
-// weights), level and square to the face. The same rule at two levels: the city's own (lengths in its lattice units,
-// cells), whose boxes make the masses and the ragged silhouettes; and the
-// next (in its units), smaller boxes cut into those. What keeps anything
-// from being cut loose is in the setup after BARE_PL.
-const LEVELS = [
-  { sb: 4, sby: 2, quant: 1, splits: 3, min: 1, depths: [0, 0.25, 0.5], weights: [0.25, 0.4, 0.35] },
-  { sb: 24, sby: 24, quant: 2, splits: 3, min: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
-];
-for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));
-const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
-const POCKET_SALT = 0x27d4eb2d, ROW_SALT = 0x165667b1, DEPTH_SALT = 0xd3a2646c;
-
-// The faces that carry pockets: a mass's sloped faces. Each in its own
-// frame: across it, h (the plane's normal laid flat, in whole numbers, out
-// of the mass), along it, t (flat, along its edge), and up. Its plane is
-// n . X < K (X in the city's lattice units from the building's origin; one
-// level finer, R times both), with n = alpha h + (0, ny, 0); its pockets keep
-// within heights lo to hi (4 y, so that the rims' quarter cells are whole).
-// One rule, whatever way it faces.
-const FOUR = slantOf([0, 4, 0]);
-const FACES = [];
-SOLIDS.forEach((s) => {
-  for (const i of s.relief ?? []) {
-    const { n, K } = s.planes[i];
-    // (h and t are scaled by sub, so that a face's measure is fine enough
-    // for a quarter cell's depth whichever way it faces: w = h . X is sub
-    // times the distance in the plain direction's units.)
-    const alpha = gcd(n[0], n[2]), h0 = [n[0] / alpha, 0, n[2] / alpha], sub = Math.max(1, Math.ceil(4 / Math.hypot(...h0)));
-    const h = h0.map((x) => x * sub), t = [-h[2], 0, h[0]];
-    const len = Math.hypot(...h);
-    FACES.push({ n, K, alpha, sub, ny: n[1], plane: slantOf(n), h: slantOf(h), t: slantOf(t), hv: h, tv: t, len, len2: dot2(h),
-                 q: LEVELS.map((lv) => Math.round(lv.quant * len)),
-                 lo4: Math.round(s.ylo * 4), hi4: Math.round(s.yhi * 4), solid: s });
-  }
-  // (The cell table compares heights with ylo and yhi themselves: see reached and deaf.)
-  if (s.relief && !(Number.isInteger(s.ylo * 4) && Number.isInteger(s.yhi * 4))) throw new Error('arcology: relief heights off the quarters');
-});
-function dot2(v) {
-  return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-}
-// (A cell's table entry has a bit for each, six in all.)
-if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
-// How far behind a face anything is cut (cells): DMAX, along its normal (see below).
-const REACH = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R + 0.05;
-// Each solid's planes, n . X < K (unit n, X in cells from the building's
-// origin).
-const SOLID_PL = SOLIDS.map((s) => s.planes.map(({ n, K }) => [...n.map((x) => x / Math.hypot(...n)), K / Math.hypot(...n)]));
-// The solids that are neither masses nor their rims (pillars, the column): the
-// city's cuts stop at them (see bareIn), and the notches one level finer
-// keep clear of the cells they touch (see F.bare).
-// (No upright face, nor top, of a solid without relief on a cell's side:
-// the cells inside it would be wholly inside the solid, where the halls are,
-// and those next to open air would show them through its face.)
-SOLIDS.filter((s) => !s.relief && !s.rim).forEach((s) => s.planes.forEach(({ n, K }) => {
-  const axis = n.filter((x) => x).length === 1, a = n.findIndex((x) => x);
-  if (axis && (a !== 1 || n[1] > 0) && Number.isInteger(K / n[a])) throw new Error(`arcology: a face of ${s.name} on a cell's side (${'xyz'[a]} = ${K / n[a]})`);
-}));
-const BARE = SOLIDS.filter((s) => !s.relief && !s.rim);
-const BARE_PL = BARE.map((s) => SOLID_PL[SOLIDS.indexOf(s)]);
-// (And their bounds, cells from the building's origin: a first, cheap test.)
-const BARE_BOX = BARE.map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
-// (Beyond this from all of them (cells: more than the diagonal of a city
-// pocket's box, 5.7), a ray through the city's pockets cannot strike one:
-// see cell() in the shader.)
-const BARE_NEAR = 6;
-if (BARE_NEAR < Math.hypot(LEVELS[0].sb, LEVELS[0].sby, 1 + REACH)) throw new Error('arcology: BARE_NEAR under a city pocket');
-// How deep anything is cut at most (cells): both levels' deepest.
-const DMAX = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R;
-// How far in from a face, and out past it, anything of the city's is cut (cells).
-const BAND_IN = LEVELS[0].depths.at(-1) + 0.01, BAND_OUT = 1.01;
-const TILE_SALT = 0x6c8e9cf5;
-// How much nearer its own face than any other a cut of a face keeps (cells).
-const MARGIN = 0.1;
-const solve3 = (M, b) => {
-  const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
-  const D = det(M);
-  return [0, 1, 2].map((c) => det(M.map((row, i) => row.map((x, j) => (j === c ? b[i] : x)))) / D);
-};
-for (const F of FACES) {
-  F.nn = dot2(F.n);
-  F.nl = Math.sqrt(F.nn);
-  F.q2 = [F.q[0], (F.q[0] * LEVELS[1].quant) / LEVELS[0].quant];
-}
-FACES.forEach((F, k) => (F.index = k));
-// Relief (.claude/design/relief-v4.md, relief-v5.md): pockets are cut level
-// into a face, in rows by true height, so their floors and ceilings are
-// level and their side walls upright; their back walls follow the face.
-// Each face is tiled at each level, all the way to its ridges and apex, and
-// so is each ridge, by height. Everything is decided slice by slice: a cut t
-// deep keeps W(t) (about 2t) from each ridge, so that it is in its face's
-// half of the slice, nearer its own plane than any other face's by MARGIN;
-// or it comes nearer a ridge, and is then no deeper than the ridge's own
-// row there, whose pair of notches (one into each face) it joins. Then
-// every cut of a slice meets its edge in one connected stretch, so what is
-// left of the slice is in one piece and holds its middle, and the middles
-// of all the slices are a straight line (the axis): nothing is cut loose.
-for (const F of FACES) {
-  const mass = FACES.filter((G) => G.solid === F.solid);
-  F.near = mass.filter((G) => G !== F);
-  // (Rows by true height: a point's height on the face is its own.)
-  F.mv = [0, 1, 0];
-  F.gm = 1;
-  F.ms = slantOf(F.mv);
-  F.mlen = 1;
-  F.p = 1;
-  F.yk = 0;
-  // In, level and square to the face, DELTA cells deeper.
-  const hh = F.n[0] * F.n[0] + F.n[2] * F.n[2], v = [(-F.n[0] * F.nl) / hh, 0, (-F.n[2] * F.nl) / hh];
-  // The point on the face at (u, y) (city measure, cells), and DELTA cells in.
-  const M = [F.n, F.tv, [0, 1, 0]];
-  F.at = (u, y, delta) => solve3(M, [F.K, u, y]).map((x, a) => x + delta * v[a]);
-  // Its ridges with the mass's other faces, each as where it crosses height
-  // y in F's measure, u = (al y + be) / dl, in whole numbers (at a level S
-  // times finer: (al y + S be) / dl), and how far from it a cut t deep keeps
-  // (W(t), below).
-  F.edges = F.near.map((G) => {
-    const n = F.n, g = G.n, t = F.tv;
-    const dl = n[0] * g[2] - n[2] * g[0];
-    const al = t[0] * (n[2] * g[1] - n[1] * g[2]) + t[2] * (g[0] * n[1] - n[0] * g[1]);
-    const be = t[0] * (F.K * g[2] - n[2] * G.K) + t[2] * (n[0] * G.K - g[0] * F.K);
-    // (Going in, G comes nearer by fall per unit; along the face, it is
-    // per u nearer per unit of F's measure.)
-    const dG = (X) => (G.K - dot(G.n, X)) / G.nl, fall = dot(G.n, v) / G.nl;
-    const per = Math.abs(dG(F.at(1, 20, 0)) - dG(F.at(0, 20, 0)));
-    // (W(t) at each level, in its u-units, t twelfths: going t in at a
-    // pocket's near edge leaves it MARGIN nearer F than G.)
-    const Wt = [1, R].map((S) => Array.from({ length: 17 }, (_, t) => Math.ceil((((t / 12) * (1 + fall) + MARGIN) * S) / per) + 1));
-    // (The plane of a notch's edge, W in from the ridge and along it: its
-    // gradient in u-units per lattice unit, gl, and its unit normal into
-    // the face, gn (both with sg, below).)
-    const gv = [t[0], -al / dl, t[2]];
-    return { G, dl, al, be, Wt, W: Wt[0][16], sg: 0, gl: Math.hypot(...gv), gv };
+    s.last = PLANES.length;
   });
-  // (Which way from each ridge the face lies.)
-  const ym = (F.solid.ylo + F.solid.yhi) / 2, uAt = (E) => (E.al * ym + E.be) / E.dl;
-  F.edges[0].sg = Math.sign(uAt(F.edges[1]) - uAt(F.edges[0]));
-  F.edges[1].sg = -F.edges[0].sg;
-  for (const E of F.edges) E.gn = E.gv.map((x) => (E.sg * x) / E.gl);
-  // The inradius of the mass's level slice at height y (cells): how deep its
-  // middle is behind each face (relief-v4.md: never cut).
-  const [G, H] = F.near, un = (X) => X.n.map((x) => x / X.nl);
-  const inr = (y) => {
-    const X = solve3([un(F).map((x, a) => x - un(G)[a]), un(F).map((x, a) => x - un(H)[a]), [0, 1, 0]], [F.K / F.nl - G.K / G.nl, F.K / F.nl - H.K / H.nl, y]);
-    return (F.K - dot(F.n, X)) / F.nl;
-  };
-  F.inr = (y) => Math.max(0, inr(y));
-  // (The zone tests' whole numbers, one level finer, stay well within 32
-  // bits wherever they are asked: within two cells of the mass's box, and a
-  // super-block further along.)
-  const lo = F.solid.lo.map((x, a) => x - ORIGIN[a] - 2), hi = F.solid.hi.map((x, a) => x - ORIGIN[a] + 2);
-  const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [0, 1, 2].map((a) => ((i >> a) & 1 ? hi[a] : lo[a])));
-  const um = Math.max(...corners.map((X) => Math.abs(dot(F.tv, X)))) + (LEVELS[0].sb / LEVELS[0].quant) * F.q2[0];
-  const yb = Math.max(...corners.map((X) => Math.abs(X[1])));
-  for (const E of F.edges)
-    if (R * (Math.abs(E.al) * yb + Math.abs(E.be) + (E.W + um) * Math.abs(E.dl)) >= 2 ** 30) throw new Error('arcology: zone tests overflow');
-}
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-// The ridges: each pair of faces of a mass.
-const RIDGES = [];
-FACES.forEach((F, i) => FACES.forEach((G, j) => {
-  if (i < j && F.solid === G.solid) RIDGES.push({ a: i, b: j, F, G });
-}));
-for (const r of RIDGES) {
-  // The ridge's line: where the two planes meet, at heights y (cells).
-  r.at = (y) => solve3([r.F.n, r.G.n, [0, 1, 0]], [r.F.K, r.G.K, y]);
-}
-// Depths are a quarter cell's whole number (the city's) and a twelfth's
-// (one level finer's): a face's depth plane at (ci, fi), in whole numbers of
-// its measure (n . X) at each level (rounded in, so never deeper).
-const NDQ = 5;
-// (floor(p |n| / 12) for p twelfths, exactly: the largest m with (12 m)^2 <= p^2 nn.)
-const depthN = (nn, p) => {
-  let m = Math.floor(Math.sqrt(p * p * nn) / 12);
-  while (144 * (m + 1) * (m + 1) <= p * p * nn) m++;
-  while (m > 0 && 144 * m * m > p * p * nn) m--;
-  return m;
-};
-for (const F of FACES) F.dn = [1, R].map((S) => Array.from({ length: NDQ * NDQ }, (_, i) => depthN(F.nn, (3 * Math.floor(i / NDQ) + (i % NDQ)) * S)));
-if (Math.max(...FACES.map((F) => (3 * (NDQ - 1) + NDQ - 1) ** 2 * R * R * F.nn)) >= 2 ** 31) throw new Error('arcology: depths overflow');
-const quarters = (x) => Math.round(x * 4), twelfths = (x) => Math.round(x * 12);
-// The notches one level finer keep clear of the cells that the solids
-// without relief (pillars, the column) touch (they are cut in skin cells only,
-// which such solids never touch): for each face, the rectangles of it (u in
-// its city measure, y in cells, rounded out) over which a notch could meet
-// one (see r.barep). (The city's cuts stop at such solids instead: see
-// bareIn.)
-for (const F of FACES) {
-  F.bare = [];
-  // (Only the part of each cell that a notch could reach: from a cell out
-  // to DMAX in, at the heights cuts are made; sampled every quarter cell,
-  // and rounded out by more than that.)
-  const Q = 0.25;
-  for (const sol of BARE) {
-    // (Row by row of height, so that a solid crossing the face at a slant
-    // blanks its own footprint and not the rectangle round it.)
-    const rows = new Map();
-    for (let cx = sol.lo[0]; cx < sol.hi[0]; cx++)
-      for (let cy = Math.max(sol.lo[1], Math.floor(F.solid.ylo + ORIGIN[1]) - 1); cy < Math.min(sol.hi[1], Math.ceil(F.solid.yhi + ORIGIN[1]) + 1); cy++)
-        for (let cz = sol.lo[2]; cz < sol.hi[2]; cz++) {
-          const c = [cx, cy, cz];
-          if (cellOut(sol, c)) continue;
-          const m = (F.K - dot(F.n, c.map((x, a) => x + 0.5 - ORIGIN[a]))) / F.nl;
-          if (m < -2 || m > DMAX + 2) continue;
-          for (let x = 0; x <= 1 + 1e-9; x += Q) for (let y = 0; y <= 1 + 1e-9; y += Q) for (let z = 0; z <= 1 + 1e-9; z += Q) {
-          const X = [c[0] + x - ORIGIN[0], c[1] + y - ORIGIN[1], c[2] + z - ORIGIN[2]], depth = (F.K - dot(F.n, X)) / F.nl;
-          if (depth < -1 - Q || depth > DMAX + Q) continue;
-          const u = dot(F.tv, X), yp = (F.gm * dot(F.mv, X) + F.yk * F.K) / F.p;
-          for (let r = Math.floor(yp - Q); r <= Math.floor(yp + Q); r++) {
-            const o = rows.get(r) ?? [Infinity, -Infinity];
-            rows.set(r, [Math.min(o[0], u), Math.max(o[1], u)]);
-          }
-          }
+
+  // Whether a level-(CITY + 1) cell, its corner c (lattice units from the
+  // middle cell's corner), is wholly inside a solid (all its corners are),
+  // and whether it is wholly outside it (all outside one of its planes).
+  const corners = (c) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [c[0] + (i & 1), c[1] + ((i >> 1) & 1), c[2] + ((i >> 2) & 1)]);
+  const side = (p, q) => p.n[0] * q[0] + p.n[1] * q[1] + p.n[2] * q[2] - p.K;
+  const planesOf = (s) => PLANES.slice(s.first, s.last);
+  const cellIn = (s, c) => corners(c).every((q) => planesOf(s).every((p) => side(p, q) <= 0));
+  const cellOut = (s, c) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= 0));
+
+  // Each solid's bounds in the lattice (the cells it may touch).
+  for (const s of SOLIDS) {
+    s.lo = [Infinity, Infinity, Infinity];
+    s.hi = [-Infinity, -Infinity, -Infinity];
+    for (let x = ORIGIN[0] - 40; x < ORIGIN[0] + 40; x++)
+      for (let y = ORIGIN[1] - 2; y < ORIGIN[1] + 40; y++)
+        for (let z = ORIGIN[2] - 40; z < ORIGIN[2] + 40; z++) {
+          const c = [x, y, z];
+          if (cellOut(s, c)) continue;
+          for (let a = 0; a < 3; a++) (s.lo[a] = Math.min(s.lo[a], c[a])), (s.hi[a] = Math.max(s.hi[a], c[a] + 1));
         }
-    for (const [r, [u0, u1]] of [...rows].sort((p, q) => p[0] - q[0])) {
-      if (r + 1 <= F.solid.ylo || r >= F.solid.yhi) continue;
-      const lo = Math.floor(u0 - Q * F.len), hi = Math.ceil(u1 + Q * F.len), last = F.bare.at(-1);
-      if (last && last[3] === r && last[0] === lo && last[1] === hi) last[3] = r + 1;
-      else F.bare.push([lo, hi, r, r + 1]);
-    }
   }
-}
-const zone = (E, u, y, S) => E.sg * Math.sign(E.dl) * (u * E.dl - E.al * y - S * E.be); // (distance past the ridge, times |dl|)
-const rectBare = (F, u0, u1, y0, y1) => F.bare.some(([a, b, c, d]) => u0 < b && u1 > a && y0 < d && y1 > c);
-const fdiv = (a, b) => Math.floor(a / b);
-const cdiv = (a, b) => Math.ceil(a / b);
-const h01 = (h) => (h >>> 8) / 16777216;
-// The ridges are tiled too, by height only (relief-v5.md, v6): rows of the
-// city's (its rows of two cells, some halved) and, one level finer, rows
-// within each cell (split as the faces' rectangles are, at whole quanta and
-// never under the least). Each row draws a depth as a face's rectangle does,
-// the same for both faces (it is the ridge's), one level finer on top of the
-// city's row it is in; and is shallower, or not cut, until a pair of
-// notches that deep fits: one into each face, from past the ridge to W(t)
-// in from it (an edge that follows the ridge), leaving W(t) to each face's
-// other ridge, no deeper than the slice allows (CAP), and, one level finer,
-// clear of the solids without relief (BAREP). A face's rectangle near a
-// ridge is cut no deeper than the ridge's rows beside it (see rectDepth).
-const RIDGE_SALT = 0x2b7e1516;
-// (Segments' hash: see OPENINGS.)
-const SEGMENT_SALT = 0x3c6ef372;
-// (How deep a ridge's rows may be drawn at each level, as an index into its
-// depths; and in how many quarters of the city's rows they are halved.)
-const RIDGE_JMAX = [1, 2], RIDGE_HALVES = 4;
-RIDGES.forEach((r, i) => (r.index = i));
-for (const F of FACES) F.er = F.edges.map((E) => RIDGES.find((r) => (r.F === F && r.G === E.G) || (r.G === F && r.F === E.G)).index);
-// (A depth drawn as the rectangles' are, by a hash: its index in P.depths.)
-const drawJ = (lv, h) => {
-  const t = h01(h), P = LEVELS[lv];
-  let j = 0;
-  for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
-  return j;
-};
-// The deepest cut (twelfths, 0 to 16) the slice of a face's mass allows at
-// each height, by twelfths of a cell from F.c0 (its middle is never cut: at
-// most half its inradius, and MARGIN short of it): F.cap; and, for a
-// ridge's notch at each level, also as much as leaves the face W(t) from
-// both its ridges: F.ncap[lv]. Each condition is concave or affine in the
-// height, so a row's are its two ends'.
-for (const F of FACES) {
-  // (Over the heights of its mass, with a row each side where nothing is cut.)
-  F.c0 = Math.floor(12 * F.solid.ylo) - 1;
-  const n = Math.ceil(12 * F.solid.yhi) + 2 - F.c0;
-  const room = (y) => (y < F.solid.ylo - 1e-9 || y > F.solid.yhi + 1e-9 ? 0 : Math.min(F.inr(y) / 2, F.inr(y) - MARGIN));
-  const width = (y, S) => Math.abs((F.edges[0].al * y * S + S * F.edges[0].be) / F.edges[0].dl - (F.edges[1].al * y * S + S * F.edges[1].be) / F.edges[1].dl);
-  const most = (ok) => { let t = 16; while (t > 0 && !ok(t)) t--; return t; };
-  F.cap = Array.from({ length: n }, (_, i) => most((t) => t / 12 <= room((i + F.c0) / 12) + 1e-12));
-  F.ncap = [1, R].map((S, lv) => Array.from({ length: n }, (_, i) => most((t) => t <= F.cap[i] && width((i + F.c0) / 12, S) >= F.edges[0].Wt[lv][t] + F.edges[1].Wt[lv][t])));
-}
-const capIndex = (F, i) => Math.min(Math.max(i - F.c0, 0), F.cap.length - 1);
-const capAt = (F, i0, i1) => Math.min(F.cap[capIndex(F, i0)], F.cap[capIndex(F, i1)]);
-// (Whether F's notch at its e-th ridge, from the ridge to W(16) in, over
-// cells Y0 to Y1, could meet a solid without relief: the whole box, also
-// where it runs on past the ridge, to where F's out-plane or its floor
-// meets G's.)
-function notchBare(F, e, Y0, Y1) {
-  const E = F.edges[e], G = E.G, t = 16;
-  const at = [Y0, Y1].map((y) => (E.al * y + E.be) / E.dl + E.sg * E.Wt[0][t]);
-  const past = [Y0, Y1].flatMap((y) => [Math.ceil(F.nl), (-t / 12) * F.nl].map((a) => dot(F.tv, solve3([F.n, G.n, [0, 1, 0]], [F.K + a, G.K + Math.ceil(G.nl), y]))));
-  const all = [...at, ...past];
-  return rectBare(F, Math.floor(Math.min(...all)), Math.ceil(Math.max(...all)), Math.floor(Y0), Math.ceil(Y1));
-}
-// For each ridge, how many of the twelfths of a cell below each height (from
-// its faces' c0) its finer notches could meet a solid without relief in.
-for (const r of RIDGES) {
-  r.barep = [0];
-  for (let i = 0; i < r.F.cap.length; i++) {
-    const y = (i + r.F.c0) / 12, bare = [r.F, r.G].some((X) => notchBare(X, X.er.indexOf(r.index), y, y + 1 / 12));
-    r.barep.push(r.barep[i] + (bare ? 1 : 0));
-  }
-}
-const bareAt = (r, i) => r.barep[Math.min(Math.max(i - r.F.c0, 0), r.barep.length - 1)];
-const bareRows = (r, i0, i1) => bareAt(r, i1) - bareAt(r, i0);
-// Whether a pair t deep fits at ridge r over heights i0 to i1 (twelfths of a cell), at level lv.
-const pairFits = (r, lv, i0, i1, t) => [r.F, r.G].every((X) => t <= Math.min(X.ncap[lv][capIndex(X, i0)], X.ncap[lv][capIndex(X, i1)])) && (lv === 0 || bareRows(r, i0, i1) === 0);
-// The row of ridge r at level lv that height y (whole level units, at least
-// the point's) is in: { y0, y1 } in level units, t its depth (twelfths, the
-// city's row's included one level finer) and tc the city's row's.
-function ridgeRow(r, lv, y) {
-  if (lv === 0) {
-    const sby = LEVELS[0].sby, sr = fdiv(y, sby), half = hashCell([sr, r.index, 0], RIDGE_SALT >>> 0) % 4 < RIDGE_HALVES;
-    const a = half && y >= sr * sby + sby / 2 ? sr * sby + sby / 2 : sr * sby, b = half ? a + sby / 2 : a + sby;
-    let t = 0;
-    for (let j = Math.min(RIDGE_JMAX[0], drawJ(0, hashCell([a, r.index, 1], RIDGE_SALT >>> 0))); j > 0; j--) {
-      const tt = 3 * quarters(LEVELS[0].depths[j]);
-      if (pairFits(r, 0, 12 * a, 12 * b, tt)) { t = tt; break; }
-    }
-    return { y0: a, y1: b, t, tc: t, cy0: a, cy1: b };
-  }
-  const P = LEVELS[1], cy = fdiv(y, R), cw = ridgeRow(r, 0, cy), tc = cw.t;
-  let y0 = cy * R, y1 = y0 + R, h = hashCell([cy, r.index, 2], RIDGE_SALT >>> 0);
-  for (let i = 0; i < P.splits; i++) {
-    const ny = (y1 - y0) / P.quant, m = P.min;
-    if (ny >= 2 * m) {
-      const c = y0 + P.quant * (m + ((h >>> 8) % (ny - 2 * m + 1)));
-      if (y >= c) y0 = c;
-      else y1 = c;
-    }
-    h = hashCell([y0, y1, r.index], (RIDGE_SALT ^ 1) >>> 0);
-  }
-  let t = tc;
-  for (let j = Math.min(RIDGE_JMAX[1], drawJ(1, hashCell([y0, r.index, 3], RIDGE_SALT >>> 0))); j > 0; j--) {
-    const tt = tc + twelfths(P.depths[j] / R);
-    if (pairFits(r, 1, y0 / 2, y1 / 2, tt)) { t = tt; break; }
-  }
-  return { y0, y1, t, tc, cy0: R * cw.y0, cy1: R * cw.y1 };
-}
-// The ridges' rows as a table, for the shader to look up rather than work
-// out (each takes several hashes and caps; review21): for each ridge and
-// level, from RR_FROM[lv] (level units) for RR_N[lv] heights, ridgeRow's
-// y0, y1, t and tc, as a texture's rows (2 r + lv). Wide enough for every
-// height the cell table can ask after (it spans cells 1 to 37 here; checked).
-const RR_FROM = [-4, -4 * R], RR_N = [48, 48 * R];
-const RIDGE_ROWS = (() => {
-  const w = Math.max(...RR_N), data = new Int32Array(4 * w * 2 * RIDGES.length);
-  for (const r of RIDGES)
-    for (let lv = 0; lv < 2; lv++)
-      for (let i = 0; i < RR_N[lv]; i++) {
-        const { y0, y1, t, tc } = ridgeRow(r, lv, RR_FROM[lv] + i);
-        data.set([y0, y1, t, tc], 4 * ((2 * r.index + lv) * w + i));
-      }
-  return { size: [w, 2 * RIDGES.length], data };
-})();
-// Whether a cut t deep over [u0, u1] x [y0, y1] (level lv's measure and
-// units) comes within W(t) of F's e-th ridge at either height.
-function nearRidge(F, e, lv, u0, u1, y0, y1, t) {
-  const E = F.edges[e], S = lv ? R : 1, u = E.sg > 0 ? u0 : u1;
-  return [y0, y1].some((y) => zone(E, u, y, S) < E.Wt[lv][t] * Math.abs(E.dl));
-}
-// Depth profiles (relief-v5.md, terraces.md). A cut's depth behind its face
-// varies with height: a terrace's ramps up from nothing at the edge of its
-// band to all of it at its wall's foot, and is nothing elsewhere in its
-// rows; one level finer, a cut adds to the city's terrace under it. Near a
-// ridge a cut must be, at every height, no deeper than the ridge's own cut
-// there (then the two are one cut from past the ridge, inside the ridge's
-// pair: the pair argument holds slice by slice). Heights here are in
-// twelfths of a cell (h12), on which all rows and terraces' heights lie;
-// depths in twelfths; so every test is exact.
-const h12 = (lv, y) => (lv ? y / 2 : 12 * y);
-// (A terrace's height for t twelfths, in twelfths: rounded down, see terrace.)
-function terraceH(F, t) {
-  return Math.floor((t * F.nl) / Math.abs(F.n[1]) + 1e-3);
-}
-// A city terrace of face F, t twelfths deep over rows a to b (h12): its band
-// [lo, hi] and the height its wall stands at (anchor); null if not cut. On a
-// face all terraces' ramps have one slope, so one is no deeper than another
-// over a height range where both are in their bands iff its anchor is
-// nearer the band's end it ramps from (the upper's: its top; the lower's:
-// its bottom).
-function band(F, a, b, t) {
-  if (!(t > 0)) return null;
-  const H = terraceH(F, t), up = F.n[1] > 0;
-  return { up, lo: up ? b - H : a, hi: up ? b : a + H, at: up ? b : a };
-}
-const under = (c, R) => R && R.lo <= c.lo && c.hi <= R.hi && (c.up ? R.at >= c.at : R.at <= c.at);
-// Whether a cut of face F at level lv over heights s to e (h12) is, at its
-// e-th ridge, no deeper than the ridge's: city, its city terrace's band (or
-// null); fine (one level finer), its own part, b twelfths over heights lo to hi.
-function underRidge(F, e, lv, s, e2, city, fine) {
-  const r = RIDGES[F.er[e]];
-  for (let y = s; y < e2; ) {
-    const w = ridgeRow(r, lv, lv ? 2 * y : Math.floor(y / 12)), a = Math.max(s, h12(lv, w.y0)), b = Math.min(e2, h12(lv, w.y1));
-    const RB = band(F, h12(lv, w.cy0), h12(lv, w.cy1), w.tc);
-    if (city) {
-      const c = { ...city, lo: Math.max(a, city.lo), hi: Math.min(b, city.hi) };
-      if (c.lo < c.hi && !under(c, RB)) return false;
-    }
-    if (fine) {
-      const lo = Math.max(a, fine.lo), hi = Math.min(b, fine.hi);
-      if (lo < hi) {
-        // (The ridge's own part one level finer: behind its terrace's wall
-        // in its band, else behind the face; as cutOf.)
-        const ra = h12(lv, w.y0), rb = h12(lv, w.y1), inb = RB && (RB.up ? rb >= RB.lo : ra <= RB.hi);
-        const alo = inb && RB.up ? Math.max(ra, RB.lo) : ra, ahi = inb && !RB.up ? Math.min(rb, RB.hi) : rb;
-        if (!(fine.b <= w.t - w.tc && alo <= lo && hi <= ahi)) return false;
-      }
-    }
-    y = h12(lv, w.y1);
-  }
-  return true;
-}
-// A face's rectangle at level lv (drawn depth index j; one level finer on
-// the city's rectangle, rows cy0 to cy1 in cells, fl twelfths deep): the
-// deepest of its level's depths, from its own down, no deeper than the
-// slice allows and, at each ridge it comes within W(t) of, than the ridge's
-// cut at every height (see underRidge). In twelfths: fl if none.
-function rectDepth(F, lv, u0, u1, y0, y1, j, fl, cy0, cy1) {
-  const P = LEVELS[lv], s = h12(lv, y0), e2 = h12(lv, y1);
-  const cityB = lv ? band(F, 12 * cy0, 12 * cy1, fl) : null;
-  for (let jj = j; jj > 0; jj--) {
-    const t = fl + (lv ? twelfths(P.depths[jj] / R) : 3 * quarters(P.depths[jj]));
-    if (t > capAt(F, s, e2)) continue;
-    let city, fine = null;
-    if (!lv) city = band(F, s, e2, t);
-    else {
-      city = cityB;
-      // (Its own part: in the city terrace's band, from its floor or to its ceiling; else all its rows.)
-      const inb = cityB && (cityB.up ? e2 >= cityB.lo : s <= cityB.hi);
-      fine = { b: t - fl, lo: inb && cityB.up ? Math.max(s, cityB.lo) : s, hi: inb && !cityB.up ? Math.min(e2, cityB.hi) : e2 };
-    }
-    if ([0, 1].every((e) => !nearRidge(F, e, lv, u0, u1, y0, y1, t) || underRidge(F, e, lv, s, e2, city, fine))) return t;
-  }
-  return fl;
-}
-// (The shader takes a depth plane of 0 for no cut; the tables of W(t)
-// and the caps hold t up to 16; a pair's two floors, each rounded in to its
-// face's measure, differ by less than MARGIN: see relief-v4.md.)
-if (3 * quarters(LEVELS[0].depths.at(-1)) + twelfths(LEVELS[1].depths.at(-1) / R) > 16) throw new Error('arcology: cuts deeper than the tables');
-if (!(MARGIN > Math.max(...FACES.map((F) => 1 / F.nl)))) throw new Error('arcology: MARGIN under a face measure');
-if (FACES.some((F) => [1, 2, 3].some((t) => !(F.dn[1][Math.floor(t / 3) * NDQ + (t % 3)] > 0)))) throw new Error('arcology: a cut too shallow for its face');
-// (A notch's edge's normal is its value's gradient: checked numerically.)
-for (const F of FACES)
-  for (const E of F.edges) {
-    const at = (X) => zone(E, dot(F.tv, X), X[1], 1) / (Math.abs(E.dl) * E.gl), X = [1.3, 20.7, -2.1], h = 1e-3;
-    const g = [0, 1, 2].map((a) => (at(X.map((x, b) => x + (a === b ? h : 0))) - at(X)) / h);
-    if (g.some((x, a) => Math.abs(x - E.gn[a]) > 1e-6)) throw new Error('arcology: a notch edge normal is not its gradient');
-  }
-// Openings (S6): the upright faces of the solids that have them carry
-// grids of openings one level finer, in the face's own frame: each opening
-// `along` wide in a pitch `pitch` (the finer units), `up` high in a pitch
-// `upPitch`, `deep` into the face; and over each opening's width, all the
-// way up, a channel `channel` deep (0: none). By kind, from the solid, the
-// face (its plane P) and the solid's bottom and top (a solid's windows is a
-// kind, or a list of { kind, ... }, each kind's spec). Each opening is in the
-// middle of its pitch both ways,
-// the grid from the building's axis and the ground; unless `centre` (a point
-// the grid is centred on along the face), `from` (the height its rows start
-// at, finer units over the ground) or `fade` (the size of its openings'
-// features, for fading them sooner than their level: see scale); or it may
-// `vary`, as segments (below).
-// (Openings that open through a solid's face run 2 units past it, so that
-// no other solid's openings meeting them there leave a sheet.)
-// The central column: upright grooves (flutes) and level slots (rings), a
-// grid of raised blocks, framing pocks (segments, their edges jittered).
-// The pillars (pillars.md, after the drawing): smooth shafts at their
-// corners, and on each face between them a channel (the middle half of the
-// face) of shelves, their fronts at its floor, a third of a cell apart: one
-// opening per face along, each the gap between two shelves, deeper.
-// The plate and the roof band (fringe.md): a cornice, stepped back below in
-// runs (see EDGES in hexahedron.js).
-const OPENINGS = {
-  bays: (s, P) => {
-    const { width, mid } = across(s, P);
-    return { pitch: R * width, along: (R * width) / 2, upPitch: 8, up: 6, deep: 9, channel: 3, centre: mid };
-  },
-  // Flutes: upright grooves `groove` wide, `deep`, all the way up, as many
-  // as come nearest `pitch` apart, dividing the face exactly, half a pitch
-  // off its middle if even (a ridge at each end).
-  flutes: (s, P, y, { pitch, groove, deep }) => {
-    const { width, mid } = across(s, P), n = Math.max(1, Math.round((R * width) / pitch)), p = (R * width) / n;
-    // (On upright faces square to the axes, where a unit along is a unit.)
-    if (P.n[0] && P.n[2]) throw new Error('arcology: flutes on a slanted face');
-    if (!Number.isInteger(p)) throw new Error('arcology: flutes that do not divide their face');
-    const t = [-P.n[2], P.n[0]].map((x) => x / Math.hypot(P.n[0], P.n[2])), d = n % 2 ? 0 : p / 2 / R;
-    // (The groove is the channel; the rows of openings within it, of the
-    // same depth, add nothing.)
-    return { pitch: p, along: groove, upPitch: 24, up: 12, deep, channel: deep, centre: [mid[0] + t[0] * d, 0, mid[2] + t[1] * d] };
-  },
-  // Rings: level slots `up` high, `deep`, a `pitch` apart up the face, each
-  // the face's whole width and on past its ends (meeting its neighbours'
-  // round the corners).
-  rings: (s, P, y, { pitch, up, deep, from }) => {
-    // (One opening to a face: any pitch along longer than the opening will do.)
-    const { width, mid } = across(s, P);
-    return { pitch: 8 * R * width, along: R * width + 2 * deep + 4, upPitch: pitch, up, deep, centre: mid, from };
-  },
-  // Rows of segments (the bands' edges: see EDGES in hexahedron.js): rows
-  // from `from` units over the band's bottom, a pitch apart, each so high;
-  // along, blocks split at up to three cuts; each segment set in by `inset`
-  // at each end, at a depth between `deep`'s, or (a chance in 100) none;
-  // narrower than 2 units, left out. They run on past the face's ends: round
-  // a band's (convex) corners, each face's into the other's (Basil: no
-  // corner posts; the profile steps).
-  // (And each segment's edges, each set in by up to `jitter` more, by its
-  // own hash: segments of varied size and alignment.)
-  segments: (s, P, [y0], { rows: [from, upPitch, up], block, cut, inset, deep, none = 0, jitter = 0 }) =>
-    ({ pitch: block, along: block, upPitch, up, deep: deep[1], from: R * (y0 - GROUND) + from, vary: { kind: 'segments', cut, inset, deep, none, jitter }, fade: Math.min(up - 2 * jitter, deep[0], 4) }),
-};
-// (The width of a solid's upright face P, along it, and its middle.)
-function across(s, P) {
-  // (In plan: the face's line, from its point nearest the axis along its
-  // tangent, cut by the solid's other upright planes.)
-  const nn = P.n[0] * P.n[0] + P.n[2] * P.n[2], foot = [(P.n[0] * P.K) / nn, (P.n[2] * P.K) / nn], t = [-P.n[2] / Math.sqrt(nn), P.n[0] / Math.sqrt(nn)];
-  let lo = -Infinity, hi = Infinity;
-  for (const Q of s.planes) {
-    if (Q === P || Q.n[1] !== 0) continue;
-    const a = Q.n[0] * t[0] + Q.n[2] * t[1], b = Q.K - Q.n[0] * foot[0] - Q.n[2] * foot[1];
-    if (Math.abs(a) < 1e-12) continue;
-    if (a > 0) hi = Math.min(hi, b / a);
-    else lo = Math.max(lo, b / a);
-  }
-  const m = (lo + hi) / 2;
-  return { width: hi - lo, mid: [foot[0] + t[0] * m, 0, foot[1] + t[1] * m] };
-}
-// (A solid's bottom and top, from its level planes.)
-function heightsOf(s) {
-  const level = (sg) => s.planes.filter(({ n }) => !n[0] && !n[2] && Math.sign(n[1]) === sg).map(({ n, K }) => K / n[1]);
-  return [Math.max(...level(-1)), Math.min(...level(1))];
-}
-const WINDOWS = [], GRIDS = [], FAR = 1 << 28;
-// (Which solids' openings cut through a solid inside their own, as bits by
-// index: those it names as it yields to, else a mass's, all.)
-// (At most 31 solids: see SOLID_BITS.)
-const YIELDS = SOLIDS.map((s) => SOLIDS.reduce((m, o, i) => ((s.yields ? s.yields.includes(o.name) : s.relief) ? m | (1 << i) : m), 0) >>> 0);
-SOLIDS.forEach((s) => s.yields?.forEach((y) => { if (!SOLIDS.some((o) => o.name === y)) throw new Error(`arcology: ${s.name} yields to ${y}, which is no solid`); }));
-SOLIDS.forEach((s) => {
-  if (!s.windows) return;
-  s.wfirst = WINDOWS.length;
-  const kinds = typeof s.windows === 'string' ? [{ kind: s.windows }] : s.windows;
-  s.planes.forEach((P) => {
-    const { n, K } = P;
-    if (n[1] !== 0) return;
-    const alpha = gcd(n[0], n[2]), h = [n[0] / alpha, 0, n[2] / alpha], t = [-h[2], 0, h[0]], len = Math.hypot(...h);
-    const W = { n, K, alpha, h: slantOf(h), t: slantOf(t), hv: h, tv: t, len, solid: s, g0: GRIDS.length };
-    for (const { kind, ...spec } of kinds) {
-      const o = OPENINGS[kind](s, P, heightsOf(s), spec);
-      // (The grid's phase: where an opening starts along the face, and where
-      // a row of them starts up it; and where it may have openings, along
-      // and up.)
-      const pu = Math.round(o.pitch * len), wu = Math.round(o.along * len), py = o.upPitch, hy = o.up;
-      const ph = (o.centre ? Math.round(R * (t[0] * o.centre[0] + t[2] * o.centre[2]) - pu / 2) : 0) + Math.trunc((pu - wu) / 2);
-      const yb = o.from ?? Math.trunc((py - hy) / 2);
-      if (![pu, wu, ph, py, hy, yb].every(Number.isInteger)) throw new Error('arcology: an opening off the finer grid');
-      // (Segments: GVAR (1; their block, cut and inset) and GVB (their
-      // depths, least and most; the chance in 100 of none); else 0.)
-      const vk = o.vary?.kind, vd = o.vary?.deep ?? [0, 0];
-      const v = vk === 'segments' ? [1, o.pitch, o.vary.cut, o.vary.inset] : [0, 0, 0, 0];
-      const vb = [...vd, o.vary?.none ?? 0, o.vary?.jitter ?? 0];
-      if (vk && (vd[1] > o.deep || o.pitch % o.vary.cut || o.pitch / o.vary.cut < 2 || o.vary.inset < 1 || py - hy < 2 || !(Number.isInteger(vb[3]) && vb[3] >= 0) || hy - 2 * vb[3] < 2)) throw new Error('arcology: segments out of their bounds');
-      // (And when it fades, if sooner than its level: openings of size
-      // `fade` units fade as the level does where its cells are 4 fade wide,
-      // the level's own relief being about a quarter of a cell; as a fraction
-      // of a cell, 1 for as the level.)
-      const scale = Math.min(1, (4 * (o.fade ?? R)) / R);
-      GRIDS.push({ pu, wu, ph, py, hy, yb, vary: v, varyB: vb, scale, dw: Math.round(o.deep * len), ch: Math.round((o.channel ?? 0) * len) });
-    }
-    W.ng = GRIDS.length - W.g0;
-    W.deep = Math.max(...GRIDS.slice(W.g0).map((g) => Math.max(g.dw, g.ch)));
-    WINDOWS.push(W);
-  });
-  if (WINDOWS.length - s.wfirst > 4) throw new Error('arcology: a solid with more than four faces with openings');
-});
-// Whether the slab of face W's openings, from their back (the deeper of
-// gap and channel) to their outer plane as windowAir has them, meets the
-// cell whose corner is c, and its solid touches it. (Outside their solid
-// they make no air that isn't air already, or are stopped: see CLIP.)
-const slabMeets = (W, c) => {
-  if (cellOut(W.solid, c)) return false;
-  const K = W.K * R, ws = corners(c).map((q) => (R * W.n.reduce((a, x, i) => a + x * (q[i] - ORIGIN[i]), 0)) / W.alpha);
-  return Math.min(...ws) < cdiv(K, W.alpha) + Math.ceil(W.len) && Math.max(...ws) > fdiv(K, W.alpha) - W.deep;
-};
+  const TOP = Math.max(...SOLIDS.map((s) => s.hi[1]));
 
-// The table, one cell of level CITY + 1 to an entry (see volume in
-// halls.js): in its first number, the cell's kind (KIND bits: 1 deep, its
-// rooms the halls'; 2 skin, pockets and no rooms; 3 plain, solid), the faces
-// whose pockets reach into it (FACE_AT, a bit each), and for a deep cell,
-// for each of its six sides (+x, -x, +y, -y, +z, -z), whether its rooms'
-// openings may run on across it (OPEN_AT: the next cell is deep too, or
-// clear of every solid); for a skin cell, whether its pockets one level
-// finer may, and whether they run on as one box or three (CROSS_AT, in the
-// second number: see runOn below). In the second number too, the solids
-// touching it or the cells its openings run on into, that they stop at
-// (CLIP: one more than each's index in SOLIDS, in SOLID_BITS each). In the
-// third, the openings it cuts (a skin or plain cell), of up to three solids
-// (WIN_AT, in WIN_BITS each: one more than the solid's index in SOLIDS, 0
-// for none; and a bit for each of its faces with openings, from its first,
-// wfirst). In the fourth, how its openings run on (OPEN_AT and CROSS_AT, as
-// for its pockets in the first and second).
-const WORDS = 4, DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, SOLID_BITS = 5, WIN_AT = [0, 9, 18], WIN_BITS = 9;
-const CLIP_MOST = 6, CROSS_AT = SOLID_BITS * CLIP_MOST;
-if (SOLIDS.length >= 1 << SOLID_BITS) throw new Error(`arcology: ${SOLIDS.length} solids, at most ${(1 << SOLID_BITS) - 1}`);
-// The town on the roof band's top (.claude/design/town.md): carved from the
-// slab the band's top is raised by, one level finer, in its cells (TOWN_AT,
-// in a plain cell's first number; its run-on as a deep cell's, OPEN_AT, for
-// its four upright sides, and for its four corners, TOWN_CORNER_AT: ++, +-,
-// -+, --). Each cell is laid out in lots by one of TOWN_PLANS, and each lot
-// holds up to TOWN_SHAPES boxes (a building) standing in it, by its hash,
-// all at least TOWN_MARGIN inside it.
-const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = 1;
-const TOWN = (() => {
-  const s = SOLIDS.find((x) => x.town);
-  if (!s) return null;
-  const floor = s.town.floor, H = Math.round((heightsOf(s)[1] - floor) * R);
-  if (!Number.isInteger(floor) || H < 1 || H > R || R !== 24) throw new Error('arcology: a town that does not fit');
-  return { solid: s, floor, H };
-})();
-// A cell's lots, [x0, z0, x1, z1] in units, by plan (after real towns' blocks:
-// a grid of small lots; a 2 by 2 of larger; strips, along x or z, as of row
-// houses on a street; one whole block; a strip beside a grid), picked by the
-// cell's hash from TOWN_PICK.
-const TOWN_PLANS = [
-  [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8])),
-  [0, 1].flatMap((j) => [0, 1].map((i) => [12 * i, 12 * j, 12 * i + 12, 12 * j + 12])),
-  [0, 1, 2].map((j) => [0, 8 * j, 24, 8 * j + 8]),
-  [0, 1, 2].map((i) => [8 * i, 0, 8 * i + 8, 24]),
-  [[0, 0, 24, 24]],
-  [[0, 0, 8, 24], ...[0, 1, 2].flatMap((j) => [1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8]))],
-];
-const TOWN_PICK = [0, 0, 1, 1, 2, 3, 4, 5];
-// Box k of a lot r, by the lot's hashes h, h2 and its cluster's density
-// (see TOWN_TYPES in town.js, whence the shader's too).
-const townShape = townShapeJs(TOWN ? TOWN.H : 1);
-// A box's distance at p.
-const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
-// A cell's plan and its density (by its cluster, two cells square), by its hashes.
-function townCell() {
-  const hc = hashCell([fdiv(cellB[0], 2), fdiv(cellB[2], 2), 9], TOWN_SALT), hl = hashCell([cellB[0], cellB[2], 11], TOWN_SALT);
-  return { dens: [15, 45, 80][hc % 3], plan: TOWN_PLANS[TOWN_PICK[hl % 8]] };
-}
-const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_SALT);
-const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
-const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
-// (For the checks in .claude/verify.)
-// (For the checks: how many rays the solids without relief have stopped
-// in the city's pockets: see cityPockets.)
-const SEEN = { clipped: 0 };
-export const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
-export const VOLUME = (() => {
-  const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
-  const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
-  lo[1] = Math.max(lo[1], G);
-  const size = hi.map((h, a) => h - lo[a]);
-  const n = size[0] * size[1] * size[2];
-  const at = ([x, y, z]) => x + size[0] * (y + size[1] * z);
-  const within = ([x, y, z]) => x >= 0 && y >= 0 && z >= 0 && x < size[0] && y < size[1] && z < size[2];
-  const kind = new Uint8Array(n), open = new Uint8Array(n), faces = new Uint8Array(n), win = WIN_AT.map(() => new Uint16Array(n));
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
-    const c = [x + lo[0], y + lo[1], z + lo[2]], v = at([x, y, z]);
-    const touched = SOLIDS.filter((s) => !cellOut(s, c));
-    if (!touched.length) {
-      open[v] = 1;
-      continue;
+  // The city cells, across from the middle one, that the building stands in:
+  // no light well opens in those (it would come up into it).
+  const BUILT = new Set();
+  for (const { lo, hi } of SOLIDS)
+    for (let a = Math.floor(lo[0] / R); a <= Math.floor((hi[0] - 1) / R); a++)
+      for (let b = Math.floor(lo[2] / R); b <= Math.floor((hi[2] - 1) / R); b++) BUILT.add(`${a},${b}`);
+  const BUILT_CELLS = [...BUILT].map((k) => k.split(',').map(Number));
+  // See nearBuilt in the shader (o: a city cell across from the middle one, x and z).
+  const nearBuilt = ([x, z]) => BUILT_CELLS.some(([a, b]) => Math.max(Math.abs(a - x), Math.abs(b - z)) <= 1);
+  // See spaceRoom in the shader.
+  const CITY_SEED = levelSeed(CITY);
+  const roomRule = (id, seed) => seed !== CITY_SEED || id[1] > ROW_ID || nearBuilt([id[0] - MID, id[2] - MID]);
+
+  // For each city cell (across from the middle one) with any solid near it,
+  // the solids that reach into the air it answers for (its plaza piece, see
+  // plaza): only those are asked about.
+  const NEAR = new Map();
+  SOLIDS.forEach(({ lo: [x0, y0, z0], hi: [x1, y1, z1] }, k) => {
+    for (let a = Math.floor((x0 - 2 * R) / R); a <= Math.floor((x1 + R) / R); a++)
+      for (let b = Math.floor((y0 - R - M) / R); b <= Math.floor((y1 + M) / R); b++)
+        for (let c = Math.floor((z0 - 2 * R) / R); c <= Math.floor((z1 + R) / R); c++) {
+          if (b < 0 || b >= ROWS) continue;
+          const lo = [a * R - R, b * R + (b === 0 ? G : -M), c * R - R], hi = [a * R + 2 * R, b * R + R + M, c * R + 2 * R];
+          if (x1 <= lo[0] || x0 >= hi[0] || y1 <= lo[1] || y0 >= hi[1] || z1 <= lo[2] || z0 >= hi[2]) continue;
+          const key = `${a},${b},${c}`;
+          if (!NEAR.has(key)) NEAR.set(key, []);
+          NEAR.get(key).push(k);
+        }
+  });
+  const NEAR_CELLS = [...NEAR.keys()].map((k) => k.split(',').map(Number));
+  const NEAR_START = [0];
+  for (const k of NEAR.keys()) NEAR_START.push(NEAR_START.at(-1) + NEAR.get(k).length);
+  const NEAR_BLOCKS = [...NEAR.values()].flat();
+
+  // Pockets: a face is cut, along it and up it, into rectangles: super-blocks
+  // sb long in rows sby high (rows by true height), each row shifted along by
+  // its own whole number of quanta (so that no line runs on up the face), each
+  // split `splits` times at whole quanta (along it, quanta of its own measure).
+  // Each rectangle is cut into the face to its own depth (depths, as often as
+  // weights), level and square to the face. The same rule at two levels: the city's own (lengths in its lattice units,
+  // cells), whose boxes make the masses and the ragged silhouettes; and the
+  // next (in its units), smaller boxes cut into those. What keeps anything
+  // from being cut loose is in the setup after BARE_PL.
+  const LEVELS = [
+    { sb: 4, sby: 2, quant: 1, splits: 3, min: 1, depths: [0, 0.25, 0.5], weights: [0.25, 0.4, 0.35] },
+    { sb: 24, sby: 24, quant: 2, splits: 3, min: 3, depths: [0, 2, 4, 6, 8], weights: [0.3, 0.25, 0.2, 0.15, 0.1] },
+  ];
+  for (const lv of LEVELS) lv.cumulative = lv.weights.map((_, i) => lv.weights.slice(0, i + 1).reduce((x, y) => x + y));
+  const ND = Math.max(...LEVELS.map((lv) => lv.depths.length));
+  const POCKET_SALT = 0x27d4eb2d, ROW_SALT = 0x165667b1, DEPTH_SALT = 0xd3a2646c;
+
+  // The faces that carry pockets: a mass's sloped faces. Each in its own
+  // frame: across it, h (the plane's normal laid flat, in whole numbers, out
+  // of the mass), along it, t (flat, along its edge), and up. Its plane is
+  // n . X < K (X in the city's lattice units from the building's origin; one
+  // level finer, R times both), with n = alpha h + (0, ny, 0); its pockets keep
+  // within heights lo to hi (4 y, so that the rims' quarter cells are whole).
+  // One rule, whatever way it faces.
+  const FOUR = slantOf([0, 4, 0]);
+  const FACES = [];
+  SOLIDS.forEach((s) => {
+    for (const i of s.relief ?? []) {
+      const { n, K } = s.planes[i];
+      // (h and t are scaled by sub, so that a face's measure is fine enough
+      // for a quarter cell's depth whichever way it faces: w = h . X is sub
+      // times the distance in the plain direction's units.)
+      const alpha = gcd(n[0], n[2]), h0 = [n[0] / alpha, 0, n[2] / alpha], sub = Math.max(1, Math.ceil(4 / Math.hypot(...h0)));
+      const h = h0.map((x) => x * sub), t = [-h[2], 0, h[0]];
+      const len = Math.hypot(...h);
+      FACES.push({ n, K, alpha, sub, ny: n[1], plane: slantOf(n), h: slantOf(h), t: slantOf(t), hv: h, tv: t, len, len2: dot2(h),
+                   q: LEVELS.map((lv) => Math.round(lv.quant * len)),
+                   lo4: Math.round(s.ylo * 4), hi4: Math.round(s.yhi * 4), solid: s });
     }
-    // Faces whose pockets may reach in: some corner of the cell less than
-    // REACH inside the face's plane, in its mass.
-    let f = 0;
-    FACES.forEach((F, i) => {
-      if (cellOut(F.solid, c)) return;
-      const ds = corners(c).map((q) => (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]) - F.K) / Math.hypot(...F.n));
-      if (Math.max(...ds) > -REACH) f |= 1 << i;
+    // (The cell table compares heights with ylo and yhi themselves: see reached and deaf.)
+    if (s.relief && !(Number.isInteger(s.ylo * 4) && Number.isInteger(s.yhi * 4))) throw new Error('arcology: relief heights off the quarters');
+  });
+  function dot2(v) {
+    return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+  }
+  // (A cell's table entry has a bit for each, six in all.)
+  if (FACES.length > 6) throw new Error(`arcology: ${FACES.length} faces with relief, at most 6`);
+  // How far behind a face anything is cut (cells): DMAX, along its normal (see below).
+  const REACH = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R + 0.05;
+  // Each solid's planes, n . X < K (unit n, X in cells from the building's
+  // origin).
+  const SOLID_PL = SOLIDS.map((s) => s.planes.map(({ n, K }) => [...n.map((x) => x / Math.hypot(...n)), K / Math.hypot(...n)]));
+  // The solids that are neither masses nor their rims (pillars, the column): the
+  // city's cuts stop at them (see bareIn), and the notches one level finer
+  // keep clear of the cells they touch (see F.bare).
+  // (No upright face, nor top, of a solid without relief on a cell's side:
+  // the cells inside it would be wholly inside the solid, where the halls are,
+  // and those next to open air would show them through its face.)
+  SOLIDS.filter((s) => !s.relief && !s.rim).forEach((s) => s.planes.forEach(({ n, K }) => {
+    const axis = n.filter((x) => x).length === 1, a = n.findIndex((x) => x);
+    if (axis && (a !== 1 || n[1] > 0) && Number.isInteger(K / n[a])) throw new Error(`arcology: a face of ${s.name} on a cell's side (${'xyz'[a]} = ${K / n[a]})`);
+  }));
+  const BARE = SOLIDS.filter((s) => !s.relief && !s.rim);
+  const BARE_PL = BARE.map((s) => SOLID_PL[SOLIDS.indexOf(s)]);
+  // (And their bounds, cells from the building's origin: a first, cheap test.)
+  const BARE_BOX = BARE.map((s) => [s.lo.map((x, a) => x - ORIGIN[a]), s.hi.map((x, a) => x - ORIGIN[a])]);
+  // (Beyond this from all of them (cells: more than the diagonal of a city
+  // pocket's box, 5.7), a ray through the city's pockets cannot strike one:
+  // see cell() in the shader.)
+  const BARE_NEAR = 6;
+  if (BARE_NEAR < Math.hypot(LEVELS[0].sb, LEVELS[0].sby, 1 + REACH)) throw new Error('arcology: BARE_NEAR under a city pocket');
+  // How deep anything is cut at most (cells): both levels' deepest.
+  const DMAX = LEVELS[0].depths.at(-1) + LEVELS[1].depths.at(-1) / R;
+  // How far in from a face, and out past it, anything of the city's is cut (cells).
+  const BAND_IN = LEVELS[0].depths.at(-1) + 0.01, BAND_OUT = 1.01;
+  const TILE_SALT = 0x6c8e9cf5;
+  // How much nearer its own face than any other a cut of a face keeps (cells).
+  const MARGIN = 0.1;
+  const solve3 = (M, b) => {
+    const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+    const D = det(M);
+    return [0, 1, 2].map((c) => det(M.map((row, i) => row.map((x, j) => (j === c ? b[i] : x)))) / D);
+  };
+  for (const F of FACES) {
+    F.nn = dot2(F.n);
+    F.nl = Math.sqrt(F.nn);
+    F.q2 = [F.q[0], (F.q[0] * LEVELS[1].quant) / LEVELS[0].quant];
+  }
+  FACES.forEach((F, k) => (F.index = k));
+  // Relief (.claude/design/relief-v4.md, relief-v5.md): pockets are cut level
+  // into a face, in rows by true height, so their floors and ceilings are
+  // level and their side walls upright; their back walls follow the face.
+  // Each face is tiled at each level, all the way to its ridges and apex, and
+  // so is each ridge, by height. Everything is decided slice by slice: a cut t
+  // deep keeps W(t) (about 2t) from each ridge, so that it is in its face's
+  // half of the slice, nearer its own plane than any other face's by MARGIN;
+  // or it comes nearer a ridge, and is then no deeper than the ridge's own
+  // row there, whose pair of notches (one into each face) it joins. Then
+  // every cut of a slice meets its edge in one connected stretch, so what is
+  // left of the slice is in one piece and holds its middle, and the middles
+  // of all the slices are a straight line (the axis): nothing is cut loose.
+  for (const F of FACES) {
+    const mass = FACES.filter((G) => G.solid === F.solid);
+    F.near = mass.filter((G) => G !== F);
+    // (Rows by true height: a point's height on the face is its own.)
+    F.mv = [0, 1, 0];
+    F.gm = 1;
+    F.ms = slantOf(F.mv);
+    F.mlen = 1;
+    F.p = 1;
+    F.yk = 0;
+    // In, level and square to the face, DELTA cells deeper.
+    const hh = F.n[0] * F.n[0] + F.n[2] * F.n[2], v = [(-F.n[0] * F.nl) / hh, 0, (-F.n[2] * F.nl) / hh];
+    // The point on the face at (u, y) (city measure, cells), and DELTA cells in.
+    const M = [F.n, F.tv, [0, 1, 0]];
+    F.at = (u, y, delta) => solve3(M, [F.K, u, y]).map((x, a) => x + delta * v[a]);
+    // Its ridges with the mass's other faces, each as where it crosses height
+    // y in F's measure, u = (al y + be) / dl, in whole numbers (at a level S
+    // times finer: (al y + S be) / dl), and how far from it a cut t deep keeps
+    // (W(t), below).
+    F.edges = F.near.map((G) => {
+      const n = F.n, g = G.n, t = F.tv;
+      const dl = n[0] * g[2] - n[2] * g[0];
+      const al = t[0] * (n[2] * g[1] - n[1] * g[2]) + t[2] * (g[0] * n[1] - n[0] * g[1]);
+      const be = t[0] * (F.K * g[2] - n[2] * G.K) + t[2] * (n[0] * G.K - g[0] * F.K);
+      // (Going in, G comes nearer by fall per unit; along the face, it is
+      // per u nearer per unit of F's measure.)
+      const dG = (X) => (G.K - dot(G.n, X)) / G.nl, fall = dot(G.n, v) / G.nl;
+      const per = Math.abs(dG(F.at(1, 20, 0)) - dG(F.at(0, 20, 0)));
+      // (W(t) at each level, in its u-units, t twelfths: going t in at a
+      // pocket's near edge leaves it MARGIN nearer F than G.)
+      const Wt = [1, R].map((S) => Array.from({ length: 17 }, (_, t) => Math.ceil((((t / 12) * (1 + fall) + MARGIN) * S) / per) + 1));
+      // (The plane of a notch's edge, W in from the ridge and along it: its
+      // gradient in u-units per lattice unit, gl, and its unit normal into
+      // the face, gn (both with sg, below).)
+      const gv = [t[0], -al / dl, t[2]];
+      return { G, dl, al, be, Wt, W: Wt[0][16], sg: 0, gl: Math.hypot(...gv), gv };
     });
-    // Skin where pockets reach and only masses, their rims and solids out of
-    // the pockets' heights touch it (a post's top that is the plate's: see
-    // heights); deep where it is wholly inside some solid (whatever else
-    // crosses it) and no pocket reaches; plain otherwise.
-    // (ylo and yhi are on the quarters the pockets are cut to: see LEVELS' lo4.)
-    const reached = (s) => FACES.some((F, i) => f & (1 << i) && heightsOf(s)[0] < F.solid.yhi && heightsOf(s)[1] > F.solid.ylo);
-    if (f && touched.every((s) => s.relief || s.rim || !reached(s))) (kind[v] = SKIN), (faces[v] = f);
-    else kind[v] = !f && touched.some((s) => cellIn(s, c)) ? DEEP : PLAIN;
-    // A skin or plain cell has the openings of each face of each solid with
-    // them that touches it whose slab (from behind the face as deep as they
-    // go to past it as far as they reach: see windowAir) meets the cell,
-    // stopped at the other solids (see CLIP below).
-    if (kind[v] === SKIN || kind[v] === PLAIN) {
-      const ws = touched.filter((s) => s.windows);
-      if (ws.length > WIN_AT.length) throw new Error(`arcology: ${ws.length} solids with openings touch the cell ${c}`);
-      ws.forEach((s, k) => {
-        let mask = 0;
-        WINDOWS.forEach((W, j) => W.solid === s && slabMeets(W, c) && (mask |= 1 << (j - s.wfirst)));
-        if (mask) win[k][v] = (SOLIDS.indexOf(s) + 1) | (mask << SOLID_BITS);
-      });
+    // (Which way from each ridge the face lies.)
+    const ym = (F.solid.ylo + F.solid.yhi) / 2, uAt = (E) => (E.al * ym + E.be) / E.dl;
+    F.edges[0].sg = Math.sign(uAt(F.edges[1]) - uAt(F.edges[0]));
+    F.edges[1].sg = -F.edges[0].sg;
+    for (const E of F.edges) E.gn = E.gv.map((x) => (E.sg * x) / E.gl);
+    // The inradius of the mass's level slice at height y (cells): how deep its
+    // middle is behind each face (relief-v4.md: never cut).
+    const [G, H] = F.near, un = (X) => X.n.map((x) => x / X.nl);
+    const inr = (y) => {
+      const X = solve3([un(F).map((x, a) => x - un(G)[a]), un(F).map((x, a) => x - un(H)[a]), [0, 1, 0]], [F.K / F.nl - G.K / G.nl, F.K / F.nl - H.K / H.nl, y]);
+      return (F.K - dot(F.n, X)) / F.nl;
+    };
+    F.inr = (y) => Math.max(0, inr(y));
+    // (The zone tests' whole numbers, one level finer, stay well within 32
+    // bits wherever they are asked: within two cells of the mass's box, and a
+    // super-block further along.)
+    const lo = F.solid.lo.map((x, a) => x - ORIGIN[a] - 2), hi = F.solid.hi.map((x, a) => x - ORIGIN[a] + 2);
+    const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [0, 1, 2].map((a) => ((i >> a) & 1 ? hi[a] : lo[a])));
+    const um = Math.max(...corners.map((X) => Math.abs(dot(F.tv, X)))) + (LEVELS[0].sb / LEVELS[0].quant) * F.q2[0];
+    const yb = Math.max(...corners.map((X) => Math.abs(X[1])));
+    for (const E of F.edges)
+      if (R * (Math.abs(E.al) * yb + Math.abs(E.be) + (E.W + um) * Math.abs(E.dl)) >= 2 ** 30) throw new Error('arcology: zone tests overflow');
+  }
+  function dot(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  }
+  // The ridges: each pair of faces of a mass.
+  const RIDGES = [];
+  FACES.forEach((F, i) => FACES.forEach((G, j) => {
+    if (i < j && F.solid === G.solid) RIDGES.push({ a: i, b: j, F, G });
+  }));
+  for (const r of RIDGES) {
+    // The ridge's line: where the two planes meet, at heights y (cells).
+    r.at = (y) => solve3([r.F.n, r.G.n, [0, 1, 0]], [r.F.K, r.G.K, y]);
+  }
+  // Depths are a quarter cell's whole number (the city's) and a twelfth's
+  // (one level finer's): a face's depth plane at (ci, fi), in whole numbers of
+  // its measure (n . X) at each level (rounded in, so never deeper).
+  const NDQ = 5;
+  // (floor(p |n| / 12) for p twelfths, exactly: the largest m with (12 m)^2 <= p^2 nn.)
+  const depthN = (nn, p) => {
+    let m = Math.floor(Math.sqrt(p * p * nn) / 12);
+    while (144 * (m + 1) * (m + 1) <= p * p * nn) m++;
+    while (m > 0 && 144 * m * m > p * p * nn) m--;
+    return m;
+  };
+  for (const F of FACES) F.dn = [1, R].map((S) => Array.from({ length: NDQ * NDQ }, (_, i) => depthN(F.nn, (3 * Math.floor(i / NDQ) + (i % NDQ)) * S)));
+  if (Math.max(...FACES.map((F) => (3 * (NDQ - 1) + NDQ - 1) ** 2 * R * R * F.nn)) >= 2 ** 31) throw new Error('arcology: depths overflow');
+  const quarters = (x) => Math.round(x * 4), twelfths = (x) => Math.round(x * 12);
+  // The notches one level finer keep clear of the cells that the solids
+  // without relief (pillars, the column) touch (they are cut in skin cells only,
+  // which such solids never touch): for each face, the rectangles of it (u in
+  // its city measure, y in cells, rounded out) over which a notch could meet
+  // one (see r.barep). (The city's cuts stop at such solids instead: see
+  // bareIn.)
+  for (const F of FACES) {
+    F.bare = [];
+    // (Only the part of each cell that a notch could reach: from a cell out
+    // to DMAX in, at the heights cuts are made; sampled every quarter cell,
+    // and rounded out by more than that.)
+    const Q = 0.25;
+    for (const sol of BARE) {
+      // (Row by row of height, so that a solid crossing the face at a slant
+      // blanks its own footprint and not the rectangle round it.)
+      const rows = new Map();
+      for (let cx = sol.lo[0]; cx < sol.hi[0]; cx++)
+        for (let cy = Math.max(sol.lo[1], Math.floor(F.solid.ylo + ORIGIN[1]) - 1); cy < Math.min(sol.hi[1], Math.ceil(F.solid.yhi + ORIGIN[1]) + 1); cy++)
+          for (let cz = sol.lo[2]; cz < sol.hi[2]; cz++) {
+            const c = [cx, cy, cz];
+            if (cellOut(sol, c)) continue;
+            const m = (F.K - dot(F.n, c.map((x, a) => x + 0.5 - ORIGIN[a]))) / F.nl;
+            if (m < -2 || m > DMAX + 2) continue;
+            for (let x = 0; x <= 1 + 1e-9; x += Q) for (let y = 0; y <= 1 + 1e-9; y += Q) for (let z = 0; z <= 1 + 1e-9; z += Q) {
+            const X = [c[0] + x - ORIGIN[0], c[1] + y - ORIGIN[1], c[2] + z - ORIGIN[2]], depth = (F.K - dot(F.n, X)) / F.nl;
+            if (depth < -1 - Q || depth > DMAX + Q) continue;
+            const u = dot(F.tv, X), yp = (F.gm * dot(F.mv, X) + F.yk * F.K) / F.p;
+            for (let r = Math.floor(yp - Q); r <= Math.floor(yp + Q); r++) {
+              const o = rows.get(r) ?? [Infinity, -Infinity];
+              rows.set(r, [Math.min(o[0], u), Math.max(o[1], u)]);
+            }
+            }
+          }
+      for (const [r, [u0, u1]] of [...rows].sort((p, q) => p[0] - q[0])) {
+        if (r + 1 <= F.solid.ylo || r >= F.solid.yhi) continue;
+        const lo = Math.floor(u0 - Q * F.len), hi = Math.ceil(u1 + Q * F.len), last = F.bare.at(-1);
+        if (last && last[3] === r && last[0] === lo && last[1] === hi) last[3] = r + 1;
+        else F.bare.push([lo, hi, r, r + 1]);
+      }
     }
   }
-  // A skin cell's pockets one level finer run on a cell past each side in
-  // OPEN_AT, so that a pocket across the side is one piece and not two that
-  // only touch (shrunk with distance, two would leave a sheet between them).
-  // A side is open unless the next cell is one that a pocket of the cell's
-  // faces could reach (from its lip past the face to REACH in) and that would
-  // not cut it (deaf): a deep or plain cell. A skin cell cuts the same
-  // pockets (they are the point's alone), and a cell clear of every solid is
-  // the city's air. The open sides make one box, across edges and corners
-  // too; where that box would take in a deaf cell, each piece is three
-  // instead, each run on along one axis only (CROSS_AT).
-  const lip = Math.max(...FACES.map((F) => Math.ceil(F.nl) / F.nl)) / R + 1e-3;
-  const deaf = new Uint8Array(n);
-  for (let v = 0; v < n; v++) {
-    if (kind[v] !== DEEP && kind[v] !== PLAIN) continue;
-    const c = [v % size[0], Math.floor(v / size[0]) % size[1], Math.floor(v / size[0] / size[1])].map((x, a) => x + lo[a]);
-    FACES.forEach((F, i) => {
-      if (c[1] - ORIGIN[1] >= F.solid.yhi || c[1] + 1 - ORIGIN[1] <= F.solid.ylo) return; // (pockets are cut at those heights only)
-      const ds = corners(c).map((q) => (F.K - (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]))) / F.nl);
-      if (Math.min(...ds) < REACH && Math.max(...ds) > -lip) deaf[v] |= 1 << i;
-    });
+  const zone = (E, u, y, S) => E.sg * Math.sign(E.dl) * (u * E.dl - E.al * y - S * E.be); // (distance past the ridge, times |dl|)
+  const rectBare = (F, u0, u1, y0, y1) => F.bare.some(([a, b, c, d]) => u0 < b && u1 > a && y0 < d && y1 > c);
+  const fdiv = (a, b) => Math.floor(a / b);
+  const cdiv = (a, b) => Math.ceil(a / b);
+  const h01 = (h) => (h >>> 8) / 16777216;
+  // The ridges are tiled too, by height only (relief-v5.md, v6): rows of the
+  // city's (its rows of two cells, some halved) and, one level finer, rows
+  // within each cell (split as the faces' rectangles are, at whole quanta and
+  // never under the least). Each row draws a depth as a face's rectangle does,
+  // the same for both faces (it is the ridge's), one level finer on top of the
+  // city's row it is in; and is shallower, or not cut, until a pair of
+  // notches that deep fits: one into each face, from past the ridge to W(t)
+  // in from it (an edge that follows the ridge), leaving W(t) to each face's
+  // other ridge, no deeper than the slice allows (CAP), and, one level finer,
+  // clear of the solids without relief (BAREP). A face's rectangle near a
+  // ridge is cut no deeper than the ridge's rows beside it (see rectDepth).
+  const RIDGE_SALT = 0x2b7e1516;
+  // (Segments' hash: see OPENINGS.)
+  const SEGMENT_SALT = 0x3c6ef372;
+  // (How deep a ridge's rows may be drawn at each level, as an index into its
+  // depths; and in how many quarters of the city's rows they are halved.)
+  const RIDGE_JMAX = [1, 2], RIDGE_HALVES = 4;
+  RIDGES.forEach((r, i) => (r.index = i));
+  for (const F of FACES) F.er = F.edges.map((E) => RIDGES.find((r) => (r.F === F && r.G === E.G) || (r.G === F && r.F === E.G)).index);
+  // (A depth drawn as the rectangles' are, by a hash: its index in P.depths.)
+  const drawJ = (lv, h) => {
+    const t = h01(h), P = LEVELS[lv];
+    let j = 0;
+    for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
+    return j;
+  };
+  // The deepest cut (twelfths, 0 to 16) the slice of a face's mass allows at
+  // each height, by twelfths of a cell from F.c0 (its middle is never cut: at
+  // most half its inradius, and MARGIN short of it): F.cap; and, for a
+  // ridge's notch at each level, also as much as leaves the face W(t) from
+  // both its ridges: F.ncap[lv]. Each condition is concave or affine in the
+  // height, so a row's are its two ends'.
+  for (const F of FACES) {
+    // (Over the heights of its mass, with a row each side where nothing is cut.)
+    F.c0 = Math.floor(12 * F.solid.ylo) - 1;
+    const n = Math.ceil(12 * F.solid.yhi) + 2 - F.c0;
+    const room = (y) => (y < F.solid.ylo - 1e-9 || y > F.solid.yhi + 1e-9 ? 0 : Math.min(F.inr(y) / 2, F.inr(y) - MARGIN));
+    const width = (y, S) => Math.abs((F.edges[0].al * y * S + S * F.edges[0].be) / F.edges[0].dl - (F.edges[1].al * y * S + S * F.edges[1].be) / F.edges[1].dl);
+    const most = (ok) => { let t = 16; while (t > 0 && !ok(t)) t--; return t; };
+    F.cap = Array.from({ length: n }, (_, i) => most((t) => t / 12 <= room((i + F.c0) / 12) + 1e-12));
+    F.ncap = [1, R].map((S, lv) => Array.from({ length: n }, (_, i) => most((t) => t <= F.cap[i] && width((i + F.c0) / 12, S) >= F.edges[0].Wt[lv][t] + F.edges[1].Wt[lv][t])));
   }
-  // (The steps along each axis to the cells in the box of the open sides.)
-  const boxOf = (open) => [0, 1, 2].map((a) => [0, ...(open & (1 << (2 * a)) ? [1] : []), ...(open & (2 << (2 * a)) ? [-1] : [])]);
-  // (The sides open where the cell u next to [x, y, z] across them is
-  // ok(u), and whether as one box or three.)
-  const runOn = (x, y, z, ok) => {
-    const okAt = (dx, dy, dz) => ok([x + dx, y + dy, z + dz]);
-    let open = 0;
-    SIDES.forEach((e, k) => okAt(...e) && (open |= 1 << k));
-    const ax = boxOf(open);
-    const box = ax[0].every((dx) => ax[1].every((dy) => ax[2].every((dz) => okAt(dx, dy, dz))));
-    return [open, !box];
-  };
-  const skinOk = (f) => (u) => !within(u) || !(deaf[at(u)] & f);
-  // A cell's openings run on likewise, unless the next cell is one their
-  // slab meets and that does not cut them (off the solid's other faces, say,
-  // or under the table's floor, the plaza's ground: there the openings stop
-  // at the cell's side). In a skin cell, where both its pockets and its
-  // openings may.
-  const winsOf = (v) => win.flatMap((w) => [0, 1, 2, 3].filter((k) => (w[v] >> SOLID_BITS) & (1 << k)).map((k) => SOLIDS[(w[v] & ((1 << SOLID_BITS) - 1)) - 1].wfirst + k));
-  const plainOk = (ws) => (u) => {
-    if (within(u) && open[at(u)]) return true;
-    const cuts = within(u) ? winsOf(at(u)) : [], c = u.map((q, a) => q + lo[a]);
-    return ws.every((j) => cuts.includes(j) || !slabMeets(WINDOWS[j], c));
-  };
-  // CLIP: the solids that touch the cell or any cell its openings run on
-  // into (the box of its open sides). Each solid's openings stop at the
-  // others: at the masses outside it (inside it they cut through: a pillar's
-  // channels run on where the lower's slope passes through it), at the rest
-  // everywhere (so the roof band runs across a pillar whole). Within any
-  // cell their stopping is the same whichever cell asks (a solid that does
-  // not touch a cell has nothing in it).
-  // (A solid's `keep`: how far clear of it, in cells, others' openings stop.)
-  const cellOutBy = (s, c, w) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= w * p.len));
-  const clipOf = (x, y, z, open) => {
-    const out = [], ax = boxOf(open);
-    for (const dx of ax[0]) for (const dy of ax[1]) for (const dz of ax[2]) {
-      const c = [x + dx + lo[0], y + dy + lo[1], z + dz + lo[2]];
-      SOLIDS.forEach((s, i) => !out.includes(i + 1) && !cellOutBy(s, c, s.keep ?? 0) && out.push(i + 1));
+  const capIndex = (F, i) => Math.min(Math.max(i - F.c0, 0), F.cap.length - 1);
+  const capAt = (F, i0, i1) => Math.min(F.cap[capIndex(F, i0)], F.cap[capIndex(F, i1)]);
+  // (Whether F's notch at its e-th ridge, from the ridge to W(16) in, over
+  // cells Y0 to Y1, could meet a solid without relief: the whole box, also
+  // where it runs on past the ridge, to where F's out-plane or its floor
+  // meets G's.)
+  function notchBare(F, e, Y0, Y1) {
+    const E = F.edges[e], G = E.G, t = 16;
+    const at = [Y0, Y1].map((y) => (E.al * y + E.be) / E.dl + E.sg * E.Wt[0][t]);
+    const past = [Y0, Y1].flatMap((y) => [Math.ceil(F.nl), (-t / 12) * F.nl].map((a) => dot(F.tv, solve3([F.n, G.n, [0, 1, 0]], [F.K + a, G.K + Math.ceil(G.nl), y]))));
+    const all = [...at, ...past];
+    return rectBare(F, Math.floor(Math.min(...all)), Math.ceil(Math.max(...all)), Math.floor(Y0), Math.ceil(Y1));
+  }
+  // For each ridge, how many of the twelfths of a cell below each height (from
+  // its faces' c0) its finer notches could meet a solid without relief in.
+  for (const r of RIDGES) {
+    r.barep = [0];
+    for (let i = 0; i < r.F.cap.length; i++) {
+      const y = (i + r.F.c0) / 12, bare = [r.F, r.G].some((X) => notchBare(X, X.er.indexOf(r.index), y, y + 1 / 12));
+      r.barep.push(r.barep[i] + (bare ? 1 : 0));
     }
-    if (out.length > CLIP_MOST) throw new Error(`arcology: ${out.length} solids to stop openings at, at ${[x, y, z]}`);
-    return out.reduce((w, i, k) => w | (i << (SOLID_BITS * k)), 0);
+  }
+  const bareAt = (r, i) => r.barep[Math.min(Math.max(i - r.F.c0, 0), r.barep.length - 1)];
+  const bareRows = (r, i0, i1) => bareAt(r, i1) - bareAt(r, i0);
+  // Whether a pair t deep fits at ridge r over heights i0 to i1 (twelfths of a cell), at level lv.
+  const pairFits = (r, lv, i0, i1, t) => [r.F, r.G].every((X) => t <= Math.min(X.ncap[lv][capIndex(X, i0)], X.ncap[lv][capIndex(X, i1)])) && (lv === 0 || bareRows(r, i0, i1) === 0);
+  // The row of ridge r at level lv that height y (whole level units, at least
+  // the point's) is in: { y0, y1 } in level units, t its depth (twelfths, the
+  // city's row's included one level finer) and tc the city's row's.
+  function ridgeRow(r, lv, y) {
+    if (lv === 0) {
+      const sby = LEVELS[0].sby, sr = fdiv(y, sby), half = hashCell([sr, r.index, 0], RIDGE_SALT >>> 0) % 4 < RIDGE_HALVES;
+      const a = half && y >= sr * sby + sby / 2 ? sr * sby + sby / 2 : sr * sby, b = half ? a + sby / 2 : a + sby;
+      let t = 0;
+      for (let j = Math.min(RIDGE_JMAX[0], drawJ(0, hashCell([a, r.index, 1], RIDGE_SALT >>> 0))); j > 0; j--) {
+        const tt = 3 * quarters(LEVELS[0].depths[j]);
+        if (pairFits(r, 0, 12 * a, 12 * b, tt)) { t = tt; break; }
+      }
+      return { y0: a, y1: b, t, tc: t, cy0: a, cy1: b };
+    }
+    const P = LEVELS[1], cy = fdiv(y, R), cw = ridgeRow(r, 0, cy), tc = cw.t;
+    let y0 = cy * R, y1 = y0 + R, h = hashCell([cy, r.index, 2], RIDGE_SALT >>> 0);
+    for (let i = 0; i < P.splits; i++) {
+      const ny = (y1 - y0) / P.quant, m = P.min;
+      if (ny >= 2 * m) {
+        const c = y0 + P.quant * (m + ((h >>> 8) % (ny - 2 * m + 1)));
+        if (y >= c) y0 = c;
+        else y1 = c;
+      }
+      h = hashCell([y0, y1, r.index], (RIDGE_SALT ^ 1) >>> 0);
+    }
+    let t = tc;
+    for (let j = Math.min(RIDGE_JMAX[1], drawJ(1, hashCell([y0, r.index, 3], RIDGE_SALT >>> 0))); j > 0; j--) {
+      const tt = tc + twelfths(P.depths[j] / R);
+      if (pairFits(r, 1, y0 / 2, y1 / 2, tt)) { t = tt; break; }
+    }
+    return { y0, y1, t, tc, cy0: R * cw.y0, cy1: R * cw.y1 };
+  }
+  // The ridges' rows as a table, for the shader to look up rather than work
+  // out (each takes several hashes and caps; review21): for each ridge and
+  // level, from RR_FROM[lv] (level units) for RR_N[lv] heights, ridgeRow's
+  // y0, y1, t and tc, as a texture's rows (2 r + lv). Wide enough for every
+  // height the cell table can ask after (it spans cells 1 to 37 here; checked).
+  const RR_FROM = [-4, -4 * R], RR_N = [48, 48 * R];
+  const RIDGE_ROWS = (() => {
+    const w = Math.max(...RR_N), data = new Int32Array(4 * w * 2 * RIDGES.length);
+    for (const r of RIDGES)
+      for (let lv = 0; lv < 2; lv++)
+        for (let i = 0; i < RR_N[lv]; i++) {
+          const { y0, y1, t, tc } = ridgeRow(r, lv, RR_FROM[lv] + i);
+          data.set([y0, y1, t, tc], 4 * ((2 * r.index + lv) * w + i));
+        }
+    return { size: [w, 2 * RIDGES.length], data };
+  })();
+  // Whether a cut t deep over [u0, u1] x [y0, y1] (level lv's measure and
+  // units) comes within W(t) of F's e-th ridge at either height.
+  function nearRidge(F, e, lv, u0, u1, y0, y1, t) {
+    const E = F.edges[e], S = lv ? R : 1, u = E.sg > 0 ? u0 : u1;
+    return [y0, y1].some((y) => zone(E, u, y, S) < E.Wt[lv][t] * Math.abs(E.dl));
+  }
+  // Depth profiles (relief-v5.md, terraces.md). A cut's depth behind its face
+  // varies with height: a terrace's ramps up from nothing at the edge of its
+  // band to all of it at its wall's foot, and is nothing elsewhere in its
+  // rows; one level finer, a cut adds to the city's terrace under it. Near a
+  // ridge a cut must be, at every height, no deeper than the ridge's own cut
+  // there (then the two are one cut from past the ridge, inside the ridge's
+  // pair: the pair argument holds slice by slice). Heights here are in
+  // twelfths of a cell (h12), on which all rows and terraces' heights lie;
+  // depths in twelfths; so every test is exact.
+  const h12 = (lv, y) => (lv ? y / 2 : 12 * y);
+  // (A terrace's height for t twelfths, in twelfths: rounded down, see terrace.)
+  function terraceH(F, t) {
+    return Math.floor((t * F.nl) / Math.abs(F.n[1]) + 1e-3);
+  }
+  // A city terrace of face F, t twelfths deep over rows a to b (h12): its band
+  // [lo, hi] and the height its wall stands at (anchor); null if not cut. On a
+  // face all terraces' ramps have one slope, so one is no deeper than another
+  // over a height range where both are in their bands iff its anchor is
+  // nearer the band's end it ramps from (the upper's: its top; the lower's:
+  // its bottom).
+  function band(F, a, b, t) {
+    if (!(t > 0)) return null;
+    const H = terraceH(F, t), up = F.n[1] > 0;
+    return { up, lo: up ? b - H : a, hi: up ? b : a + H, at: up ? b : a };
+  }
+  const under = (c, R) => R && R.lo <= c.lo && c.hi <= R.hi && (c.up ? R.at >= c.at : R.at <= c.at);
+  // Whether a cut of face F at level lv over heights s to e (h12) is, at its
+  // e-th ridge, no deeper than the ridge's: city, its city terrace's band (or
+  // null); fine (one level finer), its own part, b twelfths over heights lo to hi.
+  function underRidge(F, e, lv, s, e2, city, fine) {
+    const r = RIDGES[F.er[e]];
+    for (let y = s; y < e2; ) {
+      const w = ridgeRow(r, lv, lv ? 2 * y : Math.floor(y / 12)), a = Math.max(s, h12(lv, w.y0)), b = Math.min(e2, h12(lv, w.y1));
+      const RB = band(F, h12(lv, w.cy0), h12(lv, w.cy1), w.tc);
+      if (city) {
+        const c = { ...city, lo: Math.max(a, city.lo), hi: Math.min(b, city.hi) };
+        if (c.lo < c.hi && !under(c, RB)) return false;
+      }
+      if (fine) {
+        const lo = Math.max(a, fine.lo), hi = Math.min(b, fine.hi);
+        if (lo < hi) {
+          // (The ridge's own part one level finer: behind its terrace's wall
+          // in its band, else behind the face; as cutOf.)
+          const ra = h12(lv, w.y0), rb = h12(lv, w.y1), inb = RB && (RB.up ? rb >= RB.lo : ra <= RB.hi);
+          const alo = inb && RB.up ? Math.max(ra, RB.lo) : ra, ahi = inb && !RB.up ? Math.min(rb, RB.hi) : rb;
+          if (!(fine.b <= w.t - w.tc && alo <= lo && hi <= ahi)) return false;
+        }
+      }
+      y = h12(lv, w.y1);
+    }
+    return true;
+  }
+  // A face's rectangle at level lv (drawn depth index j; one level finer on
+  // the city's rectangle, rows cy0 to cy1 in cells, fl twelfths deep): the
+  // deepest of its level's depths, from its own down, no deeper than the
+  // slice allows and, at each ridge it comes within W(t) of, than the ridge's
+  // cut at every height (see underRidge). In twelfths: fl if none.
+  function rectDepth(F, lv, u0, u1, y0, y1, j, fl, cy0, cy1) {
+    const P = LEVELS[lv], s = h12(lv, y0), e2 = h12(lv, y1);
+    const cityB = lv ? band(F, 12 * cy0, 12 * cy1, fl) : null;
+    for (let jj = j; jj > 0; jj--) {
+      const t = fl + (lv ? twelfths(P.depths[jj] / R) : 3 * quarters(P.depths[jj]));
+      if (t > capAt(F, s, e2)) continue;
+      let city, fine = null;
+      if (!lv) city = band(F, s, e2, t);
+      else {
+        city = cityB;
+        // (Its own part: in the city terrace's band, from its floor or to its ceiling; else all its rows.)
+        const inb = cityB && (cityB.up ? e2 >= cityB.lo : s <= cityB.hi);
+        fine = { b: t - fl, lo: inb && cityB.up ? Math.max(s, cityB.lo) : s, hi: inb && !cityB.up ? Math.min(e2, cityB.hi) : e2 };
+      }
+      if ([0, 1].every((e) => !nearRidge(F, e, lv, u0, u1, y0, y1, t) || underRidge(F, e, lv, s, e2, city, fine))) return t;
+    }
+    return fl;
+  }
+  // (The shader takes a depth plane of 0 for no cut; the tables of W(t)
+  // and the caps hold t up to 16; a pair's two floors, each rounded in to its
+  // face's measure, differ by less than MARGIN: see relief-v4.md.)
+  if (3 * quarters(LEVELS[0].depths.at(-1)) + twelfths(LEVELS[1].depths.at(-1) / R) > 16) throw new Error('arcology: cuts deeper than the tables');
+  if (!(MARGIN > Math.max(...FACES.map((F) => 1 / F.nl)))) throw new Error('arcology: MARGIN under a face measure');
+  if (FACES.some((F) => [1, 2, 3].some((t) => !(F.dn[1][Math.floor(t / 3) * NDQ + (t % 3)] > 0)))) throw new Error('arcology: a cut too shallow for its face');
+  // (A notch's edge's normal is its value's gradient: checked numerically.)
+  for (const F of FACES)
+    for (const E of F.edges) {
+      const at = (X) => zone(E, dot(F.tv, X), X[1], 1) / (Math.abs(E.dl) * E.gl), X = [1.3, 20.7, -2.1], h = 1e-3;
+      const g = [0, 1, 2].map((a) => (at(X.map((x, b) => x + (a === b ? h : 0))) - at(X)) / h);
+      if (g.some((x, a) => Math.abs(x - E.gn[a]) > 1e-6)) throw new Error('arcology: a notch edge normal is not its gradient');
+    }
+  // Openings (S6): the upright faces of the solids that have them carry
+  // grids of openings one level finer, in the face's own frame: each opening
+  // `along` wide in a pitch `pitch` (the finer units), `up` high in a pitch
+  // `upPitch`, `deep` into the face; and over each opening's width, all the
+  // way up, a channel `channel` deep (0: none). By kind, from the solid, the
+  // face (its plane P) and the solid's bottom and top (a solid's windows is a
+  // kind, or a list of { kind, ... }, each kind's spec). Each opening is in the
+  // middle of its pitch both ways,
+  // the grid from the building's axis and the ground; unless `centre` (a point
+  // the grid is centred on along the face), `from` (the height its rows start
+  // at, finer units over the ground) or `fade` (the size of its openings'
+  // features, for fading them sooner than their level: see scale); or it may
+  // `vary`, as segments (below).
+  // (Openings that open through a solid's face run 2 units past it, so that
+  // no other solid's openings meeting them there leave a sheet.)
+  // The central column: upright grooves (flutes) and level slots (rings), a
+  // grid of raised blocks, framing pocks (segments, their edges jittered).
+  // The pillars (pillars.md, after the drawing): smooth shafts at their
+  // corners, and on each face between them a channel (the middle half of the
+  // face) of shelves, their fronts at its floor, a third of a cell apart: one
+  // opening per face along, each the gap between two shelves, deeper.
+  // The plate and the roof band (fringe.md): a cornice, stepped back below in
+  // runs (see EDGES in hexahedron.js).
+  const OPENINGS = {
+    bays: (s, P) => {
+      const { width, mid } = across(s, P);
+      return { pitch: R * width, along: (R * width) / 2, upPitch: 8, up: 6, deep: 9, channel: 3, centre: mid };
+    },
+    // Flutes: upright grooves `groove` wide, `deep`, all the way up, as many
+    // as come nearest `pitch` apart, dividing the face exactly, half a pitch
+    // off its middle if even (a ridge at each end).
+    flutes: (s, P, y, { pitch, groove, deep }) => {
+      const { width, mid } = across(s, P), n = Math.max(1, Math.round((R * width) / pitch)), p = (R * width) / n;
+      // (On upright faces square to the axes, where a unit along is a unit.)
+      if (P.n[0] && P.n[2]) throw new Error('arcology: flutes on a slanted face');
+      if (!Number.isInteger(p)) throw new Error('arcology: flutes that do not divide their face');
+      const t = [-P.n[2], P.n[0]].map((x) => x / Math.hypot(P.n[0], P.n[2])), d = n % 2 ? 0 : p / 2 / R;
+      // (The groove is the channel; the rows of openings within it, of the
+      // same depth, add nothing.)
+      return { pitch: p, along: groove, upPitch: 24, up: 12, deep, channel: deep, centre: [mid[0] + t[0] * d, 0, mid[2] + t[1] * d] };
+    },
+    // Rings: level slots `up` high, `deep`, a `pitch` apart up the face, each
+    // the face's whole width and on past its ends (meeting its neighbours'
+    // round the corners).
+    rings: (s, P, y, { pitch, up, deep, from }) => {
+      // (One opening to a face: any pitch along longer than the opening will do.)
+      const { width, mid } = across(s, P);
+      return { pitch: 8 * R * width, along: R * width + 2 * deep + 4, upPitch: pitch, up, deep, centre: mid, from };
+    },
+    // Rows of segments (the bands' edges: see EDGES in hexahedron.js): rows
+    // from `from` units over the band's bottom, a pitch apart, each so high;
+    // along, blocks split at up to three cuts; each segment set in by `inset`
+    // at each end, at a depth between `deep`'s, or (a chance in 100) none;
+    // narrower than 2 units, left out. They run on past the face's ends: round
+    // a band's (convex) corners, each face's into the other's (Basil: no
+    // corner posts; the profile steps).
+    // (And each segment's edges, each set in by up to `jitter` more, by its
+    // own hash: segments of varied size and alignment.)
+    segments: (s, P, [y0], { rows: [from, upPitch, up], block, cut, inset, deep, none = 0, jitter = 0 }) =>
+      ({ pitch: block, along: block, upPitch, up, deep: deep[1], from: R * (y0 - GROUND) + from, vary: { kind: 'segments', cut, inset, deep, none, jitter }, fade: Math.min(up - 2 * jitter, deep[0], 4) }),
   };
-  // (The town's cells: plain, the roof band the only solid touching them, in
-  // the floor's row, to the band's edge (what stands past its faces is air
-  // anyway). Cells by the pillars and the column are left: plinths.)
-  const town = new Uint8Array(n);
-  if (TOWN)
+  // (The width of a solid's upright face P, along it, and its middle.)
+  function across(s, P) {
+    // (In plan: the face's line, from its point nearest the axis along its
+    // tangent, cut by the solid's other upright planes.)
+    const nn = P.n[0] * P.n[0] + P.n[2] * P.n[2], foot = [(P.n[0] * P.K) / nn, (P.n[2] * P.K) / nn], t = [-P.n[2] / Math.sqrt(nn), P.n[0] / Math.sqrt(nn)];
+    let lo = -Infinity, hi = Infinity;
+    for (const Q of s.planes) {
+      if (Q === P || Q.n[1] !== 0) continue;
+      const a = Q.n[0] * t[0] + Q.n[2] * t[1], b = Q.K - Q.n[0] * foot[0] - Q.n[2] * foot[1];
+      if (Math.abs(a) < 1e-12) continue;
+      if (a > 0) hi = Math.min(hi, b / a);
+      else lo = Math.max(lo, b / a);
+    }
+    const m = (lo + hi) / 2;
+    return { width: hi - lo, mid: [foot[0] + t[0] * m, 0, foot[1] + t[1] * m] };
+  }
+  // (A solid's bottom and top, from its level planes.)
+  function heightsOf(s) {
+    const level = (sg) => s.planes.filter(({ n }) => !n[0] && !n[2] && Math.sign(n[1]) === sg).map(({ n, K }) => K / n[1]);
+    return [Math.max(...level(-1)), Math.min(...level(1))];
+  }
+  const WINDOWS = [], GRIDS = [], FAR = 1 << 28;
+  // (Which solids' openings cut through a solid inside their own, as bits by
+  // index: those it names as it yields to, else a mass's, all.)
+  // (At most 31 solids: see SOLID_BITS.)
+  const YIELDS = SOLIDS.map((s) => SOLIDS.reduce((m, o, i) => ((s.yields ? s.yields.includes(o.name) : s.relief) ? m | (1 << i) : m), 0) >>> 0);
+  SOLIDS.forEach((s) => s.yields?.forEach((y) => { if (!SOLIDS.some((o) => o.name === y)) throw new Error(`arcology: ${s.name} yields to ${y}, which is no solid`); }));
+  SOLIDS.forEach((s) => {
+    if (!s.windows) return;
+    s.wfirst = WINDOWS.length;
+    const kinds = typeof s.windows === 'string' ? [{ kind: s.windows }] : s.windows;
+    s.planes.forEach((P) => {
+      const { n, K } = P;
+      if (n[1] !== 0) return;
+      const alpha = gcd(n[0], n[2]), h = [n[0] / alpha, 0, n[2] / alpha], t = [-h[2], 0, h[0]], len = Math.hypot(...h);
+      const W = { n, K, alpha, h: slantOf(h), t: slantOf(t), hv: h, tv: t, len, solid: s, g0: GRIDS.length };
+      for (const { kind, ...spec } of kinds) {
+        const o = OPENINGS[kind](s, P, heightsOf(s), spec);
+        // (The grid's phase: where an opening starts along the face, and where
+        // a row of them starts up it; and where it may have openings, along
+        // and up.)
+        const pu = Math.round(o.pitch * len), wu = Math.round(o.along * len), py = o.upPitch, hy = o.up;
+        const ph = (o.centre ? Math.round(R * (t[0] * o.centre[0] + t[2] * o.centre[2]) - pu / 2) : 0) + Math.trunc((pu - wu) / 2);
+        const yb = o.from ?? Math.trunc((py - hy) / 2);
+        if (![pu, wu, ph, py, hy, yb].every(Number.isInteger)) throw new Error('arcology: an opening off the finer grid');
+        // (Segments: GVAR (1; their block, cut and inset) and GVB (their
+        // depths, least and most; the chance in 100 of none); else 0.)
+        const vk = o.vary?.kind, vd = o.vary?.deep ?? [0, 0];
+        const v = vk === 'segments' ? [1, o.pitch, o.vary.cut, o.vary.inset] : [0, 0, 0, 0];
+        const vb = [...vd, o.vary?.none ?? 0, o.vary?.jitter ?? 0];
+        if (vk && (vd[1] > o.deep || o.pitch % o.vary.cut || o.pitch / o.vary.cut < 2 || o.vary.inset < 1 || py - hy < 2 || !(Number.isInteger(vb[3]) && vb[3] >= 0) || hy - 2 * vb[3] < 2)) throw new Error('arcology: segments out of their bounds');
+        // (And when it fades, if sooner than its level: openings of size
+        // `fade` units fade as the level does where its cells are 4 fade wide,
+        // the level's own relief being about a quarter of a cell; as a fraction
+        // of a cell, 1 for as the level.)
+        const scale = Math.min(1, (4 * (o.fade ?? R)) / R);
+        GRIDS.push({ pu, wu, ph, py, hy, yb, vary: v, varyB: vb, scale, dw: Math.round(o.deep * len), ch: Math.round((o.channel ?? 0) * len) });
+      }
+      W.ng = GRIDS.length - W.g0;
+      W.deep = Math.max(...GRIDS.slice(W.g0).map((g) => Math.max(g.dw, g.ch)));
+      WINDOWS.push(W);
+    });
+    if (WINDOWS.length - s.wfirst > 4) throw new Error('arcology: a solid with more than four faces with openings');
+  });
+  // Whether the slab of face W's openings, from their back (the deeper of
+  // gap and channel) to their outer plane as windowAir has them, meets the
+  // cell whose corner is c, and its solid touches it. (Outside their solid
+  // they make no air that isn't air already, or are stopped: see CLIP.)
+  const slabMeets = (W, c) => {
+    if (cellOut(W.solid, c)) return false;
+    const K = W.K * R, ws = corners(c).map((q) => (R * W.n.reduce((a, x, i) => a + x * (q[i] - ORIGIN[i]), 0)) / W.alpha);
+    return Math.min(...ws) < cdiv(K, W.alpha) + Math.ceil(W.len) && Math.max(...ws) > fdiv(K, W.alpha) - W.deep;
+  };
+
+  // The table, one cell of level CITY + 1 to an entry (see volume in
+  // halls.js): in its first number, the cell's kind (KIND bits: 1 deep, its
+  // rooms the halls'; 2 skin, pockets and no rooms; 3 plain, solid), the faces
+  // whose pockets reach into it (FACE_AT, a bit each), and for a deep cell,
+  // for each of its six sides (+x, -x, +y, -y, +z, -z), whether its rooms'
+  // openings may run on across it (OPEN_AT: the next cell is deep too, or
+  // clear of every solid); for a skin cell, whether its pockets one level
+  // finer may, and whether they run on as one box or three (CROSS_AT, in the
+  // second number: see runOn below). In the second number too, the solids
+  // touching it or the cells its openings run on into, that they stop at
+  // (CLIP: one more than each's index in SOLIDS, in SOLID_BITS each). In the
+  // third, the openings it cuts (a skin or plain cell), of up to three solids
+  // (WIN_AT, in WIN_BITS each: one more than the solid's index in SOLIDS, 0
+  // for none; and a bit for each of its faces with openings, from its first,
+  // wfirst). In the fourth, how its openings run on (OPEN_AT and CROSS_AT, as
+  // for its pockets in the first and second).
+  const WORDS = 4, DEEP = 1, SKIN = 2, PLAIN = 3, FACE_AT = 2, OPEN_AT = 8, SOLID_BITS = 5, WIN_AT = [0, 9, 18], WIN_BITS = 9;
+  const CLIP_MOST = 6, CROSS_AT = SOLID_BITS * CLIP_MOST;
+  if (SOLIDS.length >= 1 << SOLID_BITS) throw new Error(`arcology: ${SOLIDS.length} solids, at most ${(1 << SOLID_BITS) - 1}`);
+  // The town on the roof band's top (.claude/design/town.md): carved from the
+  // slab the band's top is raised by, one level finer, in its cells (TOWN_AT,
+  // in a plain cell's first number; its run-on as a deep cell's, OPEN_AT, for
+  // its four upright sides, and for its four corners, TOWN_CORNER_AT: ++, +-,
+  // -+, --). Each cell is laid out in lots by one of TOWN_PLANS, and each lot
+  // holds up to TOWN_SHAPES boxes (a building) standing in it, by its hash,
+  // all at least TOWN_MARGIN inside it.
+  const TOWN_AT = 14, TOWN_CORNER_AT = 15, TOWN_SALT = 0x5be0cd19, TOWN_MARGIN = 1;
+  const TOWN = (() => {
+    const s = SOLIDS.find((x) => x.town);
+    if (!s) return null;
+    const floor = s.town.floor, H = Math.round((heightsOf(s)[1] - floor) * R);
+    if (!Number.isInteger(floor) || H < 1 || H > R || R !== 24) throw new Error('arcology: a town that does not fit');
+    return { solid: s, floor, H };
+  })();
+  // A cell's lots, [x0, z0, x1, z1] in units, by plan (after real towns' blocks:
+  // a grid of small lots; a 2 by 2 of larger; strips, along x or z, as of row
+  // houses on a street; one whole block; a strip beside a grid), picked by the
+  // cell's hash from TOWN_PICK.
+  const TOWN_PLANS = [
+    [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8])),
+    [0, 1].flatMap((j) => [0, 1].map((i) => [12 * i, 12 * j, 12 * i + 12, 12 * j + 12])),
+    [0, 1, 2].map((j) => [0, 8 * j, 24, 8 * j + 8]),
+    [0, 1, 2].map((i) => [8 * i, 0, 8 * i + 8, 24]),
+    [[0, 0, 24, 24]],
+    [[0, 0, 8, 24], ...[0, 1, 2].flatMap((j) => [1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8]))],
+  ];
+  const TOWN_PICK = [0, 0, 1, 1, 2, 3, 4, 5];
+  // Box k of a lot r, by the lot's hashes h, h2 and its cluster's density
+  // (see TOWN_TYPES in town.js, whence the shader's too).
+  const townShape = townShapeJs(TOWN ? TOWN.H : 1);
+  // A box's distance at p.
+  const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
+  // A cell's plan and its density (by its cluster, two cells square), by its hashes.
+  function townCell() {
+    const hc = hashCell([fdiv(cellB[0], 2), fdiv(cellB[2], 2), 9], TOWN_SALT), hl = hashCell([cellB[0], cellB[2], 11], TOWN_SALT);
+    return { dens: [15, 45, 80][hc % 3], plan: TOWN_PLANS[TOWN_PICK[hl % 8]] };
+  }
+  const lotHash = (n, salt) => hashCell([cellB[0] * 16 + n, cellB[2], salt], TOWN_SALT);
+  const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  // (For the checks in .claude/verify.)
+  // (For the checks: how many rays the solids without relief have stopped
+  // in the city's pockets: see cityPockets.)
+  const SEEN = { clipped: 0 };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, townShape, boxDist, BUILT_CELLS };
+  const VOLUME = (() => {
+    const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
+    const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
+    lo[1] = Math.max(lo[1], G);
+    const size = hi.map((h, a) => h - lo[a]);
+    const n = size[0] * size[1] * size[2];
+    const at = ([x, y, z]) => x + size[0] * (y + size[1] * z);
+    const within = ([x, y, z]) => x >= 0 && y >= 0 && z >= 0 && x < size[0] && y < size[1] && z < size[2];
+    const kind = new Uint8Array(n), open = new Uint8Array(n), faces = new Uint8Array(n), win = WIN_AT.map(() => new Uint16Array(n));
     for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
       const c = [x + lo[0], y + lo[1], z + lo[2]], v = at([x, y, z]);
-      if (kind[v] !== PLAIN || c[1] - ORIGIN[1] !== TOWN.floor) continue;
       const touched = SOLIDS.filter((s) => !cellOut(s, c));
-      if (touched.length !== 1 || touched[0] !== TOWN.solid) continue;
-      town[v] = 1;
-    }
-  const townOk = (u) => !within(u) || (open[at(u)] && !kind[at(u)]) || town[at(u)];
-  const data = new Uint32Array(WORDS * n);
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
-    const v = at([x, y, z]);
-    if (!kind[v]) continue;
-    let word = kind[v] | (faces[v] << FACE_AT);
-    if (kind[v] === DEEP)
-      SIDES.forEach((e, k) => {
-        const u = [x + e[0], y + e[1], z + e[2]];
-        if (!within(u) || open[at(u)] || kind[at(u)] === DEEP) word |= 1 << (OPEN_AT + k);
+      if (!touched.length) {
+        open[v] = 1;
+        continue;
+      }
+      // Faces whose pockets may reach in: some corner of the cell less than
+      // REACH inside the face's plane, in its mass.
+      let f = 0;
+      FACES.forEach((F, i) => {
+        if (cellOut(F.solid, c)) return;
+        const ds = corners(c).map((q) => (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]) - F.K) / Math.hypot(...F.n));
+        if (Math.max(...ds) > -REACH) f |= 1 << i;
       });
-    if (kind[v] === SKIN) {
-      const [open, cross] = runOn(x, y, z, skinOk(faces[v]));
-      word |= open << OPEN_AT;
-      data[WORDS * v + 1] = cross ? 1 << CROSS_AT : 0;
+      // Skin where pockets reach and only masses, their rims and solids out of
+      // the pockets' heights touch it (a post's top that is the plate's: see
+      // heights); deep where it is wholly inside some solid (whatever else
+      // crosses it) and no pocket reaches; plain otherwise.
+      // (ylo and yhi are on the quarters the pockets are cut to: see LEVELS' lo4.)
+      const reached = (s) => FACES.some((F, i) => f & (1 << i) && heightsOf(s)[0] < F.solid.yhi && heightsOf(s)[1] > F.solid.ylo);
+      if (f && touched.every((s) => s.relief || s.rim || !reached(s))) (kind[v] = SKIN), (faces[v] = f);
+      else kind[v] = !f && touched.some((s) => cellIn(s, c)) ? DEEP : PLAIN;
+      // A skin or plain cell has the openings of each face of each solid with
+      // them that touches it whose slab (from behind the face as deep as they
+      // go to past it as far as they reach: see windowAir) meets the cell,
+      // stopped at the other solids (see CLIP below).
+      if (kind[v] === SKIN || kind[v] === PLAIN) {
+        const ws = touched.filter((s) => s.windows);
+        if (ws.length > WIN_AT.length) throw new Error(`arcology: ${ws.length} solids with openings touch the cell ${c}`);
+        ws.forEach((s, k) => {
+          let mask = 0;
+          WINDOWS.forEach((W, j) => W.solid === s && slabMeets(W, c) && (mask |= 1 << (j - s.wfirst)));
+          if (mask) win[k][v] = (SOLIDS.indexOf(s) + 1) | (mask << SOLID_BITS);
+        });
+      }
     }
-    if (town[v]) {
-      word |= 1 << TOWN_AT;
-      [0, 1, 4, 5].forEach((k) => townOk([x + SIDES[k][0], y, z + SIDES[k][2]]) && (word |= 1 << (OPEN_AT + k)));
-      TOWN_CORNERS.forEach(([sx, sz], c) => townOk([x + sx, y, z + sz]) && (word |= 1 << (TOWN_CORNER_AT + c)));
+    // A skin cell's pockets one level finer run on a cell past each side in
+    // OPEN_AT, so that a pocket across the side is one piece and not two that
+    // only touch (shrunk with distance, two would leave a sheet between them).
+    // A side is open unless the next cell is one that a pocket of the cell's
+    // faces could reach (from its lip past the face to REACH in) and that would
+    // not cut it (deaf): a deep or plain cell. A skin cell cuts the same
+    // pockets (they are the point's alone), and a cell clear of every solid is
+    // the city's air. The open sides make one box, across edges and corners
+    // too; where that box would take in a deaf cell, each piece is three
+    // instead, each run on along one axis only (CROSS_AT).
+    const lip = Math.max(...FACES.map((F) => Math.ceil(F.nl) / F.nl)) / R + 1e-3;
+    const deaf = new Uint8Array(n);
+    for (let v = 0; v < n; v++) {
+      if (kind[v] !== DEEP && kind[v] !== PLAIN) continue;
+      const c = [v % size[0], Math.floor(v / size[0]) % size[1], Math.floor(v / size[0] / size[1])].map((x, a) => x + lo[a]);
+      FACES.forEach((F, i) => {
+        if (c[1] - ORIGIN[1] >= F.solid.yhi || c[1] + 1 - ORIGIN[1] <= F.solid.ylo) return; // (pockets are cut at those heights only)
+        const ds = corners(c).map((q) => (F.K - (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]))) / F.nl);
+        if (Math.min(...ds) < REACH && Math.max(...ds) > -lip) deaf[v] |= 1 << i;
+      });
     }
-    const ws = winsOf(v);
-    if (ws.length) {
-      const [open, cross] = runOn(x, y, z, plainOk(ws));
-      data[WORDS * v + 1] |= clipOf(x, y, z, open);
-      data[WORDS * v + 3] = (open << OPEN_AT) | (cross ? 1 << CROSS_AT : 0);
+    // (The steps along each axis to the cells in the box of the open sides.)
+    const boxOf = (open) => [0, 1, 2].map((a) => [0, ...(open & (1 << (2 * a)) ? [1] : []), ...(open & (2 << (2 * a)) ? [-1] : [])]);
+    // (The sides open where the cell u next to [x, y, z] across them is
+    // ok(u), and whether as one box or three.)
+    const runOn = (x, y, z, ok) => {
+      const okAt = (dx, dy, dz) => ok([x + dx, y + dy, z + dz]);
+      let open = 0;
+      SIDES.forEach((e, k) => okAt(...e) && (open |= 1 << k));
+      const ax = boxOf(open);
+      const box = ax[0].every((dx) => ax[1].every((dy) => ax[2].every((dz) => okAt(dx, dy, dz))));
+      return [open, !box];
+    };
+    const skinOk = (f) => (u) => !within(u) || !(deaf[at(u)] & f);
+    // A cell's openings run on likewise, unless the next cell is one their
+    // slab meets and that does not cut them (off the solid's other faces, say,
+    // or under the table's floor, the plaza's ground: there the openings stop
+    // at the cell's side). In a skin cell, where both its pockets and its
+    // openings may.
+    const winsOf = (v) => win.flatMap((w) => [0, 1, 2, 3].filter((k) => (w[v] >> SOLID_BITS) & (1 << k)).map((k) => SOLIDS[(w[v] & ((1 << SOLID_BITS) - 1)) - 1].wfirst + k));
+    const plainOk = (ws) => (u) => {
+      if (within(u) && open[at(u)]) return true;
+      const cuts = within(u) ? winsOf(at(u)) : [], c = u.map((q, a) => q + lo[a]);
+      return ws.every((j) => cuts.includes(j) || !slabMeets(WINDOWS[j], c));
+    };
+    // CLIP: the solids that touch the cell or any cell its openings run on
+    // into (the box of its open sides). Each solid's openings stop at the
+    // others: at the masses outside it (inside it they cut through: a pillar's
+    // channels run on where the lower's slope passes through it), at the rest
+    // everywhere (so the roof band runs across a pillar whole). Within any
+    // cell their stopping is the same whichever cell asks (a solid that does
+    // not touch a cell has nothing in it).
+    // (A solid's `keep`: how far clear of it, in cells, others' openings stop.)
+    const cellOutBy = (s, c, w) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= w * p.len));
+    const clipOf = (x, y, z, open) => {
+      const out = [], ax = boxOf(open);
+      for (const dx of ax[0]) for (const dy of ax[1]) for (const dz of ax[2]) {
+        const c = [x + dx + lo[0], y + dy + lo[1], z + dz + lo[2]];
+        SOLIDS.forEach((s, i) => !out.includes(i + 1) && !cellOutBy(s, c, s.keep ?? 0) && out.push(i + 1));
+      }
+      if (out.length > CLIP_MOST) throw new Error(`arcology: ${out.length} solids to stop openings at, at ${[x, y, z]}`);
+      return out.reduce((w, i, k) => w | (i << (SOLID_BITS * k)), 0);
+    };
+    // (The town's cells: plain, the roof band the only solid touching them, in
+    // the floor's row, to the band's edge (what stands past its faces is air
+    // anyway). Cells by the pillars and the column are left: plinths.)
+    const town = new Uint8Array(n);
+    if (TOWN)
+      for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+        const c = [x + lo[0], y + lo[1], z + lo[2]], v = at([x, y, z]);
+        if (kind[v] !== PLAIN || c[1] - ORIGIN[1] !== TOWN.floor) continue;
+        const touched = SOLIDS.filter((s) => !cellOut(s, c));
+        if (touched.length !== 1 || touched[0] !== TOWN.solid) continue;
+        town[v] = 1;
+      }
+    const townOk = (u) => !within(u) || (open[at(u)] && !kind[at(u)]) || town[at(u)];
+    const data = new Uint32Array(WORDS * n);
+    for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+      const v = at([x, y, z]);
+      if (!kind[v]) continue;
+      let word = kind[v] | (faces[v] << FACE_AT);
+      if (kind[v] === DEEP)
+        SIDES.forEach((e, k) => {
+          const u = [x + e[0], y + e[1], z + e[2]];
+          if (!within(u) || open[at(u)] || kind[at(u)] === DEEP) word |= 1 << (OPEN_AT + k);
+        });
+      if (kind[v] === SKIN) {
+        const [open, cross] = runOn(x, y, z, skinOk(faces[v]));
+        word |= open << OPEN_AT;
+        data[WORDS * v + 1] = cross ? 1 << CROSS_AT : 0;
+      }
+      if (town[v]) {
+        word |= 1 << TOWN_AT;
+        [0, 1, 4, 5].forEach((k) => townOk([x + SIDES[k][0], y, z + SIDES[k][2]]) && (word |= 1 << (OPEN_AT + k)));
+        TOWN_CORNERS.forEach(([sx, sz], c) => townOk([x + sx, y, z + sz]) && (word |= 1 << (TOWN_CORNER_AT + c)));
+      }
+      const ws = winsOf(v);
+      if (ws.length) {
+        const [open, cross] = runOn(x, y, z, plainOk(ws));
+        data[WORDS * v + 1] |= clipOf(x, y, z, open);
+        data[WORDS * v + 3] = (open << OPEN_AT) | (cross ? 1 << CROSS_AT : 0);
+      }
+      data[WORDS * v] = word;
+      data[WORDS * v + 2] = win.reduce((w, x, k) => w | (x[v] << WIN_AT[k]), 0);
     }
-    data[WORDS * v] = word;
-    data[WORDS * v + 2] = win.reduce((w, x, k) => w | (x[v] << WIN_AT[k]), 0);
+    return { lo, size, data, words: WORDS, kind, open, at, within };
+  })();
+
+  // The ways into the building from the plaza, for the tour (see
+  // Planner.waysFromCity): each a room of the halls one level finer than the
+  // city's, in a deep cell, with an opening in one of its walls straight out
+  // onto open air. As { id, e }: the room's cell's id at that level, and the
+  // way out of it through the opening.
+  const ENTRANCES = (() => {
+    const { lo, size, kind, open, at, within } = VOLUME;
+    const seed = levelSeed(CITY + 1), out = [];
+    for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+      const v = [x, y, z];
+      if (kind[at(v)] !== DEEP) continue;
+      const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
+      if (!hallsRoom(id, seed, roomRule)) continue;
+      for (const o of hallsOpenings(id, seed, roomRule)) {
+        if (o.e[1] !== 0) continue;
+        const u = v.map((q, a) => q + o.e[a]);
+        if (within(u) && open[at(u)]) out.push({ id, e: o.e, at: o.at });
+      }
+    }
+    return out;
+  })();
+
+  const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
+
+  // One solid's distance, as GLSL: each plane's offset worked out in whole
+  // numbers (o is the cell's corner from the middle cell's), and only the
+  // small parts in floats.
+  function solidGlsl(s, j) {
+    const lines = planesOf(s).map((p) => {
+      const nrm = `vec3(${p.n.map((x) => glf(x / p.len)).join(', ')})`;
+      if (p.dir < 3) {
+        const a = 'xyz'[p.dir];
+        return `  solidPlane((float(${p.scale} * L.${a} - (${p.K} - ${p.scale} * o.${a})) + ${glf(p.scale)} * f.${a}) * ${glf(1 / p.len)}, ${nrm});`;
+      }
+      const m = p.m, k = `${p.K} - ${p.scale} * (${m[0]} * o.x + ${m[1]} * o.y + ${m[2]} * o.z)`;
+      return `  fr = slantAt(${p.dir - 3}, n);\n  solidPlane((float(${p.scale} * n - (${k})) + ${glf(p.scale)} * fr) * ${glf(1 / p.len)}, ${nrm});`;
+    });
+    return `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  int n;\n  float fr;\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
   }
-  return { lo, size, data, words: WORDS, kind, open, at, within };
-})();
 
-// The ways into the building from the plaza, for the tour (see
-// Planner.waysFromCity): each a room of the halls one level finer than the
-// city's, in a deep cell, with an opening in one of its walls straight out
-// onto open air. As { id, e }: the room's cell's id at that level, and the
-// way out of it through the opening.
-export const ENTRANCES = (() => {
-  const { lo, size, kind, open, at, within } = VOLUME;
-  const seed = levelSeed(CITY + 1), out = [];
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
-    const v = [x, y, z];
-    if (kind[at(v)] !== DEEP) continue;
-    const id = wrapId([x + lo[0] + R * C, y + lo[1] + R * ROW, z + lo[2] + R * C]);
-    if (!hallsRoom(id, seed, roomRule)) continue;
-    for (const o of hallsOpenings(id, seed, roomRule)) {
-      if (o.e[1] !== 0) continue;
-      const u = v.map((q, a) => q + o.e[a]);
-      if (within(u) && open[at(u)]) out.push({ id, e: o.e, at: o.at });
-    }
-  }
-  return out;
-})();
-
-const ivecs = (rows) => rows.map(([x, y, z]) => `ivec3(${x}, ${y}, ${z})`).join(', ');
-
-// One solid's distance, as GLSL: each plane's offset worked out in whole
-// numbers (o is the cell's corner from the middle cell's), and only the
-// small parts in floats.
-function solidGlsl(s, j) {
-  const lines = planesOf(s).map((p) => {
-    const nrm = `vec3(${p.n.map((x) => glf(x / p.len)).join(', ')})`;
-    if (p.dir < 3) {
-      const a = 'xyz'[p.dir];
-      return `  solidPlane((float(${p.scale} * L.${a} - (${p.K} - ${p.scale} * o.${a})) + ${glf(p.scale)} * f.${a}) * ${glf(1 / p.len)}, ${nrm});`;
-    }
-    const m = p.m, k = `${p.K} - ${p.scale} * (${m[0]} * o.x + ${m[1]} * o.y + ${m[2]} * o.z)`;
-    return `  fr = slantAt(${p.dir - 3}, n);\n  solidPlane((float(${p.scale} * n - (${k})) + ${glf(p.scale)} * fr) * ${glf(1 / p.len)}, ${nrm});`;
-  });
-  return `float solid${j}(ivec3 L, vec3 f, ivec3 o) {\n  int n;\n  float fr;\n  solidPiece();\n${lines.join('\n')}\n  return solidDone();\n}`;
-}
-
-const glsl = /* glsl */ `
+  const glsl = /* glsl */ `
 const int G = ${G};
 const int NS = ${SOLIDS.length};
 const ivec3 SLO[NS] = ivec3[NS](${ivecs(SOLIDS.map((s) => s.lo))});
@@ -1042,14 +1047,14 @@ const vec3 EGN[NF * 2] = vec3[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => 
 // each level's ncap, five bits each), from F.c0, and where they are (offset,
 // c0, how many); and each ridge's bare rows (see r.barep), likewise.
 ${(() => {
-  const caps = [], fr = [];
-  for (const F of FACES) {
-    fr.push(`ivec3(${caps.length}, ${F.c0}, ${F.cap.length})`);
-    F.cap.forEach((c) => caps.push(c));
-  }
-  return `const int FCAPS[${caps.length}] = int[${caps.length}](${caps.join(', ')});
+    const caps = [], fr = [];
+    for (const F of FACES) {
+      fr.push(`ivec3(${caps.length}, ${F.c0}, ${F.cap.length})`);
+      F.cap.forEach((c) => caps.push(c));
+    }
+    return `const int FCAPS[${caps.length}] = int[${caps.length}](${caps.join(', ')});
 const ivec3 FCR[NF] = ivec3[NF](${fr.join(', ')});`;
-})()}
+  })()}
 // The ridges' rows (RIDGE_ROWS in the JS): from RR_FROM, RR_N of them.
 uniform highp isampler2D uRidgeRows;
 const int RR_FROM[2] = int[2](${RR_FROM.join(', ')}), RR_N[2] = int[2](${RR_N.join(', ')});
@@ -2046,661 +2051,661 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
 }
 `;
 
-// The same, in JavaScript, piece for piece, on the shared pieces (see
-// src/pieces.js).
-let dLp, dFp, dLm, dFm, dLs, dFs;
-const diag = (p, sa, sb, ca, cb, k) =>
-  sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];
-const NONE = 1e9;
-const beyond = (x, f, c) => x > c || (x === c && f >= 0);
+  // The same, in JavaScript, piece for piece, on the shared pieces (see
+  // src/pieces.js).
+  let dLp, dFp, dLm, dFm, dLs, dFs;
+  const diag = (p, sa, sb, ca, cb, k) =>
+    sa === sb ? sa * (dLp[p] - ca - cb) - k + sa * dFp[p] : sa * (dLm[p] - ca + cb) - k + sa * dFm[p];
+  const NONE = 1e9;
+  const beyond = (x, f, c) => x > c || (x === c && f >= 0);
 
-const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
+  const fromMiddle = (id) => [(id[0] - MID) * R, (id[1] - ROW_ID) * R, (id[2] - MID) * R];
 
-// The point along the slants (from dg, or else from L and f), and along the
-// diagonals.
-function setPoint(L, f, dg) {
-  if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
-  else {
-    const pairs = [[0, 1], [2, 1], [0, 2]];
-    dLp = pairs.map(([a, b]) => L[a] + L[b]);
-    dFp = pairs.map(([a, b]) => f[a] + f[b]);
-    dLm = pairs.map(([a, b]) => L[a] - L[b]);
-    dFm = pairs.map(([a, b]) => f[a] - f[b]);
-  }
-  if (dg?.Ls) (dLs = dg.Ls), (dFs = dg.fs);
-  else {
-    // (Split again, as levelRay does: a whole number and the rest, at most a half.)
-    dFs = SLANTS.map((m) => m[0] * f[0] + m[1] * f[1] + m[2] * f[2]);
-    dLs = SLANTS.map((m, k) => m[0] * L[0] + m[1] * L[1] + m[2] * L[2] + Math.round(dFs[k]));
-    dFs = dFs.map((x) => x - Math.round(x));
-  }
-}
-
-// See well in the shader: whether there is one (its half width and how far
-// in its corners are cut), and its air (a piece: for a ray too).
-function wellOf(id, seed) {
-  const below = wrapId([id[0], id[1] - 1, id[2]]);
-  const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
-  if (t < HALLS.slab.solid || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return null;
-  if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
-  const oculus = t < HALLS.slab.oculus;
-  return { w: oculus ? 3 : 6, dg: oculus ? 4 : 1000 };
-}
-function wellAir(L, f, { w, dg }) {
-  P.airPiece();
-  P.airSpan(L[1], f[1], -M, G + 1, 1);
-  P.airSpan(L[0] - C, f[0], -w, w, 0);
-  P.airSpan(L[2] - C, f[2], -w, w, 2);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) P.airPlane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
-  return P.S.d;
-}
-
-// One solid, o the cell's corner from the middle cell's (see solidGlsl).
-function solid(s, L, f, o) {
-  P.solidPiece();
-  for (const p of planesOf(s)) {
-    const [nx, ny, nz] = p.n.map((x) => x / p.len);
-    if (p.dir < 3) {
-      const a = p.dir;
-      P.solidPlane((p.scale * L[a] - (p.K - p.scale * o[a]) + p.scale * f[a]) / p.len, nx, ny, nz);
-    } else {
-      const m = p.m, k = p.K - p.scale * (m[0] * o[0] + m[1] * o[1] + m[2] * o[2]);
-      P.solidPlane((p.scale * dLs[p.dir - 3] - k + p.scale * dFs[p.dir - 3]) / p.len, nx, ny, nz);
+  // The point along the slants (from dg, or else from L and f), and along the
+  // diagonals.
+  function setPoint(L, f, dg) {
+    if (dg) ({ Lp: dLp, fp: dFp, Lm: dLm, fm: dFm } = dg);
+    else {
+      const pairs = [[0, 1], [2, 1], [0, 2]];
+      dLp = pairs.map(([a, b]) => L[a] + L[b]);
+      dFp = pairs.map(([a, b]) => f[a] + f[b]);
+      dLm = pairs.map(([a, b]) => L[a] - L[b]);
+      dFm = pairs.map(([a, b]) => f[a] - f[b]);
+    }
+    if (dg?.Ls) (dLs = dg.Ls), (dFs = dg.fs);
+    else {
+      // (Split again, as levelRay does: a whole number and the rest, at most a half.)
+      dFs = SLANTS.map((m) => m[0] * f[0] + m[1] * f[1] + m[2] * f[2]);
+      dLs = SLANTS.map((m, k) => m[0] * L[0] + m[1] * L[1] + m[2] * L[2] + Math.round(dFs[k]));
+      dFs = dFs.map((x) => x - Math.round(x));
     }
   }
-  return P.solidDone();
-}
 
-// See plaza in the shader (a piece: for a ray too). (Its solids asked as
-// the shader asks them, the same ones passed over: so the distance is the
-// shader's, which may be less than the nearest solid's.)
-function plaza(L, f, id) {
-  P.airPiece();
-  P.airSpan(L[0], f[0], -R, 2 * R, 0);
-  P.airSpan(L[2], f[2], -R, 2 * R, 2);
-  P.airSpan(L[1], f[1], id[1] === ROW_ID ? G : -M, R + M, 1);
-  const box = P.S.d, o = fromMiddle(id), q = [0, 1, 2].map((a) => L[a] + f[a]);
-  let d = NONE;
-  for (const k of NEAR.get(o.map((x) => x / R).join()) ?? []) {
-    const s = SOLIDS[k], far = Math.max(...[0, 1, 2].map((a) => Math.max(s.lo[a] - o[a] - q[a], q[a] - (s.hi[a] - o[a]))));
-    if (far >= d && (!P.S.ray || far >= P.S.x)) continue;
-    d = Math.min(d, solid(s, L, f, o));
+  // See well in the shader: whether there is one (its half width and how far
+  // in its corners are cut), and its air (a piece: for a ray too).
+  function wellOf(id, seed) {
+    const below = wrapId([id[0], id[1] - 1, id[2]]);
+    const t = h01(hashCell(below, seed ^ HALLS.salt.slab));
+    if (t < HALLS.slab.solid || !(built(below, seed, roomRule) || built(id, seed, roomRule))) return null;
+    if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
+    const oculus = t < HALLS.slab.oculus;
+    return { w: oculus ? 3 : 6, dg: oculus ? 4 : 1000 };
   }
-  return Math.max(box, -d);
-}
-
-let cellB = [0, 0, 0];
-// The sides a skin cell's pockets (or a cell's openings) run on
-// across, whether as three pieces, and which of them is being asked about
-// (see runOn).
-let cellOpen = 0, cellCross = false, axis = -1;
-const runsOn = (a, side) => cellOpen & (side << (2 * a)) && (axis < 0 || axis === a);
-const openLo = (a) => (runsOn(a, 2) ? -R : 0), openHi = (a) => (runsOn(a, 1) ? 2 * R : R);
-// The least of piece(), called once for each of the pieces (one level finer:
-// three where the cell's pockets run on as three).
-function eachPiece(lv, piece) {
-  if (lv !== 1 || !cellCross) return (axis = -1), piece();
-  let d = NONE;
-  for (axis = 0; axis < 3; axis++) d = Math.min(d, piece());
-  axis = -1;
-  return d;
-}
-function relief(id, up) {
-  if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0, 0, 0];
-  const o = fromMiddle(up), v = [0, 1, 2].map((a) => o[a] + (((id[a] % R) + R) % R) - VOLUME.lo[a]);
-  if (v.some((x, a) => x < 0 || x >= VOLUME.size[a])) return [0, 0, 0, 0];
-  cellB = v.map((x, a) => x + VOLUME.lo[a] - ORIGIN[a]);
-  const i = WORDS * (v[0] + VOLUME.size[0] * (v[1] + VOLUME.size[1] * v[2]));
-  return [VOLUME.data[i], VOLUME.data[i + 1], VOLUME.data[i + 2], VOLUME.data[i + 3]];
-}
-
-// See rectangle in the shader.
-export function rectangle(lv, k, u, fu, y, fy, tile = 0) {
-  const P = LEVELS[lv], q = FACES[k].q2[lv], n = P.sb / P.quant, su = n * q;
-  const salt = (Math.imul(lv, 0x5bd1e995) ^ tile) >>> 0;
-  const row = fdiv(y - (fy < 0 ? 1 : 0), P.sby);
-  // (One level finer, tiled afresh in each city rectangle: no shift, so that the tiles align with its edges.)
-  const shift = lv ? 0 : q * (hashCell([row, k, lv], (ROW_SALT ^ salt) >>> 0) % n);
-  const col = fdiv(u - (fu < 0 ? 1 : 0) - shift, su);
-  let u0 = col * su + shift, u1 = u0 + su, y0 = row * P.sby, y1 = y0 + P.sby;
-  let h = hashCell([col, row, k], (POCKET_SALT ^ salt) >>> 0);
-  for (let i = 0; i < P.splits; i++) {
-    // Across the longer side more likely than the shorter (in proportion),
-    // and never leaving a part under min quanta: no thin slices.
-    const nu = (u1 - u0) / q, ny = (y1 - y0) / P.quant, m = P.min;
-    const cu = nu >= 2 * m, cy = ny >= 2 * m;
-    if (cu || cy) {
-      const alongU = cu && (!cy || (h & 0xff) * (nu + ny) < 256 * nu);
-      const s = m + ((h >>> 8) % ((alongU ? nu : ny) - 2 * m + 1));
-      if (alongU) {
-        if (beyond(u, fu, u0 + s * q)) u0 += s * q;
-        else u1 = u0 + s * q;
-      } else if (beyond(y, fy, y0 + s * P.quant)) y0 += s * P.quant;
-      else y1 = y0 + s * P.quant;
-    }
-    h = hashCell([u0, y0, Math.imul(u1, 4099) + y1], (POCKET_SALT ^ salt ^ k) >>> 0);
-  }
-  const t = h01(hashCell([u0, y0, k], (DEPTH_SALT ^ salt) >>> 0));
-  let j = 0;
-  for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
-  return { u0, u1, y0, y1, depth: j };
-}
-
-
-// Where the point is on face F at level lv (base its cell's corner from the
-// building's origin, in this level's units): along (u, fu), its true height
-// (y, fy, whole units and the rest, at least 0; and
-// Y, the same times p, as a whole number and the rest), and how deep (n . X,
-// as a whole number and the rest).
-function faceAt(F, lv, base) {
-  const S = lv ? R : 1;
-  const u = F.t.sign * dLs[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * dFs[F.t.k];
-  const ms = SLANTS[F.ms.k], mn = SLANTS[F.plane.k];
-  const Yi = F.gm * (F.ms.sign * dLs[F.ms.k] + F.ms.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.yk * F.K * S;
-  const Yf = F.gm * F.ms.sign * dFs[F.ms.k];
-  const y = fdiv(Yi + Math.floor(Yf), F.p), fy = (Yi - y * F.p + Yf) / F.p;
-  const ni = F.plane.sign * (dLs[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * dFs[F.plane.k];
-  return { u, fu, y, fy, Yi, Yf, ni, nf, S };
-}
-
-// A city cut t twelfths deep over rows y0 to y1 (level units, scale S) is
-// a terrace (.claude/design/terraces.md): the solid between the slope and a
-// vertical wall H tall, the wall standing where the slope is at the
-// storey's inner height: the upper's faces lean back, so it is at the top
-// of the rows (a floor at yb, open above); the lower's lean out, so it is at
-// the bottom (a ceiling at yb). One level finer, a pocket in a terrace is
-// cut behind its wall (back units, horizontally) between its floor and top.
-// (H on the grid of the finer rows, rounded down: so that no finer
-// pocket's row ends just short of, or on, its floor; see inBand.)
-function terrace(F, S, y0, y1, t) {
-  const H = (terraceH(F, t) * S) / 12, up = F.n[1] > 0;
-  return { up, yin: up ? y1 : y0, yb: up ? y1 - H : y0 + H, back: 0 };
-}
-// (Whether rows y0 to y1 reach into terrace w's band, or to its floor:
-// then a finer pocket is cut only above the floor, behind the wall, and one
-// that only reaches the floor is not cut at all; else, cut into the slope
-// below the floor, its air would meet the terrace's in a plane, with
-// nothing between them but that plane: a sheet.)
-const inBand = (w, y0, y1) => (w.up ? y1 >= w.yb : y0 <= w.yb);
-// The planes of a cut's back: behind the face (dn, in n . X), or a terrace's
-// wall and its floor or ceiling. (As pieces: see pieces.js; with the
-// shader's normals.)
-// (Each plane as the shader forms it: the whole numbers first, then the
-// rest, so that where two cuts meet, their planes meet exactly.)
-function cutBack(F, p, cut) {
-  if (cut.dn !== undefined) return P.airPlane((F.K * p.S - cut.dn - p.ni - p.nf) / F.nl, -F.n[0] / F.nl, -F.n[1] / F.nl, -F.n[2] / F.nl);
-  const nh = Math.hypot(F.n[0], F.n[2]), ny = F.n[1];
-  P.airPlane(cut.up ? cut.yb - p.Yi - p.Yf : p.Yi + p.Yf - cut.yb, 0, cut.up ? -1 : 1, 0);
-  P.airPlane((F.K * p.S - p.ni + ny * (p.Yi - cut.yin + p.Yf) - cut.back * nh - p.nf) / nh, -F.n[0] / nh, 0, -F.n[2] / nh);
-}
-// A unit past face F (p from faceAt): where a cut's air ends outward.
-const pastFace = (F, p) => P.airPlane((p.ni - F.K * p.S - Math.ceil(F.nl) + p.nf) / F.nl, F.n[0] / F.nl, F.n[1] / F.nl, F.n[2] / F.nl);
-// Rows y0 to y1 (true heights).
-function rows(p, y0, y1) {
-  P.airPlane(y0 - p.Yi - p.Yf, 0, -1, 0);
-  P.airPlane(p.Yi - y1 + p.Yf, 0, 1, 0);
-}
-// The true heights lo to hi, and one level finer, the cell or a cell past
-// each side in cellOpen (see runOn).
-function within(lv, L, f, lo, hi) {
-  P.airSpan(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi, 1);
-  if (lv === 1) P.airSpan(L[0], f[0], openLo(0), openHi(0), 0), P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
-}
-// One of a cut's pieces (box: its planes, as distance) united over the pieces
-// it is (see eachPiece), and for a ray, how far it goes in them.
-const cutAir = (lv, box, ray) => eachPiece(lv, () => {
-  const d = box();
-  P.through(ray, d, box);
-  return d;
-});
-
-// The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
-// cut as cut says (see cutBack), to a unit past the face, within true
-// heights lo to hi (level units) and, one level finer, within the cell or
-// a cell past each side in cellOpen (see runOn).
-function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, cut, lo, hi, ray) {
-  const [tx, ty, tz] = F.tv.map((x) => x / F.len);
-  return cutAir(lv, () => {
+  function wellAir(L, f, { w, dg }) {
     P.airPiece();
-    P.airPlane(-(p.u - u0 + p.fu) / F.len, -tx, -ty, -tz);
-    P.airPlane((p.u - u1 + p.fu) / F.len, tx, ty, tz);
-    rows(p, y0, y1);
-    cutBack(F, p, cut);
-    pastFace(F, p);
-    within(lv, L, f, lo, hi);
+    P.airSpan(L[1], f[1], -M, G + 1, 1);
+    P.airSpan(L[0] - C, f[0], -w, w, 0);
+    P.airSpan(L[2] - C, f[2], -w, w, 2);
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) P.airPlane(diag(2, sx, sz, C, C, dg) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
     return P.S.d;
-  }, ray);
-}
-// The back of a cut of level lv t twelfths deep over rows y0 to y1, on a
-// city cut fl deep whose rows are cy0 to cy1 (level units): a terrace at the
-// city's level; one level finer, behind the city terrace's wall where it
-// reaches into its band, else behind the face.
-function cutOf(F, lv, S, y0, y1, t, fl, cy0, cy1) {
-  const dnOf = (x) => F.dn[lv][Math.min(NDQ - 1, Math.floor(x / 3)) * NDQ + x - 3 * Math.min(NDQ - 1, Math.floor(x / 3))];
-  if (lv === 0) return terrace(F, S, y0, y1, t);
-  if (fl > 0) {
-    const w = terrace(F, S, cy0, cy1, fl);
-    // (Behind the wall by as much as makes it t - fl twelfths deeper, along the face's normal.)
-    if (inBand(w, y0, y1)) return { ...w, back: (((t - fl) / 12) * S * F.nl) / Math.hypot(F.n[0], F.n[2]) };
   }
-  return { dn: dnOf(t - fl) };
-}
 
-// The notch at F's e-th ridge where the point is (p from faceAt at level
-// lv; lo, hi its true heights), united with d; and where the point is not in
-// it, how far off its row's ends and its edge are at least (see ridgeRow).
-function notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray) {
-  const E = F.edges[e], G = E.G, S = p.S, Y = p.Yi + p.Yf;
-  // (As zone, in the shader's order: the whole numbers first.)
-  const sd = E.sg * Math.sign(E.dl), Z = sd * (p.u * E.dl - E.al * p.Yi - S * E.be), z = sd * (p.fu * E.dl - E.al * p.Yf);
-  const edgeAt = (t) => (Z - E.Wt[lv][t] * Math.abs(E.dl) + z) / (Math.abs(E.dl) * E.gl);
-  // (Past the widest a notch can be, only how far past it the point is; and
-  // within it no more than how far back from it, so that the distance runs
-  // on unbroken across it.)
-  const widest = edgeAt(16);
-  if (widest > 0) return Math.min(d, widest);
-  const r = RIDGES[F.er[e]], w = ridgeRow(r, lv, p.y);
-  let cap = Math.min(Y - w.y0, w.y1 - Y, -widest);
-  // (One level finer, only its own part: the city's row is the city's.)
-  if (!w.t || (lv && w.t === w.tc)) return Math.min(d, Math.max(cap, 0));
-  // (Its edge: W in from the ridge, along it. Past it, only how far past it
-  // the point is; on the ridge's side, the box and how far back from its
-  // edge: so the distance runs on unbroken across it, as across a
-  // rectangle's.)
-  const edge = edgeAt(w.t);
-  if (edge > 0) return Math.min(d, Math.max(Math.min(cap, edge), 0));
-  cap = Math.min(cap, -edge);
-  const pG = faceAt(G, lv, base), cut = cutOf(F, lv, S, w.y0, w.y1, w.t, w.tc === w.t ? 0 : w.tc, w.cy0, w.cy1);
-  // (From past the ridge (a unit past G's face) to its edge, within the row.)
-  d = Math.min(d, cutAir(lv, () => {
-    P.airPiece();
-    P.airPlane(edge, ...E.gn);
-    rows(p, w.y0, w.y1);
-    cutBack(F, p, cut);
-    pastFace(F, p);
-    pastFace(G, pG);
-    within(lv, L, f, lo, hi);
-    return P.S.d;
-  }, ray));
-  return Math.min(d, Math.max(cap, 0));
-}
-
-// Face k's cuts where the point is, at level lv, united with d: its
-// rectangle's pocket and its ridges' notches; and where it is in none, how
-// far off their edges are at least.
-function facePocket(lv, k, L, f, base, d, ray) {
-  const F = FACES[k], p = faceAt(F, lv, base), S = p.S;
-  // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
-  const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
-  const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
-  const c = rectangle(0, k, uc, fuc, yc, fyc), tc = rectDepth(F, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0, 0, 0);
-  let r = c, t = tc, fl = 0;
-  if (lv) {
-    // One level finer: tiled afresh from the city rectangle's corner, on its floor.
-    const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
-    const q = rectangle(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
-    r = { u0: q.u0 + ou, u1: q.u1 + ou, y0: q.y0 + oy, y1: q.y1 + oy };
-    t = rectDepth(F, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
-    fl = tc;
-  }
-  const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1], Y = p.Yi + p.Yf;
-  const cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
-  // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
-  if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, r.u0, r.u1, r.y0, r.y1, cutOf(F, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), lo, hi, ray));
-  for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray);
-  return Math.min(d, Math.max(cap, 0));
-}
-
-function pockets(L, f, faces, d, ray) {
-  const base = cellB.map((x) => x * R);
-  FACES.forEach((F, k) => {
-    if (faces & (1 << k)) d = facePocket(1, k, L, f, base, d, ray);
-  });
-  return d;
-}
-
-// The city's own pockets near the point (o its cell's corner from the
-// middle cell's): of each face it is near, from a cell past it to DMAX in;
-// elsewhere, at least that far off. United with d, the rest of the cell's
-// air, as cell has them in the shader; and for a ray, the pockets' reach
-// stopped at the solids without relief.
-function cityPockets(L, f, o, d, ray) {
-  const base = o.map((x, a) => x - ORIGIN[a]);
-  let far = NONE, a = NONE;
-  const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
-  const r0 = ray ? ray.reach : -1, n0 = ray && [ray.nx, ray.ny, ray.nz];
-  FACES.forEach((F, k) => {
-    const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - 2 - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - 2)));
-    if (away > 0) return void (far = Math.min(far, away));
-    const m = SLANTS[F.plane.k], sg = F.plane.sign;
-    const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / F.nl;
-    if (s < -BAND_IN) far = Math.min(far, -s - BAND_IN);
-    else if (s > BAND_OUT) far = Math.min(far, s - BAND_OUT);
-    else a = facePocket(0, k, L, f, base, a, ray);
-  });
-  // (The pockets, and how far off the rest are, stop at the solids without
-  // relief: inside one they are no air; near one, a ray they take on
-  // strikes it. Asked only where it could matter, as in the shader.)
-  const c = Math.min(far, a), pockets = ray && ray.reach > r0;
-  const bi = (c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR)) ? bareIn(q) : -1e9;
-  if (ray && bi >= 0) (ray.reach = r0), ([ray.nx, ray.ny, ray.nz] = n0);
-  else if (pockets && bi > -BARE_NEAR) {
-    P.S.x = ray.reach;
-    [P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz];
-    P.S.ray = true;
-    for (const pls of BARE_PL) {
-      P.solidPiece();
-      for (const pl of pls) P.solidPlane(pl[0] * q[0] + pl[1] * q[1] + pl[2] * q[2] - pl[3], pl[0], pl[1], pl[2]);
-      P.solidDone();
-    }
-    P.S.ray = false;
-    if (P.S.x < ray.reach) SEEN.clipped++;
-    (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
-  }
-  return Math.max(c, bi);
-}
-// See bareNear in the shader.
-const bareNear = (q, r) => BARE_BOX.some(([lo, hi]) => Math.max(...[0, 1, 2].map((a) => Math.max(lo[a] - q[a], q[a] - hi[a]))) < r);
-// See bareIn in the shader.
-function bareIn(q) {
-  let d = -1e9;
-  for (const pl of BARE_PL) d = Math.max(d, -Math.max(...pl.map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3])));
-  return d;
-}
-
-// See windowAir in the shader. (ray: as in hallsAir, for this solid's
-// openings alone; see openings.)
-function windowAir(j, L, f, d, ray) {
-  const W = WINDOWS[j], base = cellB.map((x) => x * R);
-  const u = W.t.sign * dLs[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * dFs[W.t.k];
-  const w = W.h.sign * dLs[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * dFs[W.h.k];
-  const y = base[1] + L[1] - GROUND * R;
-  const K = W.K * R, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
-  const along = W.tv.map((x) => x / W.len), across = W.hv.map((x) => x / W.len);
-  let a = NONE, cap = NONE;
-  for (let k = W.g0; k < W.g0 + W.ng; k++) {
-    const { pu, wu, dw, ch, ph, py, hy, yb: rows, vary: [vk, vp, va, vi], varyB: [d0, d1, none, jit] } = GRIDS[k];
-    const cy = fdiv(y - rows - (f[1] < 0 ? 1 : 0), py), y0 = rows + cy * py;
-    // (Segments' rows are shifted along, each by its own whole number of cuts.)
-    const sh = vk === 1 ? fdiv(va * (hashCell([cy, k, 0], (SEGMENT_SALT ^ 1) >>> 0) % (vp / va)) * pu, vp) : 0;
-    const cu = fdiv(u - ph - sh - (fu < 0 ? 1 : 0), pu), u0 = ph + sh + cu * pu;
-    cap = Math.min(cap, (u - u0 + fu) / W.len, (u0 + pu - u - fu) / W.len, y - y0 + f[1], y0 + py - y - f[1]);
-    // (A segment's opening: where along, how wide and deep, in its units.)
-    let vo = 0, vw = 0, vd = 0, jb = 0, jt = 0;
-    if (vk === 1) {
-      // (The segment of its block the point is in: see the shader.)
-      const h = hashCell([cu, cy, k], SEGMENT_SALT), n = vp / va - 1;
-      const cuts = [h % n, (h >>> 10) % n, (h >>> 20) % n].map((x) => va * (1 + x)).sort((a, b) => a - b);
-      const p = u - u0 + fu, U = (x) => fdiv(x * pu, vp);
-      let A = 0, B = cuts[0], i = 0;
-      for (let m = 0; m < 3; m++) if (p >= U(cuts[m])) [A, B, i] = [cuts[m], m < 2 ? cuts[m + 1] : vp, m + 1];
-      cap = Math.min(cap, (p - U(A)) / W.len, (U(B) - p) / W.len);
-      const hs = hashCell([cu, 4 * cy + i, k], (SEGMENT_SALT ^ 2) >>> 0);
-      vo = A + vi;
-      vw = B - A - 2 * vi;
-      vd = hs % 100 < none ? 0 : d0 + ((hs >>> 8) % (d1 - d0 + 1));
-      if (jit > 0) {
-        const hv = hashCell([cu, 4 * cy + i, k], (SEGMENT_SALT ^ 3) >>> 0), J = jit + 1;
-        jb = hv % J;
-        jt = (hv >>> 8) % J;
-        const jl = (hv >>> 16) % J, jr = (hv >>> 24) % J;
-        vo += jl;
-        vw -= jl + jr;
+  // One solid, o the cell's corner from the middle cell's (see solidGlsl).
+  function solid(s, L, f, o) {
+    P.solidPiece();
+    for (const p of planesOf(s)) {
+      const [nx, ny, nz] = p.n.map((x) => x / p.len);
+      if (p.dir < 3) {
+        const a = p.dir;
+        P.solidPlane((p.scale * L[a] - (p.K - p.scale * o[a]) + p.scale * f[a]) / p.len, nx, ny, nz);
+      } else {
+        const m = p.m, k = p.K - p.scale * (m[0] * o[0] + m[1] * o[1] + m[2] * o[2]);
+        P.solidPlane((p.scale * dLs[p.dir - 3] - k + p.scale * dFs[p.dir - 3]) / p.len, nx, ny, nz);
       }
     }
-    // (The opening, then its channel, if any; a segment's, if any.)
-    for (const c of vk === 1 ? (vd > 0 ? [0] : []) : ch > 0 ? [0, 1] : [0]) {
-      let ua, ub, ya, yt, back;
-      if (vk) [ua, ub, back, ya, yt] = [u0 + fdiv(vo * pu, vp), u0 + fdiv((vo + vw) * pu, vp), fdiv(K, W.alpha) - fdiv(vd * pu, vp), y0 + jb, y0 + hy - jt];
-      else [ua, ub, back, ya, yt] = [u0, u0 + wu, fdiv(K, W.alpha) - (c === 0 ? dw : ch), c === 0 ? y0 : -FAR, c === 0 ? y0 + hy : FAR];
-      if (vk === 1 && ub - ua < fdiv(2 * pu, vp)) continue;
-      a = Math.min(a, cutAir(1, () => {
-        P.airPiece();
-        P.airPlane((ua - u - fu) / W.len, -along[0], -along[1], -along[2]);
-        P.airPlane((u - ub + fu) / W.len, ...along);
-        P.airPlane((back - w - fw) / W.len, -across[0], -across[1], -across[2]);
-        P.airPlane((w - outer + fw) / W.len, ...across);
-        P.airSpan(L[1], f[1], Math.max(ya + GROUND * R - base[1], openLo(1)), Math.min(yt + GROUND * R - base[1], openHi(1)), 1);
-        P.airSpan(L[0], f[0], openLo(0), openHi(0), 0);
-        P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
-        return P.S.d;
-      }, ray));
-    }
+    return P.solidDone();
   }
-  return Math.min(d, a, Math.max(cap, 0));
-}
 
-function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
-  const kind = m & 3;
-  if (kind === DEEP) {
-    const open = (m >>> OPEN_AT) & 63;
-    if (open === 63) return d;
-    // (Cut off at its closed sides, the halls' air and a ray through it.)
+  // See plaza in the shader (a piece: for a ray too). (Its solids asked as
+  // the shader asks them, the same ones passed over: so the distance is the
+  // shader's, which may be less than the nearest solid's.)
+  function plaza(L, f, id) {
+    P.airPiece();
+    P.airSpan(L[0], f[0], -R, 2 * R, 0);
+    P.airSpan(L[2], f[2], -R, 2 * R, 2);
+    P.airSpan(L[1], f[1], id[1] === ROW_ID ? G : -M, R + M, 1);
+    const box = P.S.d, o = fromMiddle(id), q = [0, 1, 2].map((a) => L[a] + f[a]);
+    let d = NONE;
+    for (const k of NEAR.get(o.map((x) => x / R).join()) ?? []) {
+      const s = SOLIDS[k], far = Math.max(...[0, 1, 2].map((a) => Math.max(s.lo[a] - o[a] - q[a], q[a] - (s.hi[a] - o[a]))));
+      if (far >= d && (!P.S.ray || far >= P.S.x)) continue;
+      d = Math.min(d, solid(s, L, f, o));
+    }
+    return Math.max(box, -d);
+  }
+
+  let cellB = [0, 0, 0];
+  // The sides a skin cell's pockets (or a cell's openings) run on
+  // across, whether as three pieces, and which of them is being asked about
+  // (see runOn).
+  let cellOpen = 0, cellCross = false, axis = -1;
+  const runsOn = (a, side) => cellOpen & (side << (2 * a)) && (axis < 0 || axis === a);
+  const openLo = (a) => (runsOn(a, 2) ? -R : 0), openHi = (a) => (runsOn(a, 1) ? 2 * R : R);
+  // The least of piece(), called once for each of the pieces (one level finer:
+  // three where the cell's pockets run on as three).
+  function eachPiece(lv, piece) {
+    if (lv !== 1 || !cellCross) return (axis = -1), piece();
+    let d = NONE;
+    for (axis = 0; axis < 3; axis++) d = Math.min(d, piece());
+    axis = -1;
+    return d;
+  }
+  function relief(id, up) {
+    if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0, 0, 0];
+    const o = fromMiddle(up), v = [0, 1, 2].map((a) => o[a] + (((id[a] % R) + R) % R) - VOLUME.lo[a]);
+    if (v.some((x, a) => x < 0 || x >= VOLUME.size[a])) return [0, 0, 0, 0];
+    cellB = v.map((x, a) => x + VOLUME.lo[a] - ORIGIN[a]);
+    const i = WORDS * (v[0] + VOLUME.size[0] * (v[1] + VOLUME.size[1] * v[2]));
+    return [VOLUME.data[i], VOLUME.data[i + 1], VOLUME.data[i + 2], VOLUME.data[i + 3]];
+  }
+
+  // See rectangle in the shader.
+  function rectangle(lv, k, u, fu, y, fy, tile = 0) {
+    const P = LEVELS[lv], q = FACES[k].q2[lv], n = P.sb / P.quant, su = n * q;
+    const salt = (Math.imul(lv, 0x5bd1e995) ^ tile) >>> 0;
+    const row = fdiv(y - (fy < 0 ? 1 : 0), P.sby);
+    // (One level finer, tiled afresh in each city rectangle: no shift, so that the tiles align with its edges.)
+    const shift = lv ? 0 : q * (hashCell([row, k, lv], (ROW_SALT ^ salt) >>> 0) % n);
+    const col = fdiv(u - (fu < 0 ? 1 : 0) - shift, su);
+    let u0 = col * su + shift, u1 = u0 + su, y0 = row * P.sby, y1 = y0 + P.sby;
+    let h = hashCell([col, row, k], (POCKET_SALT ^ salt) >>> 0);
+    for (let i = 0; i < P.splits; i++) {
+      // Across the longer side more likely than the shorter (in proportion),
+      // and never leaving a part under min quanta: no thin slices.
+      const nu = (u1 - u0) / q, ny = (y1 - y0) / P.quant, m = P.min;
+      const cu = nu >= 2 * m, cy = ny >= 2 * m;
+      if (cu || cy) {
+        const alongU = cu && (!cy || (h & 0xff) * (nu + ny) < 256 * nu);
+        const s = m + ((h >>> 8) % ((alongU ? nu : ny) - 2 * m + 1));
+        if (alongU) {
+          if (beyond(u, fu, u0 + s * q)) u0 += s * q;
+          else u1 = u0 + s * q;
+        } else if (beyond(y, fy, y0 + s * P.quant)) y0 += s * P.quant;
+        else y1 = y0 + s * P.quant;
+      }
+      h = hashCell([u0, y0, Math.imul(u1, 4099) + y1], (POCKET_SALT ^ salt ^ k) >>> 0);
+    }
+    const t = h01(hashCell([u0, y0, k], (DEPTH_SALT ^ salt) >>> 0));
+    let j = 0;
+    for (let i = 0; i < ND - 1; i++) if (t >= (P.cumulative[i] ?? 2)) j = i + 1;
+    return { u0, u1, y0, y1, depth: j };
+  }
+
+
+  // Where the point is on face F at level lv (base its cell's corner from the
+  // building's origin, in this level's units): along (u, fu), its true height
+  // (y, fy, whole units and the rest, at least 0; and
+  // Y, the same times p, as a whole number and the rest), and how deep (n . X,
+  // as a whole number and the rest).
+  function faceAt(F, lv, base) {
+    const S = lv ? R : 1;
+    const u = F.t.sign * dLs[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * dFs[F.t.k];
+    const ms = SLANTS[F.ms.k], mn = SLANTS[F.plane.k];
+    const Yi = F.gm * (F.ms.sign * dLs[F.ms.k] + F.ms.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.yk * F.K * S;
+    const Yf = F.gm * F.ms.sign * dFs[F.ms.k];
+    const y = fdiv(Yi + Math.floor(Yf), F.p), fy = (Yi - y * F.p + Yf) / F.p;
+    const ni = F.plane.sign * (dLs[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * dFs[F.plane.k];
+    return { u, fu, y, fy, Yi, Yf, ni, nf, S };
+  }
+
+  // A city cut t twelfths deep over rows y0 to y1 (level units, scale S) is
+  // a terrace (.claude/design/terraces.md): the solid between the slope and a
+  // vertical wall H tall, the wall standing where the slope is at the
+  // storey's inner height: the upper's faces lean back, so it is at the top
+  // of the rows (a floor at yb, open above); the lower's lean out, so it is at
+  // the bottom (a ceiling at yb). One level finer, a pocket in a terrace is
+  // cut behind its wall (back units, horizontally) between its floor and top.
+  // (H on the grid of the finer rows, rounded down: so that no finer
+  // pocket's row ends just short of, or on, its floor; see inBand.)
+  function terrace(F, S, y0, y1, t) {
+    const H = (terraceH(F, t) * S) / 12, up = F.n[1] > 0;
+    return { up, yin: up ? y1 : y0, yb: up ? y1 - H : y0 + H, back: 0 };
+  }
+  // (Whether rows y0 to y1 reach into terrace w's band, or to its floor:
+  // then a finer pocket is cut only above the floor, behind the wall, and one
+  // that only reaches the floor is not cut at all; else, cut into the slope
+  // below the floor, its air would meet the terrace's in a plane, with
+  // nothing between them but that plane: a sheet.)
+  const inBand = (w, y0, y1) => (w.up ? y1 >= w.yb : y0 <= w.yb);
+  // The planes of a cut's back: behind the face (dn, in n . X), or a terrace's
+  // wall and its floor or ceiling. (As pieces: see pieces.js; with the
+  // shader's normals.)
+  // (Each plane as the shader forms it: the whole numbers first, then the
+  // rest, so that where two cuts meet, their planes meet exactly.)
+  function cutBack(F, p, cut) {
+    if (cut.dn !== undefined) return P.airPlane((F.K * p.S - cut.dn - p.ni - p.nf) / F.nl, -F.n[0] / F.nl, -F.n[1] / F.nl, -F.n[2] / F.nl);
+    const nh = Math.hypot(F.n[0], F.n[2]), ny = F.n[1];
+    P.airPlane(cut.up ? cut.yb - p.Yi - p.Yf : p.Yi + p.Yf - cut.yb, 0, cut.up ? -1 : 1, 0);
+    P.airPlane((F.K * p.S - p.ni + ny * (p.Yi - cut.yin + p.Yf) - cut.back * nh - p.nf) / nh, -F.n[0] / nh, 0, -F.n[2] / nh);
+  }
+  // A unit past face F (p from faceAt): where a cut's air ends outward.
+  const pastFace = (F, p) => P.airPlane((p.ni - F.K * p.S - Math.ceil(F.nl) + p.nf) / F.nl, F.n[0] / F.nl, F.n[1] / F.nl, F.n[2] / F.nl);
+  // Rows y0 to y1 (true heights).
+  function rows(p, y0, y1) {
+    P.airPlane(y0 - p.Yi - p.Yf, 0, -1, 0);
+    P.airPlane(p.Yi - y1 + p.Yf, 0, 1, 0);
+  }
+  // The true heights lo to hi, and one level finer, the cell or a cell past
+  // each side in cellOpen (see runOn).
+  function within(lv, L, f, lo, hi) {
+    P.airSpan(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi, 1);
+    if (lv === 1) P.airSpan(L[0], f[0], openLo(0), openHi(0), 0), P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
+  }
+  // One of a cut's pieces (box: its planes, as distance) united over the pieces
+  // it is (see eachPiece), and for a ray, how far it goes in them.
+  const cutAir = (lv, box, ray) => eachPiece(lv, () => {
+    const d = box();
+    P.through(ray, d, box);
+    return d;
+  });
+
+  // The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
+  // cut as cut says (see cutBack), to a unit past the face, within true
+  // heights lo to hi (level units) and, one level finer, within the cell or
+  // a cell past each side in cellOpen (see runOn).
+  function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, cut, lo, hi, ray) {
+    const [tx, ty, tz] = F.tv.map((x) => x / F.len);
+    return cutAir(lv, () => {
+      P.airPiece();
+      P.airPlane(-(p.u - u0 + p.fu) / F.len, -tx, -ty, -tz);
+      P.airPlane((p.u - u1 + p.fu) / F.len, tx, ty, tz);
+      rows(p, y0, y1);
+      cutBack(F, p, cut);
+      pastFace(F, p);
+      within(lv, L, f, lo, hi);
+      return P.S.d;
+    }, ray);
+  }
+  // The back of a cut of level lv t twelfths deep over rows y0 to y1, on a
+  // city cut fl deep whose rows are cy0 to cy1 (level units): a terrace at the
+  // city's level; one level finer, behind the city terrace's wall where it
+  // reaches into its band, else behind the face.
+  function cutOf(F, lv, S, y0, y1, t, fl, cy0, cy1) {
+    const dnOf = (x) => F.dn[lv][Math.min(NDQ - 1, Math.floor(x / 3)) * NDQ + x - 3 * Math.min(NDQ - 1, Math.floor(x / 3))];
+    if (lv === 0) return terrace(F, S, y0, y1, t);
+    if (fl > 0) {
+      const w = terrace(F, S, cy0, cy1, fl);
+      // (Behind the wall by as much as makes it t - fl twelfths deeper, along the face's normal.)
+      if (inBand(w, y0, y1)) return { ...w, back: (((t - fl) / 12) * S * F.nl) / Math.hypot(F.n[0], F.n[2]) };
+    }
+    return { dn: dnOf(t - fl) };
+  }
+
+  // The notch at F's e-th ridge where the point is (p from faceAt at level
+  // lv; lo, hi its true heights), united with d; and where the point is not in
+  // it, how far off its row's ends and its edge are at least (see ridgeRow).
+  function notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray) {
+    const E = F.edges[e], G = E.G, S = p.S, Y = p.Yi + p.Yf;
+    // (As zone, in the shader's order: the whole numbers first.)
+    const sd = E.sg * Math.sign(E.dl), Z = sd * (p.u * E.dl - E.al * p.Yi - S * E.be), z = sd * (p.fu * E.dl - E.al * p.Yf);
+    const edgeAt = (t) => (Z - E.Wt[lv][t] * Math.abs(E.dl) + z) / (Math.abs(E.dl) * E.gl);
+    // (Past the widest a notch can be, only how far past it the point is; and
+    // within it no more than how far back from it, so that the distance runs
+    // on unbroken across it.)
+    const widest = edgeAt(16);
+    if (widest > 0) return Math.min(d, widest);
+    const r = RIDGES[F.er[e]], w = ridgeRow(r, lv, p.y);
+    let cap = Math.min(Y - w.y0, w.y1 - Y, -widest);
+    // (One level finer, only its own part: the city's row is the city's.)
+    if (!w.t || (lv && w.t === w.tc)) return Math.min(d, Math.max(cap, 0));
+    // (Its edge: W in from the ridge, along it. Past it, only how far past it
+    // the point is; on the ridge's side, the box and how far back from its
+    // edge: so the distance runs on unbroken across it, as across a
+    // rectangle's.)
+    const edge = edgeAt(w.t);
+    if (edge > 0) return Math.min(d, Math.max(Math.min(cap, edge), 0));
+    cap = Math.min(cap, -edge);
+    const pG = faceAt(G, lv, base), cut = cutOf(F, lv, S, w.y0, w.y1, w.t, w.tc === w.t ? 0 : w.tc, w.cy0, w.cy1);
+    // (From past the ridge (a unit past G's face) to its edge, within the row.)
+    d = Math.min(d, cutAir(lv, () => {
+      P.airPiece();
+      P.airPlane(edge, ...E.gn);
+      rows(p, w.y0, w.y1);
+      cutBack(F, p, cut);
+      pastFace(F, p);
+      pastFace(G, pG);
+      within(lv, L, f, lo, hi);
+      return P.S.d;
+    }, ray));
+    return Math.min(d, Math.max(cap, 0));
+  }
+
+  // Face k's cuts where the point is, at level lv, united with d: its
+  // rectangle's pocket and its ridges' notches; and where it is in none, how
+  // far off their edges are at least.
+  function facePocket(lv, k, L, f, base, d, ray) {
+    const F = FACES[k], p = faceAt(F, lv, base), S = p.S;
+    // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
+    const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
+    const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
+    const c = rectangle(0, k, uc, fuc, yc, fyc), tc = rectDepth(F, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0, 0, 0);
+    let r = c, t = tc, fl = 0;
+    if (lv) {
+      // One level finer: tiled afresh from the city rectangle's corner, on its floor.
+      const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
+      const q = rectangle(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
+      r = { u0: q.u0 + ou, u1: q.u1 + ou, y0: q.y0 + oy, y1: q.y1 + oy };
+      t = rectDepth(F, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
+      fl = tc;
+    }
+    const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1], Y = p.Yi + p.Yf;
+    const cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
+    // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
+    if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, r.u0, r.u1, r.y0, r.y1, cutOf(F, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), lo, hi, ray));
+    for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray);
+    return Math.min(d, Math.max(cap, 0));
+  }
+
+  function pockets(L, f, faces, d, ray) {
+    const base = cellB.map((x) => x * R);
+    FACES.forEach((F, k) => {
+      if (faces & (1 << k)) d = facePocket(1, k, L, f, base, d, ray);
+    });
+    return d;
+  }
+
+  // The city's own pockets near the point (o its cell's corner from the
+  // middle cell's): of each face it is near, from a cell past it to DMAX in;
+  // elsewhere, at least that far off. United with d, the rest of the cell's
+  // air, as cell has them in the shader; and for a ray, the pockets' reach
+  // stopped at the solids without relief.
+  function cityPockets(L, f, o, d, ray) {
+    const base = o.map((x, a) => x - ORIGIN[a]);
+    let far = NONE, a = NONE;
+    const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
+    const r0 = ray ? ray.reach : -1, n0 = ray && [ray.nx, ray.ny, ray.nz];
+    FACES.forEach((F, k) => {
+      const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - 2 - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - 2)));
+      if (away > 0) return void (far = Math.min(far, away));
+      const m = SLANTS[F.plane.k], sg = F.plane.sign;
+      const s = (sg * dLs[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * dFs[F.plane.k]) / F.nl;
+      if (s < -BAND_IN) far = Math.min(far, -s - BAND_IN);
+      else if (s > BAND_OUT) far = Math.min(far, s - BAND_OUT);
+      else a = facePocket(0, k, L, f, base, a, ray);
+    });
+    // (The pockets, and how far off the rest are, stop at the solids without
+    // relief: inside one they are no air; near one, a ray they take on
+    // strikes it. Asked only where it could matter, as in the shader.)
+    const c = Math.min(far, a), pockets = ray && ray.reach > r0;
+    const bi = (c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR)) ? bareIn(q) : -1e9;
+    if (ray && bi >= 0) (ray.reach = r0), ([ray.nx, ray.ny, ray.nz] = n0);
+    else if (pockets && bi > -BARE_NEAR) {
+      P.S.x = ray.reach;
+      [P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz];
+      P.S.ray = true;
+      for (const pls of BARE_PL) {
+        P.solidPiece();
+        for (const pl of pls) P.solidPlane(pl[0] * q[0] + pl[1] * q[1] + pl[2] * q[2] - pl[3], pl[0], pl[1], pl[2]);
+        P.solidDone();
+      }
+      P.S.ray = false;
+      if (P.S.x < ray.reach) SEEN.clipped++;
+      (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+    }
+    return Math.max(c, bi);
+  }
+  // See bareNear in the shader.
+  const bareNear = (q, r) => BARE_BOX.some(([lo, hi]) => Math.max(...[0, 1, 2].map((a) => Math.max(lo[a] - q[a], q[a] - hi[a]))) < r);
+  // See bareIn in the shader.
+  function bareIn(q) {
+    let d = -1e9;
+    for (const pl of BARE_PL) d = Math.max(d, -Math.max(...pl.map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3])));
+    return d;
+  }
+
+  // See windowAir in the shader. (ray: as in hallsAir, for this solid's
+  // openings alone; see openings.)
+  function windowAir(j, L, f, d, ray) {
+    const W = WINDOWS[j], base = cellB.map((x) => x * R);
+    const u = W.t.sign * dLs[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * dFs[W.t.k];
+    const w = W.h.sign * dLs[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * dFs[W.h.k];
+    const y = base[1] + L[1] - GROUND * R;
+    const K = W.K * R, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
+    const along = W.tv.map((x) => x / W.len), across = W.hv.map((x) => x / W.len);
+    let a = NONE, cap = NONE;
+    for (let k = W.g0; k < W.g0 + W.ng; k++) {
+      const { pu, wu, dw, ch, ph, py, hy, yb: rows, vary: [vk, vp, va, vi], varyB: [d0, d1, none, jit] } = GRIDS[k];
+      const cy = fdiv(y - rows - (f[1] < 0 ? 1 : 0), py), y0 = rows + cy * py;
+      // (Segments' rows are shifted along, each by its own whole number of cuts.)
+      const sh = vk === 1 ? fdiv(va * (hashCell([cy, k, 0], (SEGMENT_SALT ^ 1) >>> 0) % (vp / va)) * pu, vp) : 0;
+      const cu = fdiv(u - ph - sh - (fu < 0 ? 1 : 0), pu), u0 = ph + sh + cu * pu;
+      cap = Math.min(cap, (u - u0 + fu) / W.len, (u0 + pu - u - fu) / W.len, y - y0 + f[1], y0 + py - y - f[1]);
+      // (A segment's opening: where along, how wide and deep, in its units.)
+      let vo = 0, vw = 0, vd = 0, jb = 0, jt = 0;
+      if (vk === 1) {
+        // (The segment of its block the point is in: see the shader.)
+        const h = hashCell([cu, cy, k], SEGMENT_SALT), n = vp / va - 1;
+        const cuts = [h % n, (h >>> 10) % n, (h >>> 20) % n].map((x) => va * (1 + x)).sort((a, b) => a - b);
+        const p = u - u0 + fu, U = (x) => fdiv(x * pu, vp);
+        let A = 0, B = cuts[0], i = 0;
+        for (let m = 0; m < 3; m++) if (p >= U(cuts[m])) [A, B, i] = [cuts[m], m < 2 ? cuts[m + 1] : vp, m + 1];
+        cap = Math.min(cap, (p - U(A)) / W.len, (U(B) - p) / W.len);
+        const hs = hashCell([cu, 4 * cy + i, k], (SEGMENT_SALT ^ 2) >>> 0);
+        vo = A + vi;
+        vw = B - A - 2 * vi;
+        vd = hs % 100 < none ? 0 : d0 + ((hs >>> 8) % (d1 - d0 + 1));
+        if (jit > 0) {
+          const hv = hashCell([cu, 4 * cy + i, k], (SEGMENT_SALT ^ 3) >>> 0), J = jit + 1;
+          jb = hv % J;
+          jt = (hv >>> 8) % J;
+          const jl = (hv >>> 16) % J, jr = (hv >>> 24) % J;
+          vo += jl;
+          vw -= jl + jr;
+        }
+      }
+      // (The opening, then its channel, if any; a segment's, if any.)
+      for (const c of vk === 1 ? (vd > 0 ? [0] : []) : ch > 0 ? [0, 1] : [0]) {
+        let ua, ub, ya, yt, back;
+        if (vk) [ua, ub, back, ya, yt] = [u0 + fdiv(vo * pu, vp), u0 + fdiv((vo + vw) * pu, vp), fdiv(K, W.alpha) - fdiv(vd * pu, vp), y0 + jb, y0 + hy - jt];
+        else [ua, ub, back, ya, yt] = [u0, u0 + wu, fdiv(K, W.alpha) - (c === 0 ? dw : ch), c === 0 ? y0 : -FAR, c === 0 ? y0 + hy : FAR];
+        if (vk === 1 && ub - ua < fdiv(2 * pu, vp)) continue;
+        a = Math.min(a, cutAir(1, () => {
+          P.airPiece();
+          P.airPlane((ua - u - fu) / W.len, -along[0], -along[1], -along[2]);
+          P.airPlane((u - ub + fu) / W.len, ...along);
+          P.airPlane((back - w - fw) / W.len, -across[0], -across[1], -across[2]);
+          P.airPlane((w - outer + fw) / W.len, ...across);
+          P.airSpan(L[1], f[1], Math.max(ya + GROUND * R - base[1], openLo(1)), Math.min(yt + GROUND * R - base[1], openHi(1)), 1);
+          P.airSpan(L[0], f[0], openLo(0), openHi(0), 0);
+          P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
+          return P.S.d;
+        }, ray));
+      }
+    }
+    return Math.min(d, a, Math.max(cap, 0));
+  }
+
+  function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
+    const kind = m & 3;
+    if (kind === DEEP) {
+      const open = (m >>> OPEN_AT) & 63;
+      if (open === 63) return d;
+      // (Cut off at its closed sides, the halls' air and a ray through it.)
+      const sides = () => {
+        P.airPiece();
+        if (!(open & 1)) P.airPlane(L[0] - R + f[0], 1, 0, 0);
+        if (!(open & 2)) P.airPlane(-L[0] - f[0], -1, 0, 0);
+        if (!(open & 4)) P.airPlane(L[1] - R + f[1], 0, 1, 0);
+        if (!(open & 8)) P.airPlane(-L[1] - f[1], 0, -1, 0);
+        if (!(open & 16)) P.airPlane(L[2] - R + f[2], 0, 0, 1);
+        if (!(open & 32)) P.airPlane(-L[2] - f[2], 0, 0, -1);
+        return P.S.d;
+      };
+      const g = sides();
+      d = Math.max(d, g);
+      if (ray && ray.reach >= 0) {
+        P.S.ray = true;
+        sides();
+        P.S.ray = false;
+        if (P.S.x < ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+      }
+      return d > 0 ? Math.min(d, Math.max(-g, 0)) : d;
+    }
+    const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
+    cellOpen = (wrun >>> OPEN_AT) & 63;
+    cellCross = !!((wrun >>> CROSS_AT) & 1);
+    const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
+    if (ray) P.aim(ray);
+    const a = openings(L, f, wins, clip, ray);
+    cellOpen = (m >>> OPEN_AT) & 63;
+    cellCross = !!((clip >>> CROSS_AT) & 1);
+    const t = town ? townAir(L, f, m, ray) : NONE;
+    return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
+  }
+
+  // See townAir in the shader.
+  // (ray: as in hallsAir, aimed already.)
+  function townAir(L, f, m, ray) {
+    const p = [0, 1, 2].map((a) => L[a] + f[a]), open = (m >>> OPEN_AT) & 63, corner = (m >>> TOWN_CORNER_AT) & 15;
     const sides = () => {
       P.airPiece();
-      if (!(open & 1)) P.airPlane(L[0] - R + f[0], 1, 0, 0);
-      if (!(open & 2)) P.airPlane(-L[0] - f[0], -1, 0, 0);
-      if (!(open & 4)) P.airPlane(L[1] - R + f[1], 0, 1, 0);
-      if (!(open & 8)) P.airPlane(-L[1] - f[1], 0, -1, 0);
-      if (!(open & 16)) P.airPlane(L[2] - R + f[2], 0, 0, 1);
-      if (!(open & 32)) P.airPlane(-L[2] - f[2], 0, 0, -1);
+      P.airPlane(-p[1], 0, -1, 0);
+      P.airPlane(p[1] - R, 0, 1, 0);
+      P.airPlane(p[0] - R - (open & 1 ? TOWN_MARGIN : 0), 1, 0, 0);
+      P.airPlane(-p[0] - (open & 2 ? TOWN_MARGIN : 0), -1, 0, 0);
+      P.airPlane(p[2] - R - (open & 16 ? TOWN_MARGIN : 0), 0, 0, 1);
+      P.airPlane(-p[2] - (open & 32 ? TOWN_MARGIN : 0), 0, 0, -1);
+      TOWN_CORNERS.forEach(([sx, sz], c) => {
+        if (open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(corner & (1 << c)))
+          P.airPlane((sx * (p[0] - (sx > 0 ? R : 0)) + sz * (p[2] - (sz > 0 ? R : 0))) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
+      });
       return P.S.d;
     };
-    const g = sides();
-    d = Math.max(d, g);
-    if (ray && ray.reach >= 0) {
+    const box = sides();
+    // (The point's own lot: the first holding it.)
+    const { dens, plan } = townCell();
+    // (A lot at the cell's far side holds the side too: p can be on it.)
+    let n = plan.findIndex((r) => (p[0] < r[2] || r[2] === R) && (p[2] < r[3] || r[3] === R));
+    const r = plan[n], h = lotHash(n, 7), h2 = lotHash(n, 8);
+    let d = Math.min(p[0] - r[0], r[2] - p[0], p[2] - r[1], r[3] - p[2]) + TOWN_MARGIN;
+    for (let k = 0; k < TOWN_SHAPES; k++) {
+      const b = townShape(h, h2, r, dens, k);
+      if (b) d = Math.min(d, boxDist(b, p));
+    }
+    const t = Math.max(box, -d);
+    if (ray && t <= 0) {
+      // (A ray: every lot it could reach before it leaves.)
       P.S.ray = true;
       sides();
+      plan.forEach((r, l) => {
+        if (Math.max(r[0] - p[0], -p[1], r[1] - p[2], p[0] - r[2], p[1] - TOWN.H, p[2] - r[3]) >= P.S.x) return;
+        const h = lotHash(l, 7), h2 = lotHash(l, 8);
+        for (let k = 0; k < TOWN_SHAPES; k++) {
+          const b = townShape(h, h2, r, dens, k);
+          if (b) boxSolid(b, p);
+        }
+      });
       P.S.ray = false;
-      if (P.S.x < ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+      if (P.S.x > ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
     }
-    return d > 0 ? Math.min(d, Math.max(-g, 0)) : d;
+    return t;
   }
-  const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
-  cellOpen = (wrun >>> OPEN_AT) & 63;
-  cellCross = !!((wrun >>> CROSS_AT) & 1);
-  const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
-  if (ray) P.aim(ray);
-  const a = openings(L, f, wins, clip, ray);
-  cellOpen = (m >>> OPEN_AT) & 63;
-  cellCross = !!((clip >>> CROSS_AT) & 1);
-  const t = town ? townAir(L, f, m, ray) : NONE;
-  return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
-}
 
-// See townAir in the shader.
-// (ray: as in hallsAir, aimed already.)
-function townAir(L, f, m, ray) {
-  const p = [0, 1, 2].map((a) => L[a] + f[a]), open = (m >>> OPEN_AT) & 63, corner = (m >>> TOWN_CORNER_AT) & 15;
-  const sides = () => {
-    P.airPiece();
-    P.airPlane(-p[1], 0, -1, 0);
-    P.airPlane(p[1] - R, 0, 1, 0);
-    P.airPlane(p[0] - R - (open & 1 ? TOWN_MARGIN : 0), 1, 0, 0);
-    P.airPlane(-p[0] - (open & 2 ? TOWN_MARGIN : 0), -1, 0, 0);
-    P.airPlane(p[2] - R - (open & 16 ? TOWN_MARGIN : 0), 0, 0, 1);
-    P.airPlane(-p[2] - (open & 32 ? TOWN_MARGIN : 0), 0, 0, -1);
-    TOWN_CORNERS.forEach(([sx, sz], c) => {
-      if (open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(corner & (1 << c)))
-        P.airPlane((sx * (p[0] - (sx > 0 ? R : 0)) + sz * (p[2] - (sz > 0 ? R : 0))) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
+  // See boxSolid in the shader.
+  function boxSolid([x0, y0, z0, x1, y1, z1], p) {
+    P.solidPiece();
+    P.solidPlane(x0 - p[0], -1, 0, 0);
+    P.solidPlane(p[0] - x1, 1, 0, 0);
+    P.solidPlane(y0 - p[1], 0, -1, 0);
+    P.solidPlane(p[1] - y1, 0, 1, 0);
+    P.solidPlane(z0 - p[2], 0, 0, -1);
+    P.solidPlane(p[2] - z1, 0, 0, 1);
+    return P.solidDone();
+  }
+
+  // See openings in the shader.
+  // (ray: as in hallsAir.)
+  function openings(L, f, wins, clip, ray) {
+    const q = cellB.map((x, i) => x + (L[i] + f[i]) / R), out = (i) => Math.max(...SOLID_PL[i].map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3]));
+    const dot = (p, x, y, z) => p[0] * x + p[1] * y + p[2] * z;
+    // (Each solid's openings as they are, first, and how far a ray goes in
+    // them; then each stopped at the others.)
+    const raw = WIN_AT.map((at) => {
+      const w = (wins >>> at) & ((1 << WIN_BITS) - 1), me = (w & ((1 << SOLID_BITS) - 1)) - 1;
+      let b = NONE;
+      const r = ray && { reach: -1, nx: 0, ny: 0, nz: 0 };
+      if (me >= 0) for (let k = 0; k < 4; k++) if ((w >>> SOLID_BITS) & (1 << k)) b = windowAir(SOLIDS[me].wfirst + k, L, f, b, r);
+      return { me, b, r };
     });
-    return P.S.d;
-  };
-  const box = sides();
-  // (The point's own lot: the first holding it.)
-  const { dens, plan } = townCell();
-  // (A lot at the cell's far side holds the side too: p can be on it.)
-  let n = plan.findIndex((r) => (p[0] < r[2] || r[2] === R) && (p[2] < r[3] || r[3] === R));
-  const r = plan[n], h = lotHash(n, 7), h2 = lotHash(n, 8);
-  let d = Math.min(p[0] - r[0], r[2] - p[0], p[2] - r[1], r[3] - p[2]) + TOWN_MARGIN;
-  for (let k = 0; k < TOWN_SHAPES; k++) {
-    const b = townShape(h, h2, r, dens, k);
-    if (b) d = Math.min(d, boxDist(b, p));
-  }
-  const t = Math.max(box, -d);
-  if (ray && t <= 0) {
-    // (A ray: every lot it could reach before it leaves.)
-    P.S.ray = true;
-    sides();
-    plan.forEach((r, l) => {
-      if (Math.max(r[0] - p[0], -p[1], r[1] - p[2], p[0] - r[2], p[1] - TOWN.H, p[2] - r[3]) >= P.S.x) return;
-      const h = lotHash(l, 7), h2 = lotHash(l, 8);
-      for (let k = 0; k < TOWN_SHAPES; k++) {
-        const b = townShape(h, h2, r, dens, k);
-        if (b) boxSolid(b, p);
-      }
-    });
-    P.S.ray = false;
-    if (P.S.x > ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
-  }
-  return t;
-}
-
-// See boxSolid in the shader.
-function boxSolid([x0, y0, z0, x1, y1, z1], p) {
-  P.solidPiece();
-  P.solidPlane(x0 - p[0], -1, 0, 0);
-  P.solidPlane(p[0] - x1, 1, 0, 0);
-  P.solidPlane(y0 - p[1], 0, -1, 0);
-  P.solidPlane(p[1] - y1, 0, 1, 0);
-  P.solidPlane(z0 - p[2], 0, 0, -1);
-  P.solidPlane(p[2] - z1, 0, 0, 1);
-  return P.solidDone();
-}
-
-// See openings in the shader.
-// (ray: as in hallsAir.)
-function openings(L, f, wins, clip, ray) {
-  const q = cellB.map((x, i) => x + (L[i] + f[i]) / R), out = (i) => Math.max(...SOLID_PL[i].map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3]));
-  const dot = (p, x, y, z) => p[0] * x + p[1] * y + p[2] * z;
-  // (Each solid's openings as they are, first, and how far a ray goes in
-  // them; then each stopped at the others.)
-  const raw = WIN_AT.map((at) => {
-    const w = (wins >>> at) & ((1 << WIN_BITS) - 1), me = (w & ((1 << SOLID_BITS) - 1)) - 1;
-    let b = NONE;
-    const r = ray && { reach: -1, nx: 0, ny: 0, nz: 0 };
-    if (me >= 0) for (let k = 0; k < 4; k++) if ((w >>> SOLID_BITS) & (1 << k)) b = windowAir(SOLIDS[me].wfirst + k, L, f, b, r);
-    return { me, b, r };
-  });
-  let a = NONE;
-  for (const { me, b: b0, r: rr } of raw) {
-    if (me < 0) continue;
-    let b = b0;
-    const own = out(me);
-    let r = rr ? rr.reach : -1, rn = rr && [rr.nx, rr.ny, rr.nz];
-    // (Where the ray leaves this solid, and that plane's normal.)
-    let oIn = -1e30, oOut = 1e30, oN = [0, 0, 0];
-    if (r >= 0)
-      for (const pl of SOLID_PL[me]) {
-        const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3]) * R;
-        if (rd > 0 && -g / rd < oOut) (oOut = -g / rd), (oN = pl);
-        else if (rd < 0) oIn = Math.max(oIn, g / -rd);
-        else if (rd === 0 && g > 0) oOut = -1e30;
-      }
-    for (let c = clip & ((1 << CROSS_AT) - 1); c; c >>>= SOLID_BITS) {
-      const i = (c & ((1 << SOLID_BITS) - 1)) - 1;
-      if (i === me) continue;
-      const through = (YIELDS[i] >>> me) & 1, keep = SOLIDS[i].keep ?? 0;
-      const inside = Math.min(R * (keep - out(i)), ...raw.filter((x) => x.me === i).map((x) => x.b));
-      b = Math.max(b, through ? Math.min(inside, R * own) : inside);
-      if (r >= 0) {
-        // (Where the ray strikes that solid, or, where this one runs on
-        // through it, where it leaves this one.)
-        let sIn = -1e30, sOut = 1e30, sN = [0, 0, 0];
-        for (const pl of SOLID_PL[i]) {
-          const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3] - keep) * R;
-          if (rd < 0) {
-            if (g / -rd > sIn) (sIn = g / -rd), (sN = pl);
-          } else if (rd > 0) sOut = Math.min(sOut, -g / rd);
-          else if (g > 0) sOut = -1;
+    let a = NONE;
+    for (const { me, b: b0, r: rr } of raw) {
+      if (me < 0) continue;
+      let b = b0;
+      const own = out(me);
+      let r = rr ? rr.reach : -1, rn = rr && [rr.nx, rr.ny, rr.nz];
+      // (Where the ray leaves this solid, and that plane's normal.)
+      let oIn = -1e30, oOut = 1e30, oN = [0, 0, 0];
+      if (r >= 0)
+        for (const pl of SOLID_PL[me]) {
+          const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3]) * R;
+          if (rd > 0 && -g / rd < oOut) (oOut = -g / rd), (oN = pl);
+          else if (rd < 0) oIn = Math.max(oIn, g / -rd);
+          else if (rd === 0 && g > 0) oOut = -1e30;
         }
-        let x = Math.max(sIn, 0), n = sN;
-        if (through && x >= oIn && x < oOut) (x = oOut), (n = oN.map((v) => -v));
-        else if (x === 0) {
-          // (Inside it here: air only in its own openings, and as far as
-          // the ray stays in them.)
-          let ri = -1;
-          for (const o of raw) if (o.me === i && o.r.reach > ri) (ri = o.r.reach), (n = [o.r.nx, o.r.ny, o.r.nz]);
-          if (ri >= 0) x = ri;
+      for (let c = clip & ((1 << CROSS_AT) - 1); c; c >>>= SOLID_BITS) {
+        const i = (c & ((1 << SOLID_BITS) - 1)) - 1;
+        if (i === me) continue;
+        const through = (YIELDS[i] >>> me) & 1, keep = SOLIDS[i].keep ?? 0;
+        const inside = Math.min(R * (keep - out(i)), ...raw.filter((x) => x.me === i).map((x) => x.b));
+        b = Math.max(b, through ? Math.min(inside, R * own) : inside);
+        if (r >= 0) {
+          // (Where the ray strikes that solid, or, where this one runs on
+          // through it, where it leaves this one.)
+          let sIn = -1e30, sOut = 1e30, sN = [0, 0, 0];
+          for (const pl of SOLID_PL[i]) {
+            const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3] - keep) * R;
+            if (rd < 0) {
+              if (g / -rd > sIn) (sIn = g / -rd), (sN = pl);
+            } else if (rd > 0) sOut = Math.min(sOut, -g / rd);
+            else if (g > 0) sOut = -1;
+          }
+          let x = Math.max(sIn, 0), n = sN;
+          if (through && x >= oIn && x < oOut) (x = oOut), (n = oN.map((v) => -v));
+          else if (x === 0) {
+            // (Inside it here: air only in its own openings, and as far as
+            // the ray stays in them.)
+            let ri = -1;
+            for (const o of raw) if (o.me === i && o.r.reach > ri) (ri = o.r.reach), (n = [o.r.nx, o.r.ny, o.r.nz]);
+            if (ri >= 0) x = ri;
+          }
+          if (x < sOut && x < r) (r = x > 0 ? x : -1), (rn = n);
         }
-        if (x < sOut && x < r) (r = x > 0 ? x : -1), (rn = n);
+      }
+      a = Math.min(a, b);
+      if (ray && r > ray.reach) (ray.reach = r), ([ray.nx, ray.ny, ray.nz] = rn.slice(0, 3));
+    }
+    return a;
+  }
+
+  // See groundCell and groundAir in the shader.
+  function groundCell(own, up) {
+    if (up[1] !== ROW_ID) return false;
+    const o = fromMiddle(up), v = [0, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
+    return v[0] < 0 || v[1] < 0 || v[0] >= VOLUME.size[0] || v[1] >= VOLUME.size[2];
+  }
+  function groundAir(L, f, own) {
+    const d = Math.max(Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]), 0);
+    return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
+  }
+
+  // (ray: see hallsAir. Every cell answers it.)
+  function cellAir(L, f, id, seed, dg, level, up, ray) {
+    const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
+    if (ray) ray.known = false;
+    if (level < CITY) return solid(NONE);
+    if (level === CITY + 1) {
+      const m = relief(id, up);
+      if (m[0]) {
+        // (The halls only in deep cells, as the shader has them.)
+        const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, roomRule, ray) : NONE;
+        setPoint(L, f, dg);
+        return reliefCell(L, f, id, seed, m, d, ray);
       }
     }
-    a = Math.min(a, b);
-    if (ray && r > ray.reach) (ray.reach = r), ([ray.nx, ray.ny, ray.nz] = rn.slice(0, 3));
-  }
-  return a;
-}
-
-// See groundCell and groundAir in the shader.
-function groundCell(own, up) {
-  if (up[1] !== ROW_ID) return false;
-  const o = fromMiddle(up), v = [0, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
-  return v[0] < 0 || v[1] < 0 || v[0] >= VOLUME.size[0] || v[1] >= VOLUME.size[2];
-}
-function groundAir(L, f, own) {
-  const d = Math.max(Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]), 0);
-  return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
-}
-
-// (ray: see hallsAir. Every cell answers it.)
-function cellAir(L, f, id, seed, dg, level, up, ray) {
-  const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
-  if (ray) ray.known = false;
-  if (level < CITY) return solid(NONE);
-  if (level === CITY + 1) {
-    const m = relief(id, up);
-    if (m[0]) {
-      // (The halls only in deep cells, as the shader has them.)
-      const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, roomRule, ray) : NONE;
-      setPoint(L, f, dg);
-      return reliefCell(L, f, id, seed, m, d, ray);
+    if (level === CITY + 1 && up) {
+      const own = id.map((x) => x - R * Math.floor((x + 0.5) / R));
+      if (groundCell(own, up)) return solid(groundAir(L, f, own));
     }
+    if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
+    if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule, ray);
+    // (The city's: its plaza's air and its well's, and for a ray the further
+    // of the pieces the point is in; then its pockets.)
+    setPoint(L, f, dg);
+    if (ray) P.aim(ray);
+    const wl = id[1] === ROW_ID ? wellOf(id, seed) : null;
+    const w = wl ? wellAir(L, f, wl) : NONE, p = plaza(L, f, id);
+    P.through(ray, p, () => plaza(L, f, id));
+    if (wl) P.through(ray, w, () => wellAir(L, f, wl));
+    return Math.min(p, w, cityPockets(L, f, fromMiddle(id), Math.min(p, w), ray));
   }
-  if (level === CITY + 1 && up) {
-    const own = id.map((x) => x - R * Math.floor((x + 0.5) / R));
-    if (groundCell(own, up)) return solid(groundAir(L, f, own));
-  }
-  if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
-  if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, roomRule, ray);
-  // (The city's: its plaza's air and its well's, and for a ray the further
-  // of the pieces the point is in; then its pockets.)
-  setPoint(L, f, dg);
-  if (ray) P.aim(ray);
-  const wl = id[1] === ROW_ID ? wellOf(id, seed) : null;
-  const w = wl ? wellAir(L, f, wl) : NONE, p = plaza(L, f, id);
-  P.through(ray, p, () => plaza(L, f, id));
-  if (wl) P.through(ray, w, () => wellAir(L, f, wl));
-  return Math.min(p, w, cityPockets(L, f, fromMiddle(id), Math.min(p, w), ray));
-}
 
-// Where a first visit starts, in the middle city cell (lattice units): on
-// the plaza, near the building, wherever nothing stands.
-const START = (() => {
-  const free = (x, z) => SOLIDS.every((s) => [G, G + 1, G + 2].every((y) => cellOut(s, [x, y, z])));
-  for (let r = 0; r < R; r++)
-    for (let x = C - r; x <= C + r; x++)
-      for (const z of [C - r, C + r]) {
-        if (x < 0 || z < 0 || x >= R || z >= R) continue;
-        if (free(x, z) && free(x - 1, z) && free(x + 1, z) && free(x, z - 1) && free(x, z + 1)) return [x, z];
-      }
-  return [C, C];
-})();
+  // Where a first visit starts, in the middle city cell (lattice units): on
+  // the plaza, near the building, wherever nothing stands.
+  const START = (() => {
+    const free = (x, z) => SOLIDS.every((s) => [G, G + 1, G + 2].every((y) => cellOut(s, [x, y, z])));
+    for (let r = 0; r < R; r++)
+      for (let x = C - r; x <= C + r; x++)
+        for (const z of [C - r, C + r]) {
+          if (x < 0 || z < 0 || x >= R || z >= R) continue;
+          if (free(x, z) && free(x - 1, z) && free(x + 1, z) && free(x, z - 1) && free(x, z + 1)) return [x, z];
+        }
+    return [C, C];
+  })();
 
-const arcology = {
-  ...halls,
-  name: 'arcology',
-  glsl: hallsGlsl + glsl,
-  cellAir,
-  roomRule,
-  volume: VOLUME,
-  // What fraction of a surface opens at a level (see the detail asked after
-  // in main, shaders.js):
-  // the halls' where they are; in the building's own cells, its relief (only
-  // where the surface is relief) and its openings (only where it is upright,
-  // as the faces with them are), in the surface's own shade; elsewhere there,
-  // none (and so nothing finer).
-  openAreaGlsl: `float openAreaAt(int level, ivec3 id, ivec3 up, bool skin, vec3 n) {
+  const arcology = {
+    ...halls,
+    name: 'arcology',
+    glsl: hallsGlsl + glsl,
+    cellAir,
+    roomRule,
+    volume: VOLUME,
+    // What fraction of a surface opens at a level (see the detail asked after
+    // in main, shaders.js):
+    // the halls' where they are; in the building's own cells, its relief (only
+    // where the surface is relief) and its openings (only where it is upright,
+    // as the faces with them are), in the surface's own shade; elsewhere there,
+    // none (and so nothing finer).
+    openAreaGlsl: `float openAreaAt(int level, ivec3 id, ivec3 up, bool skin, vec3 n) {
   gOwnInk = false;
   if (level != ${CITY + 1}) return OPEN_AREA;
   uvec4 m = relief(id, up);
@@ -2712,38 +2717,44 @@ const arcology = {
   gOwnInk = true;
   return (kind == ${SKIN}u && skin) || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;
 }`,
-  tables: [{ name: 'uRidgeRows', ...RIDGE_ROWS }],
-  // The building's planes' normals, carried exactly across levels (see
-  // Position.levels): the city's level asks after them for its solids, the
-  // next for its pockets.
-  slants: SLANTS,
-  // A plaza's air reaches up out of its cell, and its longest way runs
-  // corner to corner across the cells either side.
-  maxInterior: 0.65,
-  longestWay: 6,
+    tables: [{ name: 'uRidgeRows', ...RIDGE_ROWS }],
+    // The building's planes' normals, carried exactly across levels (see
+    // Position.levels): the city's level asks after them for its solids, the
+    // next for its pockets.
+    slants: SLANTS,
+    // A plaza's air reaches up out of its cell, and its longest way runs
+    // corner to corner across the cells either side.
+    maxInterior: 0.65,
+    longestWay: 6,
 
-  // On the plaza, in the city's row; coarser than that, all is solid, so
-  // anywhere does.
-  ancestorDigit(level) {
-    if (level > 0) return halls.ancestorDigit(level);
-    if (level === 0) return [C, 4, C];
-    if (level === CITY + 1) return [START[0], G, START[1]];
-    if (level === CITY) return [C, ROW, C];
-    return [C, C, C];
-  },
-  // The sky starts at the top of the city's rows: ROWS * R cells of level
-  // CITY + 1 above the bottom of the first's cell, which at the defaults is
-  // G under it.
-  skyPlane(j) {
-    return j === CITY + 1 ? ROWS * R : j > CITY + 1 ? 0 : arcology.ancestorDigit(j)[1];
-  },
-  // Finer than the city, it is halls, whose ways the tour can plan (and
-  // from the plaza, the ways in are ENTRANCES).
-  planned: (level) => level > CITY,
-  entrances: { level: CITY + 1, list: ENTRANCES },
-  // Nothing stands higher than the building (in level-0 cells).
-  skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),
-  // Sunlight comes down into it as far as the plaza (in level-0 cells).
-  sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
-};
-export default arcology;
+    // On the plaza, in the city's row; coarser than that, all is solid, so
+    // anywhere does.
+    ancestorDigit(level) {
+      if (level > 0) return halls.ancestorDigit(level);
+      if (level === 0) return [C, 4, C];
+      if (level === CITY + 1) return [START[0], G, START[1]];
+      if (level === CITY) return [C, ROW, C];
+      return [C, C, C];
+    },
+    // The sky starts at the top of the city's rows: ROWS * R cells of level
+    // CITY + 1 above the bottom of the first's cell, which at the defaults is
+    // G under it.
+    skyPlane(j) {
+      return j === CITY + 1 ? ROWS * R : j > CITY + 1 ? 0 : arcology.ancestorDigit(j)[1];
+    },
+    // Finer than the city, it is halls, whose ways the tour can plan (and
+    // from the plaza, the ways in are ENTRANCES).
+    planned: (level) => level > CITY,
+    entrances: { level: CITY + 1, list: ENTRANCES },
+    // Nothing stands higher than the building (in level-0 cells).
+    skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),
+    // Sunlight comes down into it as far as the plaza (in level-0 cells).
+    sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
+  };
+  return { arcology, VOLUME, _V2 };
+}
+
+// The arcology as it is (and its table and parts, for the checks).
+const made = makeArcology();
+export const { VOLUME, _V2 } = made;
+export default made.arcology;
