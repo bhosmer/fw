@@ -863,17 +863,14 @@ export function makeArcology(set) {
   })();
   // (Its lots, plans, densities and kinds of building: see TOWN_DEF.)
   const TOWN_PLANS = def.town.plans, TOWN_PICK = def.town.pick, TOWN_DENSITY = def.town.density, TOWN_SHAPES = townShapes(def.town.types);
+  // (The plans' lots in one list, each plan's first (and one past the last),
+  // and the town's height in units: as both languages read them.)
+  const TOWN_LOT = TOWN_PLANS.flat(), TOWN_PLAN_AT = TOWN_PLANS.map((_, i) => TOWN_PLANS.slice(0, i).flat().length).concat([TOWN_LOT.length]), TOWN_H = TOWN ? TOWN.H : 1;
   // Box k of a lot r, by the lot's hashes h, h2 and its cluster's density
   // (see town.js, whence the shader's too).
-  const townShape = townShapeJs(TOWN ? TOWN.H : 1, false, def.town.types);
-  // A box's distance at p.
+  const townShape = townShapeJs(TOWN_H, false, def.town.types);
+  // A box's distance at p (for the tests: the town asks boxSolid).
   const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
-  // A cell's plan and its density (by its cluster, two cells square), by its hashes.
-  function townCell() {
-    const hc = hashCell([fdiv(CELL.b[0], 2), fdiv(CELL.b[2], 2), 9], TOWN_SALT), hl = hashCell([CELL.b[0], CELL.b[2], 11], TOWN_SALT);
-    return { dens: TOWN_DENSITY[hc % TOWN_DENSITY.length], plan: TOWN_PLANS[TOWN_PICK[hl % TOWN_PICK.length]] };
-  }
-  const lotHash = (n, salt) => hashCell([CELL.b[0] * 16 + n, CELL.b[2], salt], TOWN_SALT);
   const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
   const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   // (For the checks in .claude/verify.)
@@ -1239,17 +1236,15 @@ export function makeArcology(set) {
     // it is: see pieces.js). Otherwise the text is both's: in JavaScript
     // float, int, uint, ceil, min and max are as GLSL has them, vectors are
     // arrays, and whole numbers are as twin.unsigned makes them.)
-    const { fn, decl, loop, D, X, RAY } = twin.writer(js);
+    const { fn, decl, loop, D, RAY, fade, indent: ins, keep: keepX } = twin.writer(js);
     const [CELLB, OPEN, CROSS, AXIS, IN, OUT] = js ? ['CELL.b', 'CELL.open', 'CELL.cross', 'CELL.axis', 'S.in', 'S.out'] : ['gCellB', 'gCarveOpen', 'gCarveCross', 'gAxis', 'gIn', 'gOut'];
     const ZERO = js ? '[0, 0, 0]' : 'vec3(0.0)', IN_N = js ? '[S.inx, S.iny, S.inz]' : 'gInN';
     const xyz = (v) => (js ? v : `${v}.xyz`), neg = (v) => (js ? `[-${v}[0], -${v}[1], -${v}[2]]` : `-${v}`);
     const arg = (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`);
     const dot = (v, w) => (js ? `(${[0, 1, 2].map((a) => `${v}[${a}] * ${w === 'gDir' ? `S.d${'xyz'[a]}` : `${w}[${a}]`}`).join(' + ')})` : `dot(${v}.xyz, ${w})`);
-    const fade = (...lines) => (js ? [] : lines);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (The ray's reach and normal kept, where it goes further.)
     const keep = (x, n) => (js ? `if (ray && ${x} > ray.reach) { ray.reach = ${x}; [ray.nx, ray.ny, ray.nz] = ${n}; }` : `if (${x} > reach) { reach = ${x}; nrm = ${n}; }`);
-    const ins = (lines, by = '  ') => lines.map((l) => by + l);
     // (A loop of one statement, without braces.)
     const each = (v, from, to) => loop(v, from, to).slice(0, -2);
 
@@ -1392,7 +1387,7 @@ export function makeArcology(set) {
                 'if (pass == 0) {',
                 ...ins([decl('float', `gd = ${D}`), 'gw = min(gw, gd);', `if (!ray || gd${js ? '' : ' + gO'} > 0.0) break;`, `${RAY} = true;`]),
                 '} else {',
-                ...ins([`${RAY} = false;`, keepX()]),
+                ...ins([`${RAY} = false;`, keepX]),
                 '}',
               ]),
               '}',
@@ -1408,11 +1403,6 @@ export function makeArcology(set) {
       ]),
       '}',
     ];
-    // (In windowAir, the ray's reach where it leaves the piece.)
-    function keepX() {
-      return js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : `if (${X} > reach) { reach = ${X}; nrm = gN; }`;
-    }
-
     // How far outside plane k of the solids the point is, one level finer
     // (base: its cell's corner from the building's origin, in that level's
     // units): the whole part in whole numbers, the rest (f) in floats, as
@@ -1523,7 +1513,123 @@ export function makeArcology(set) {
     const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'm', 'base', 'ht', 'g', 'gu', 'gv', 'gb', 'p'])) : lines.join('\n'));
     return { cell: text(cell), solidOut: js ? null : text(solidOut), windowAir: text(windowAir), openings: text(openings) };
   }
-  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false);
+  // The town on the roof band's top, in either language (js: true, or GLSL),
+  // written once: a box standing in it as a solid (boxSolid), and its air in
+  // a cell (townAir). (The JavaScript's, made into functions below; the
+  // cell's corner, CELL.b, as relief sets it; a ray aimed already, by
+  // reliefCell, as the shader's comes with its reach and normal started.)
+  function townPieces(js) {
+    // (Where the languages differ: what twin.writer writes; a vector (the
+    // point, an axis's normal, a box's lot: a vec3, or an array); a box of
+    // the town (out lo and hi, or an array: see townShape in town.js); the
+    // ray's reach and normal (inout, or the ray's own object); the corner's
+    // root a half (H2 in JavaScript, as twin.planes has it); and the fade
+    // with distance, the shader's alone. Otherwise the text is both's: in
+    // JavaScript float, min and max are as GLSL has them, vectors are
+    // arrays, and whole numbers are as twin.unsigned makes them.)
+    const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep } = twin.writer(js);
+    const CB = js ? 'CELL.b' : 'gCellB';
+    const E = (a, sign = '') => (js ? [0, 1, 2].map((b) => (b === a ? `${sign}1` : '0')).join(', ') : `${sign}${['EX', 'EY', 'EZ'][a]}`);
+    // (Box k of lot r, if it has one, then what to do with it, given its
+    // corners.)
+    const shape = (then) => (js ? `{ const b = townShape(h, h2, r, dens, k); if (b) ${then('[b[0], b[1], b[2]]', '[b[3], b[4], b[5]]')} }` : `if (townShape(h, h2, r, dens, k, lo, hi)) ${then('lo', 'hi')}`);
+    const lotHash = (n, salt) => `hashCell(${iv([`${CB}.x * 16 + ${n} - l0`, `${CB}.z`, salt])}, TOWN_SALT)`;
+    const box = [
+      '// A box of the town as a solid at p (its distance; for a ray, where it strikes).',
+      fn('float', 'boxSolid', ['vec3 lo', 'vec3 hi', 'vec3 p']),
+      '  solidPiece();',
+      ...['x', 'y', 'z'].map((c, a) => `  solidPlane(lo.${c} - p.${c}, ${E(a, '-')}); solidPlane(p.${c} - hi.${c}, ${E(a)});`),
+      '  return solidDone();',
+      '}',
+    ];
+    const air = [
+      "// The town's air in its cell (w its first number): over the floor (the",
+      "// cell's bottom), to its top, cut at the sides it does not run on across (a",
+      '// corner too, aslant, where its two sides run on and the cell across it does',
+      "// not), with each lot's boxes standing in it. Its distance asks only the",
+      "// point's own lot (the others' boxes are TOWN_MARGIN inside theirs); a ray,",
+      '// every lot it could reach before it leaves. As the openings, worked out',
+      '// unshrunk (gO, gA 0: the caller takes gO off again), fading instead by its',
+      "// floor rising to the slab's top with distance, as the level fades (so that",
+      '// a capped distance still says whether the point is in its air).',
+      js ? 'function townAir(L, f, w, ray) {' : 'float townAir(ivec3 L, vec3 f, uint w, bool ray, inout float reach, inout vec3 nrm) {',
+      ...ins([
+        js ? 'const p = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 p = vec3(L) + f;',
+        decl('uint', 'open = (w >> uint(OPEN_AT)) & 63u, corner = (w >> uint(TOWN_CORNER_AT)) & 15u'),
+        decl('bool', `r0 = ${RAY}`),
+        decl('float', `t = 1e9${js ? '' : ', fo = gO, fa = gA'}`, true),
+        ...fade(
+          'gO = 0.0; gA = 0.0;',
+          'float own = (gScale - 1.0 / LOD_HI) * LOD_K;',
+          'float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate : 0.0;',
+        ),
+        loop('pass', 0, 2),
+        ...ins([
+          `${RAY} = pass == 1;`,
+          'airPiece();',
+          ...fade('gA = fq * float(TOWN_H);'),
+          `airPlane(${js ? '-p.y' : 'fp * float(TOWN_H) - p.y'}, ${E(1, '-')});`,
+          ...fade('gA = 0.0;'),
+          `airPlane(p.y - float(R), ${E(1)});`,
+          `airPlane(p.x - float(R) - ((open & 1u) != 0u ? TOWN_MARGIN : 0.0), ${E(0)});`,
+          `airPlane(-p.x - ((open & 2u) != 0u ? TOWN_MARGIN : 0.0), ${E(0, '-')});`,
+          `airPlane(p.z - float(R) - ((open & 16u) != 0u ? TOWN_MARGIN : 0.0), ${E(2)});`,
+          `airPlane(-p.z - ((open & 32u) != 0u ? TOWN_MARGIN : 0.0), ${E(2, '-')});`,
+          loop('c', 0, 4),
+          ...ins([
+            decl('float', 'sx = c < 2 ? 1.0 : -1.0, sz = (c & 1) == 0 ? 1.0 : -1.0'),
+            'if ((open & (sx > 0.0 ? 1u : 2u)) != 0u && (open & (sz > 0.0 ? 16u : 32u)) != 0u && (corner & (1u << uint(c))) == 0u)',
+            `  airPlane((sx * (p.x - (sx > 0.0 ? float(R) : 0.0)) + sz * (p.z - (sz > 0.0 ? float(R) : 0.0))) * ${js ? 'H2' : '0.70710678'}, ${js ? 'sx * H2, 0, sz * H2' : 'vec3(sx, 0.0, sz) * 0.70710678'});`,
+          ]),
+          '}',
+          decl('float', `box = ${D}`),
+          decl('uint', `hc = hashCell(${iv([`fdiv(${CB}.x, 2)`, `fdiv(${CB}.z, 2)`, '9'])}, TOWN_SALT), hl = hashCell(${iv([`${CB}.x`, `${CB}.z`, '11'])}, TOWN_SALT)`),
+          decl('uint', `dens = ${TOWN_DENSITY.map((d, i) => (i < TOWN_DENSITY.length - 1 ? `hc % ${TOWN_DENSITY.length}u == ${i}u ? ${d}u : ` : `${d}u`)).join('')}`),
+          decl('int', `plan = TOWN_PICK[hl % ${TOWN_PICK.length}u], l0 = TOWN_PLAN_AT[plan], l1 = TOWN_PLAN_AT[plan + 1]`),
+          ...(js ? [] : ['vec3 lo, hi;']),
+          'if (pass == 0) {',
+          ...ins([
+            "// (The point's own lot: the first holding it.)",
+            "// (A lot at the cell's far side holds the side too: p can be on it.)",
+            decl('int', 'n = l1 - 1', true),
+            `for (${js ? 'let' : 'int'} l = l0; l < l1; l++) if ((p.x < float(TOWN_LOT[l].z) || TOWN_LOT[l].z == R) && (p.z < float(TOWN_LOT[l].w) || TOWN_LOT[l].w == R)) { n = l; break; }`,
+            decl('ivec4', 'r = TOWN_LOT[n]'),
+            decl('uint', `h = ${lotHash('n', '7')}, h2 = ${lotHash('n', '8')}`),
+            decl('float', 'd = min(min(p.x - float(r.x), float(r.z) - p.x), min(p.z - float(r.y), float(r.w) - p.z)) + TOWN_MARGIN', true),
+            `for (${js ? 'let' : 'int'} k = 0; k < TOWN_SHAPES; k++)`,
+            `  ${shape((lo, hi) => `d = min(d, boxSolid(${lo}, ${hi}, p));`)}`,
+            't = max(box, -d);',
+            'if (!ray || t > 0.0) break;',
+          ]),
+          '} else {',
+          ...ins([
+            loop('l', 'l0', 'l1'),
+            ...ins([
+              decl('ivec4', 'r = TOWN_LOT[l]'),
+              js
+                ? 'const off = [max(float(r.x) - p.x, p.x - float(r.z)), max(0.0 - p.y, p.y - float(TOWN_H)), max(float(r.y) - p.z, p.z - float(r.w))];'
+                : 'vec3 off = max(vec3(float(r.x), 0.0, float(r.y)) - p, p - vec3(float(r.z), float(TOWN_H), float(r.w)));',
+              `if (max(max(off.x, off.y), off.z) >= ${X}) continue;`,
+              decl('uint', `h = ${lotHash('l', '7')}, h2 = ${lotHash('l', '8')}`),
+              `for (${js ? 'let' : 'int'} k = 0; k < TOWN_SHAPES; k++)`,
+              `  ${shape((lo, hi) => `boxSolid(${lo}, ${hi}, p);`)}`,
+            ]),
+            '}',
+            keep,
+          ]),
+          '}',
+        ]),
+        '}',
+        `${RAY} = r0;`,
+        ...fade('gO = fo; gA = fa;'),
+        'return t;',
+      ]),
+      '}',
+    ];
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['p', 'lo', 'hi', 'off', 'r', 'CELL.b'])) : lines.join('\n'));
+    return { box: text(box), air: text(air) };
+  }
+  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false);
 
   const glsl = /* glsl */ `
 const int G = ${G};
@@ -1544,10 +1650,10 @@ const ivec3 ORIGIN = ivec3(${ORIGIN.join(', ')});
 const int FACE_AT = ${FACE_AT}, OPEN_AT = ${OPEN_AT}, CROSS_AT = ${CROSS_AT};
 // (The town: see TOWN in the JS.)
 const int TOWN_AT = ${TOWN_AT}, TOWN_CORNER_AT = ${TOWN_CORNER_AT}, TOWN_SHAPES = ${TOWN_SHAPES};
-const ivec4 TOWN_LOT[${TOWN_PLANS.flat().length}] = ivec4[${TOWN_PLANS.flat().length}](${TOWN_PLANS.flat().map((r) => `ivec4(${r.join(', ')})`).join(', ')});
-const int TOWN_PLAN_AT[${TOWN_PLANS.length + 1}] = int[${TOWN_PLANS.length + 1}](${TOWN_PLANS.map((_, i) => TOWN_PLANS.slice(0, i).flat().length).concat([TOWN_PLANS.flat().length]).join(', ')});
+const ivec4 TOWN_LOT[${TOWN_LOT.length}] = ivec4[${TOWN_LOT.length}](${TOWN_LOT.map((r) => `ivec4(${r.join(', ')})`).join(', ')});
+const int TOWN_PLAN_AT[${TOWN_PLAN_AT.length}] = int[${TOWN_PLAN_AT.length}](${TOWN_PLAN_AT.join(', ')});
 const int TOWN_PICK[${TOWN_PICK.length}] = int[${TOWN_PICK.length}](${TOWN_PICK.join(', ')});
-const int TOWN_H = ${TOWN ? TOWN.H : 1};
+const int TOWN_H = ${TOWN_H};
 const uint TOWN_SALT = ${TOWN_SALT}u;
 const float TOWN_MARGIN = ${glf(TOWN_MARGIN)};
 const uint POCKET_SALT = ${POCKET_SALT}u, ROW_SALT = ${ROW_SALT}u, DEPTH_SALT = ${DEPTH_SALT}u;
@@ -2083,81 +2189,9 @@ ${OPEN_GLSL.openings}
 // JS's is).
 ${townShapeGlsl(def.town.types)}
 
-// A box of the town as a solid at p (its distance; for a ray, where it strikes).
-float boxSolid(vec3 lo, vec3 hi, vec3 p) {
-  solidPiece();
-  solidPlane(lo.x - p.x, -EX); solidPlane(p.x - hi.x, EX);
-  solidPlane(lo.y - p.y, -EY); solidPlane(p.y - hi.y, EY);
-  solidPlane(lo.z - p.z, -EZ); solidPlane(p.z - hi.z, EZ);
-  return solidDone();
-}
+${TOWN_GLSL.box}
 
-// The town's air in its cell (w its first number): over the floor (the
-// cell's bottom), to its top, cut at the sides it does not run on across (a
-// corner too, aslant, where its two sides run on and the cell across it does
-// not), with each lot's boxes standing in it. Its distance asks only the
-// point's own lot (the others' boxes are TOWN_MARGIN inside theirs); a ray,
-// every lot it could reach before it leaves. As the openings, worked out
-// unshrunk (gO, gA 0: the caller takes gO off again), fading instead by its
-// floor rising to the slab's top with distance, as the level fades (so that
-// a capped distance still says whether the point is in its air).
-float townAir(ivec3 L, vec3 f, uint w, bool ray, inout float reach, inout vec3 nrm) {
-  vec3 p = vec3(L) + f;
-  uint open = (w >> uint(OPEN_AT)) & 63u, corner = (w >> uint(TOWN_CORNER_AT)) & 15u;
-  bool r0 = gRay;
-  float t = 1e9, fo = gO, fa = gA;
-  gO = 0.0; gA = 0.0;
-  float own = (gScale - 1.0 / LOD_HI) * LOD_K;
-  float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate : 0.0;
-  for (int pass = 0; pass < 2; pass++) {
-    gRay = pass == 1;
-    airPiece();
-    gA = fq * float(TOWN_H);
-    airPlane(fp * float(TOWN_H) - p.y, -EY);
-    gA = 0.0;
-    airPlane(p.y - float(R), EY);
-    airPlane(p.x - float(R) - ((open & 1u) != 0u ? TOWN_MARGIN : 0.0), EX);
-    airPlane(-p.x - ((open & 2u) != 0u ? TOWN_MARGIN : 0.0), -EX);
-    airPlane(p.z - float(R) - ((open & 16u) != 0u ? TOWN_MARGIN : 0.0), EZ);
-    airPlane(-p.z - ((open & 32u) != 0u ? TOWN_MARGIN : 0.0), -EZ);
-    for (int c = 0; c < 4; c++) {
-      float sx = c < 2 ? 1.0 : -1.0, sz = (c & 1) == 0 ? 1.0 : -1.0;
-      if ((open & (sx > 0.0 ? 1u : 2u)) != 0u && (open & (sz > 0.0 ? 16u : 32u)) != 0u && (corner & (1u << uint(c))) == 0u)
-        airPlane((sx * (p.x - (sx > 0.0 ? float(R) : 0.0)) + sz * (p.z - (sz > 0.0 ? float(R) : 0.0))) * 0.70710678, vec3(sx, 0.0, sz) * 0.70710678);
-    }
-    float box = gD;
-    uint hc = hashCell(ivec3(fdiv(gCellB.x, 2), fdiv(gCellB.z, 2), 9), TOWN_SALT), hl = hashCell(ivec3(gCellB.x, gCellB.z, 11), TOWN_SALT);
-    uint dens = ${TOWN_DENSITY.map((d, i) => (i < TOWN_DENSITY.length - 1 ? `hc % ${TOWN_DENSITY.length}u == ${i}u ? ${d}u : ` : `${d}u`)).join('')};
-    int plan = TOWN_PICK[hl % ${TOWN_PICK.length}u], l0 = TOWN_PLAN_AT[plan], l1 = TOWN_PLAN_AT[plan + 1];
-    vec3 lo, hi;
-    if (pass == 0) {
-      // (The point's own lot: the first holding it.)
-      // (A lot at the cell's far side holds the side too: p can be on it.)
-      int n = l1 - 1;
-      for (int l = l0; l < l1; l++) if ((p.x < float(TOWN_LOT[l].z) || TOWN_LOT[l].z == R) && (p.z < float(TOWN_LOT[l].w) || TOWN_LOT[l].w == R)) { n = l; break; }
-      ivec4 r = TOWN_LOT[n];
-      uint h = hashCell(ivec3(gCellB.x * 16 + n - l0, gCellB.z, 7), TOWN_SALT), h2 = hashCell(ivec3(gCellB.x * 16 + n - l0, gCellB.z, 8), TOWN_SALT);
-      float d = min(min(p.x - float(r.x), float(r.z) - p.x), min(p.z - float(r.y), float(r.w) - p.z)) + TOWN_MARGIN;
-      for (int k = 0; k < TOWN_SHAPES; k++)
-        if (townShape(h, h2, r, dens, k, lo, hi)) d = min(d, boxSolid(lo, hi, p));
-      t = max(box, -d);
-      if (!ray || t > 0.0) break;
-    } else {
-      for (int l = l0; l < l1; l++) {
-        ivec4 r = TOWN_LOT[l];
-        vec3 off = max(vec3(float(r.x), 0.0, float(r.y)) - p, p - vec3(float(r.z), float(TOWN_H), float(r.w)));
-        if (max(max(off.x, off.y), off.z) >= gX) continue;
-        uint h = hashCell(ivec3(gCellB.x * 16 + l - l0, gCellB.z, 7), TOWN_SALT), h2 = hashCell(ivec3(gCellB.x * 16 + l - l0, gCellB.z, 8), TOWN_SALT);
-        for (int k = 0; k < TOWN_SHAPES; k++)
-          if (townShape(h, h2, r, dens, k, lo, hi)) boxSolid(lo, hi, p);
-      }
-      if (gX > reach) { reach = gX; nrm = gN; }
-    }
-  }
-  gRay = r0;
-  gO = fo; gA = fa;
-  return t;
-}
+${TOWN_GLSL.air}
 
 // A level-(CITY + 1) cell the table says something of: deep in the
 // building, the halls (d, reach and nrm being what they say of it), cut off
@@ -2371,6 +2405,12 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', ...Object.keys(OPEN_ROWS),
     `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\nreturn { openLo, openHi, openings };\n//# sourceURL=openingsPieces.gen.js`,
   )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, ...Object.values(OPEN_ROWS));
+  // The town in JavaScript (see townPieces), made into functions.
+  const TOWN_JS = townPieces(true);
+  const { townAir } = new Function(
+    'P', 'CELL', 'R', 'H2', 'hashCell', 'fdiv', 'townShape', 'TOWN_LOT', 'TOWN_PLAN_AT', 'TOWN_PICK', 'TOWN_H', 'TOWN_SALT', 'TOWN_MARGIN', 'TOWN_SHAPES', 'OPEN_AT', 'TOWN_CORNER_AT',
+    `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
+  )(P, CELL, R, Math.SQRT1_2, hashCell, fdiv, townShape, TOWN_LOT, TOWN_PLAN_AT, TOWN_PICK, TOWN_H, TOWN_SALT, TOWN_MARGIN, TOWN_SHAPES, OPEN_AT, TOWN_CORNER_AT);
   // The least of piece(), called once for each of the pieces (one level finer:
   // three where the cell's pockets run on as three).
   function eachPiece(lv, piece) {
@@ -2679,66 +2719,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     CELL.cross = !!((clip >>> CROSS_AT) & 1);
     const t = town ? townAir(L, f, m, ray) : NONE;
     return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
-  }
-
-  // See townAir in the shader.
-  // (ray: as in hallsAir, aimed already.)
-  function townAir(L, f, m, ray) {
-    const p = [0, 1, 2].map((a) => L[a] + f[a]), open = (m >>> OPEN_AT) & 63, corner = (m >>> TOWN_CORNER_AT) & 15;
-    const sides = () => {
-      P.airPiece();
-      P.airPlane(-p[1], 0, -1, 0);
-      P.airPlane(p[1] - R, 0, 1, 0);
-      P.airPlane(p[0] - R - (open & 1 ? TOWN_MARGIN : 0), 1, 0, 0);
-      P.airPlane(-p[0] - (open & 2 ? TOWN_MARGIN : 0), -1, 0, 0);
-      P.airPlane(p[2] - R - (open & 16 ? TOWN_MARGIN : 0), 0, 0, 1);
-      P.airPlane(-p[2] - (open & 32 ? TOWN_MARGIN : 0), 0, 0, -1);
-      TOWN_CORNERS.forEach(([sx, sz], c) => {
-        if (open & (sx > 0 ? 1 : 2) && open & (sz > 0 ? 16 : 32) && !(corner & (1 << c)))
-          P.airPlane((sx * (p[0] - (sx > 0 ? R : 0)) + sz * (p[2] - (sz > 0 ? R : 0))) * Math.SQRT1_2, sx * Math.SQRT1_2, 0, sz * Math.SQRT1_2);
-      });
-      return P.S.d;
-    };
-    const box = sides();
-    // (The point's own lot: the first holding it.)
-    const { dens, plan } = townCell();
-    // (A lot at the cell's far side holds the side too: p can be on it.)
-    let n = plan.findIndex((r) => (p[0] < r[2] || r[2] === R) && (p[2] < r[3] || r[3] === R));
-    const r = plan[n], h = lotHash(n, 7), h2 = lotHash(n, 8);
-    let d = Math.min(p[0] - r[0], r[2] - p[0], p[2] - r[1], r[3] - p[2]) + TOWN_MARGIN;
-    for (let k = 0; k < TOWN_SHAPES; k++) {
-      const b = townShape(h, h2, r, dens, k);
-      if (b) d = Math.min(d, boxDist(b, p));
-    }
-    const t = Math.max(box, -d);
-    if (ray && t <= 0) {
-      // (A ray: every lot it could reach before it leaves.)
-      P.S.ray = true;
-      sides();
-      plan.forEach((r, l) => {
-        if (Math.max(r[0] - p[0], -p[1], r[1] - p[2], p[0] - r[2], p[1] - TOWN.H, p[2] - r[3]) >= P.S.x) return;
-        const h = lotHash(l, 7), h2 = lotHash(l, 8);
-        for (let k = 0; k < TOWN_SHAPES; k++) {
-          const b = townShape(h, h2, r, dens, k);
-          if (b) boxSolid(b, p);
-        }
-      });
-      P.S.ray = false;
-      if (P.S.x > ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
-    }
-    return t;
-  }
-
-  // See boxSolid in the shader.
-  function boxSolid([x0, y0, z0, x1, y1, z1], p) {
-    P.solidPiece();
-    P.solidPlane(x0 - p[0], -1, 0, 0);
-    P.solidPlane(p[0] - x1, 1, 0, 0);
-    P.solidPlane(y0 - p[1], 0, -1, 0);
-    P.solidPlane(p[1] - y1, 0, 1, 0);
-    P.solidPlane(z0 - p[2], 0, 0, -1);
-    P.solidPlane(p[2] - z1, 0, 0, 1);
-    return P.solidDone();
   }
 
   // (ray: see hallsAir. Every cell answers it.)

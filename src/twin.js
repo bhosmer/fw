@@ -317,7 +317,11 @@ export const reask = (js, d, ask) =>
 // its parameters' types; a declaration (changing: one that changes after);
 // a counted loop; a number, as a float (in JavaScript exactly, -0 too);
 // a vector of floats as a function's argument (in JavaScript, three
-// arguments: so only in a call) and one of whole numbers (an array); a piece's distance (D), no piece (NOTHING), and the
+// arguments: so only in a call) and one of whole numbers (an array); lines
+// for the shader alone (fade: its fading with distance; the JavaScript's
+// world is as it is, see pieces.js); lines indented; where a ray's piece of
+// air ends, kept if further (keep: the reach and normal inout in GLSL, the
+// ray's object in JavaScript); a piece's distance (D), no piece (NOTHING), and the
 // ray's state (RAY: whether there is one; X: how far it goes in the piece).
 export function writer(js) {
   return {
@@ -327,6 +331,9 @@ export function writer(js) {
     num: (x) => (js ? (Object.is(x, -0) ? '-0' : String(x)) : glf(x)),
     vec3Arg: (xs) => (js ? xs.join(', ') : `vec3(${xs.join(', ')})`),
     ivec3: (xs) => (js ? `[${xs.join(', ')}]` : `ivec3(${xs.join(', ')})`),
+    fade: (...lines) => (js ? [] : lines),
+    indent: (lines, by = '  ') => lines.map((l) => by + l),
+    keep: js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : 'if (gX > reach) { reach = gX; nrm = gN; }',
     D: js ? 'S.d' : 'gD',
     NOTHING: js ? 'NONE' : '1e9',
     RAY: js ? 'S.ray' : 'gRay',
@@ -340,7 +347,7 @@ export const AS_GLSL = 'const float = (x) => x, abs = Math.abs, int = (x) => x |
 // the names given, and of any element of a table (L.x, SLO[k].y, GUP[k].w),
 // as an element (L[0], SLO[k][1], GUP[k][3]).
 export function arrays(text, names) {
-  const name = new RegExp(`(${[...names.map((n) => `\\b${n}`), '\\]'].join('|')})\\.([xyzw])\\b`, 'g');
+  const name = new RegExp(`(${[...names.map((n) => `\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), '\\]'].join('|')})\\.([xyzw])\\b`, 'g');
   return text.replace(name, (_, v, a) => `${v}[${'xyzw'.indexOf(a)}]`);
 }
 // And whole numbers as JavaScript has them: GLSL's unsigned literals (7u)
