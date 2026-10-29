@@ -102,11 +102,16 @@ export const HALLS = {
   // In a room: below none, nothing; then piers, benches; above, a kiosk.
   furniture: { none: 0.4, piers: 0.62, benches: 0.82 },
 };
-const { salt, wall, slab, furniture: stands } = HALLS;
+// The halls, made from a spec like HALLS (by default, it): their space, and
+// the parts other spaces build on (see the end), so that a variant of them
+// is another call of this.
+export function makeHalls(spec = HALLS) {
+  const HALLS = spec;
+  const { salt, wall, slab, furniture: stands } = HALLS;
 
-// (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
-// cell, whatever its level.)
-export const hallsGlsl = /* glsl */ `
+  // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
+  // cell, whatever its level.)
+  const hallsGlsl = /* glsl */ `
 const int M = ${M};
 const int HLO = ${HLO};
 const int HHI = R - 2 * M;
@@ -334,278 +339,287 @@ float hallsCell(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 
 }
 `;
 
-// The same cell, in JavaScript, piece for piece (see pieces.js). The flight
-// asks this every frame (asking the GPU would mean waiting for it), so it
-// must agree with the GLSL above: the tests compare the two.
-const C = R / 2;
-const HHI = R - 2 * M;
-const bay = (u, fu) => Math.min(2, Math.max(0, Math.floor((u - M + fu) / 6)));
-const H2 = Math.SQRT1_2;
+  // The same cell, in JavaScript, piece for piece (see pieces.js). The flight
+  // asks this every frame (asking the GPU would mean waiting for it), so it
+  // must agree with the GLSL above: the tests compare the two.
+  const C = R / 2;
+  const HHI = R - 2 * M;
+  const bay = (u, fu) => Math.min(2, Math.max(0, Math.floor((u - M + fu) / 6)));
+  const H2 = Math.SQRT1_2;
 
-function wallShape(h, u, fu) {
-  const t = h01(h);
-  if (t < wall.none) return null;
-  if (t < wall.door) return { cu: C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5, hw: 2, y0: 0, sp: 5, top: 1000 };
-  if (t < wall.windows) return { cu: M + 3 + 6 * bay(u, fu), hw: 1, y0: 4, sp: 3, top: 1000 };
-  if (t < wall.arcade) return { cu: M + 3 + 6 * bay(u, fu), hw: 2, y0: 0, sp: 6, top: 1000 };
-  return { cu: C, hw: C - M, y0: 0, sp: 1000, top: HLO };
-}
-
-// (ea and eu: the axes, 0 to 2, of the wall's normal and across the wall.)
-function wallOpening(p, a, fa, u, fu, y, fy, high, h, ea, eu) {
-  const s = wallShape(h, u, fu);
-  if (!s) return NONE;
-  const { cu, hw, y0, sp, top } = s;
-  const x = u - cu, yy = y - M - y0;
-  const ux = eu === 0 ? H2 : 0, uz = eu === 2 ? H2 : 0;
-  airPiece();
-  airSpan(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1, ea);
-  airSpan(x, fu, -hw, hw, eu);
-  airSpan(yy, fy, 0, top, 1);
-  airPlane(diag(p, 1, 1, cu, M + y0, sp + hw) * H2, ux, H2, uz);
-  airPlane(diag(p, -1, 1, cu, M + y0, sp + hw) * H2, -ux, H2, -uz);
-  return S.d;
-}
-
-function slabOpening(L, f, up, H, h) {
-  const t = h01(h);
-  if (t < slab.solid) return NONE;
-  const oculus = t < slab.oculus;
-  const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
-  airPiece();
-  airSpan(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1, 1);
-  airSpan(L[0] - C, f[0], -w, w, 0);
-  airSpan(L[2] - C, f[2], -w, w, 2);
-  for (let j = 0; j < 4; j++) {
-    const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
-    airPlane(diag(2, sx, sz, C, C, dg) * H2, sx * H2, 0, sz * H2);
+  function wallShape(h, u, fu) {
+    const t = h01(h);
+    if (t < wall.none) return null;
+    if (t < wall.door) return { cu: C + (Math.floor(((h & 255) * 3) / 256) - 1) * 5, hw: 2, y0: 0, sp: 5, top: 1000 };
+    if (t < wall.windows) return { cu: M + 3 + 6 * bay(u, fu), hw: 1, y0: 4, sp: 3, top: 1000 };
+    if (t < wall.arcade) return { cu: M + 3 + 6 * bay(u, fu), hw: 2, y0: 0, sp: 6, top: 1000 };
+    return { cu: C, hw: C - M, y0: 0, sp: 1000, top: HLO };
   }
-  return S.d;
-}
 
-// Solid things standing in the room, as in the GLSL: for a distance, the
-// one in our quarter of the room is the nearest; a ray may strike any of a
-// set, so then all are asked.
-function furniture(L, f, h, under, over) {
-  const t = h01(h);
-  if (t < stands.none) return NONE;
-  let d = NONE;
-  if (t < stands.piers) {
-    if (Math.max(under, over) >= slab.oculus) return NONE;
-    const nx = beyond(L[0], f[0], C) ? 1 : 0, nz = beyond(L[2], f[2], C) ? 1 : 0;
-    for (let k = 0; k < 4; k++) {
-      const kx = k & 1, kz = k >> 1;
-      if (!S.ray && (kx !== nx || kz !== nz)) continue;
-      const cx = kx === 1 ? 17 : 7, cz = kz === 1 ? 17 : 7;
-      solidPiece();
-      for (let j = 0; j < 4; j++) {
-        const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
-        solidPlane(diag(2, sx, sz, cx, cz, 2) * H2, sx * H2, 0, sz * H2);
+  // (ea and eu: the axes, 0 to 2, of the wall's normal and across the wall.)
+  function wallOpening(p, a, fa, u, fu, y, fy, high, h, ea, eu) {
+    const s = wallShape(h, u, fu);
+    if (!s) return NONE;
+    const { cu, hw, y0, sp, top } = s;
+    const x = u - cu, yy = y - M - y0;
+    const ux = eu === 0 ? H2 : 0, uz = eu === 2 ? H2 : 0;
+    airPiece();
+    airSpan(a, fa, high ? R - M - 1 : -M, high ? R + M : M + 1, ea);
+    airSpan(x, fu, -hw, hw, eu);
+    airSpan(yy, fy, 0, top, 1);
+    airPlane(diag(p, 1, 1, cu, M + y0, sp + hw) * H2, ux, H2, uz);
+    airPlane(diag(p, -1, 1, cu, M + y0, sp + hw) * H2, -ux, H2, -uz);
+    return S.d;
+  }
+
+  function slabOpening(L, f, up, H, h) {
+    const t = h01(h);
+    if (t < slab.solid) return NONE;
+    const oculus = t < slab.oculus;
+    const w = oculus ? 3 : 6, dg = oculus ? 4 : 1000;
+    airPiece();
+    airSpan(L[1], f[1], up ? M + H - 1 : -M, up ? R + M : M + 1, 1);
+    airSpan(L[0] - C, f[0], -w, w, 0);
+    airSpan(L[2] - C, f[2], -w, w, 2);
+    for (let j = 0; j < 4; j++) {
+      const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
+      airPlane(diag(2, sx, sz, C, C, dg) * H2, sx * H2, 0, sz * H2);
+    }
+    return S.d;
+  }
+
+  // Solid things standing in the room, as in the GLSL: for a distance, the
+  // one in our quarter of the room is the nearest; a ray may strike any of a
+  // set, so then all are asked.
+  function furniture(L, f, h, under, over) {
+    const t = h01(h);
+    if (t < stands.none) return NONE;
+    let d = NONE;
+    if (t < stands.piers) {
+      if (Math.max(under, over) >= slab.oculus) return NONE;
+      const nx = beyond(L[0], f[0], C) ? 1 : 0, nz = beyond(L[2], f[2], C) ? 1 : 0;
+      for (let k = 0; k < 4; k++) {
+        const kx = k & 1, kz = k >> 1;
+        if (!S.ray && (kx !== nx || kz !== nz)) continue;
+        const cx = kx === 1 ? 17 : 7, cz = kz === 1 ? 17 : 7;
+        solidPiece();
+        for (let j = 0; j < 4; j++) {
+          const sx = j & 1 ? 1 : -1, sz = j & 2 ? 1 : -1;
+          solidPlane(diag(2, sx, sz, cx, cz, 2) * H2, sx * H2, 0, sz * H2);
+        }
+        d = Math.min(d, solidDone());
       }
-      d = Math.min(d, solidDone());
+      return d;
     }
-    return d;
-  }
-  if (under >= slab.solid) return NONE;
-  if (t < stands.benches) {
-    const turn = ((h >>> 5) & 1) === 1;
-    const p = turn ? L[2] : L[0], q = turn ? L[0] : L[2];
-    const fp = turn ? f[2] : f[0], fq = turn ? f[0] : f[2];
-    const ep = turn ? 2 : 0, eq = turn ? 0 : 2;
-    const np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;
-    for (let k = 0; k < 4; k++) {
-      const kp = k & 1, kq = k >> 1;
-      if (!S.ray && (kp !== np || kq !== nq)) continue;
-      const p0 = kp === 1 ? 13 : 6, q0 = kq === 1 ? 15 : 8;
-      solidPiece();
-      solidSpan(p, fp, p0, p0 + 5, ep);
-      solidSpan(q, fq, q0, q0 + 1, eq);
-      solidSpan(L[1], f[1], M - 1, M + 1, 1);
-      d = Math.min(d, solidDone());
+    if (under >= slab.solid) return NONE;
+    if (t < stands.benches) {
+      const turn = ((h >>> 5) & 1) === 1;
+      const p = turn ? L[2] : L[0], q = turn ? L[0] : L[2];
+      const fp = turn ? f[2] : f[0], fq = turn ? f[0] : f[2];
+      const ep = turn ? 2 : 0, eq = turn ? 0 : 2;
+      const np = beyond(p, fp, C) ? 1 : 0, nq = beyond(q, fq, C) ? 1 : 0;
+      for (let k = 0; k < 4; k++) {
+        const kp = k & 1, kq = k >> 1;
+        if (!S.ray && (kp !== np || kq !== nq)) continue;
+        const p0 = kp === 1 ? 13 : 6, q0 = kq === 1 ? 15 : 8;
+        solidPiece();
+        solidSpan(p, fp, p0, p0 + 5, ep);
+        solidSpan(q, fq, q0, q0 + 1, eq);
+        solidSpan(L[1], f[1], M - 1, M + 1, 1);
+        d = Math.min(d, solidDone());
+      }
+      return d;
     }
-    return d;
+    solidPiece();
+    solidSpan(L[0], f[0], C - 2, C + 2, 0);
+    solidSpan(L[2], f[2], C - 2, C + 2, 2);
+    solidSpan(L[1], f[1], M - 1, M + 3, 1);
+    return solidDone();
   }
-  solidPiece();
-  solidSpan(L[0], f[0], C - 2, C + 2, 0);
-  solidSpan(L[2], f[2], C - 2, C + 2, 2);
-  solidSpan(L[1], f[1], M - 1, M + 3, 1);
-  return solidDone();
-}
 
-function roomAir(L, f, H, h, under, over) {
-  airPiece();
-  airSpan(L[0], f[0], M, R - M, 0);
-  airSpan(L[2], f[2], M, R - M, 2);
-  airSpan(L[1], f[1], M, M + H, 1);
-  const box = S.d;
-  return Math.max(box, -furniture(L, f, h, under, over));
-}
+  function roomAir(L, f, H, h, under, over) {
+    airPiece();
+    airSpan(L[0], f[0], M, R - M, 0);
+    airSpan(L[2], f[2], M, R - M, 2);
+    airSpan(L[1], f[1], M, M + H, 1);
+    const box = S.d;
+    return Math.max(box, -furniture(L, f, h, under, over));
+  }
 
-const ancestors = new Map(); // level -> where its cell sits in its parent
-// (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
-export const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= HALLS.solid;
+  const ancestors = new Map(); // level -> where its cell sits in its parent
+  // (rule: where the space allows a room, as spaceRoom in the GLSL; none, everywhere.)
+  const built = (id, seed, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= HALLS.solid;
 
-// dg is the point along the diagonals (see Position.levels). Without it they
-// are worked out from L and f, which is only good far from any such surface.
-// For finding a way through the halls (see planner.js): a cell's room, if
-// it has one (its height, its middle in its lattice units, and whether
-// piers stand in it, which a way across it must go round), and the
-// openings in its six faces, each as the middle of where it crosses the
-// face, the way across it (e), and the cell on the other side. (Of a row
-// of three windows or arches, the middle one.) The same hashes as above.
-export function hallsRoom(id, seed, rule) {
-  if (!built(id, seed, rule)) return null;
-  const H = h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
-  // (As furniture has it: piers, unless over or under a light well.)
-  const t = h01(hashCell(id, seed ^ salt.furniture));
-  const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab)), over = h01(hashCell(id, seed ^ salt.slab));
-  return { H, middle: [C, M + H / 2, C], piers: t >= stands.none && t < stands.piers && Math.max(under, over) < slab.oculus };
-}
-export function hallsOpenings(id, seed, rule) {
-  const here = built(id, seed, rule);
-  const out = [];
-  for (const [a, sign] of [[0, 1], [0, -1], [2, 1], [2, -1], [1, 1], [1, -1]]) {
-    const e = [0, 0, 0];
-    e[a] = sign;
-    const nb = wrapId(id.map((x, b) => x + e[b]));
-    if (!here && !built(nb, seed, rule)) continue;
-    // A face belongs to the cell on its lower side.
-    const owner = sign > 0 ? id : nb;
-    const at = [C, 0, C];
-    at[a] = sign > 0 ? R : 0;
-    if (a === 1) {
-      if (h01(hashCell(owner, seed ^ salt.slab)) < slab.solid) continue;
-    } else {
-      const s = wallShape(hashCell(owner, seed ^ (a === 0 ? salt.wallX : salt.wallZ)), C, 0);
-      if (!s) continue;
-      at[a === 0 ? 2 : 0] = s.cu;
-      at[1] = M + s.y0 + Math.min(s.top, s.sp + s.hw) / 2;
+  // dg is the point along the diagonals (see Position.levels). Without it they
+  // are worked out from L and f, which is only good far from any such surface.
+  // For finding a way through the halls (see planner.js): a cell's room, if
+  // it has one (its height, its middle in its lattice units, and whether
+  // piers stand in it, which a way across it must go round), and the
+  // openings in its six faces, each as the middle of where it crosses the
+  // face, the way across it (e), and the cell on the other side. (Of a row
+  // of three windows or arches, the middle one.) The same hashes as above.
+  function hallsRoom(id, seed, rule) {
+    if (!built(id, seed, rule)) return null;
+    const H = h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
+    // (As furniture has it: piers, unless over or under a light well.)
+    const t = h01(hashCell(id, seed ^ salt.furniture));
+    const under = h01(hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab)), over = h01(hashCell(id, seed ^ salt.slab));
+    return { H, middle: [C, M + H / 2, C], piers: t >= stands.none && t < stands.piers && Math.max(under, over) < slab.oculus };
+  }
+  function hallsOpenings(id, seed, rule) {
+    const here = built(id, seed, rule);
+    const out = [];
+    for (const [a, sign] of [[0, 1], [0, -1], [2, 1], [2, -1], [1, 1], [1, -1]]) {
+      const e = [0, 0, 0];
+      e[a] = sign;
+      const nb = wrapId(id.map((x, b) => x + e[b]));
+      if (!here && !built(nb, seed, rule)) continue;
+      // A face belongs to the cell on its lower side.
+      const owner = sign > 0 ? id : nb;
+      const at = [C, 0, C];
+      at[a] = sign > 0 ? R : 0;
+      if (a === 1) {
+        if (h01(hashCell(owner, seed ^ salt.slab)) < slab.solid) continue;
+      } else {
+        const s = wallShape(hashCell(owner, seed ^ (a === 0 ? salt.wallX : salt.wallZ)), C, 0);
+        if (!s) continue;
+        at[a === 0 ? 2 : 0] = s.cu;
+        at[1] = M + s.y0 + Math.min(s.top, s.sp + s.hw) / 2;
+      }
+      out.push({ e, at, nb });
     }
-    out.push({ e, at, nb });
+    return out;
   }
-  return out;
-}
 
-// The halls cell's distance at L + f (dg: its diagonals, see pieces.at). And
-// if ray is given ({ dir }), for a ray along dir from there: how far it goes
-// in the piece of air it is in (reach, in lattice units; less than 0, in
-// solid), and the surface it meets there (nx, ny, nz); known says whether
-// the cell answers that (here, always).
-export function hallsAir(L, f, id, seed, dg, rule, ray) {
-  at(L, f, dg);
-  if (ray) aim(ray);
-  const here = built(id, seed, rule);
-  const H = here && h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
-  let room = NONE;
-  const hup = hashCell(id, seed ^ salt.slab);
-  const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab);
-  const hf = hashCell(id, seed ^ salt.furniture);
-  if (here) {
-    room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
-    through(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
+  // The halls cell's distance at L + f (dg: its diagonals, see pieces.at). And
+  // if ray is given ({ dir }), for a ray along dir from there: how far it goes
+  // in the piece of air it is in (reach, in lattice units; less than 0, in
+  // solid), and the surface it meets there (nx, ny, nz); known says whether
+  // the cell answers that (here, always).
+  function hallsAir(L, f, id, seed, dg, rule, ray) {
+    at(L, f, dg);
+    if (ray) aim(ray);
+    const here = built(id, seed, rule);
+    const H = here && h01(hashCell(id, seed)) < HALLS.low ? HLO : HHI;
+    let room = NONE;
+    const hup = hashCell(id, seed ^ salt.slab);
+    const hdn = hashCell(wrapId([id[0], id[1] - 1, id[2]]), seed ^ salt.slab);
+    const hf = hashCell(id, seed ^ salt.furniture);
+    if (here) {
+      room = roomAir(L, f, H, hf, h01(hdn), h01(hup));
+      through(ray, room, () => roomAir(L, f, H, hf, h01(hdn), h01(hup)));
+    }
+    // Openings reach only one unit into the room; deeper in, they change nothing.
+    if (room < -1) return room;
+
+    // Only the nearer face on each axis can matter to a point in this cell.
+    const hx = beyond(L[0], f[0], C), hz = beyond(L[2], f[2], C), hy = beyond(L[1], f[1], M + H / 2);
+    const ox = hx ? id : wrapId([id[0] - 1, id[1], id[2]]);
+    const oz = hz ? id : wrapId([id[0], id[1], id[2] - 1]);
+    let hwx = hashCell(ox, seed ^ salt.wallX), hwz = hashCell(oz, seed ^ salt.wallZ), hwy = hy ? hup : hdn;
+    if (!here) {
+      // A face has an opening only if there is a room on one side of it at
+      // least. From a room, an opening into a solid cell is a niche.
+      if (!built(wrapId([id[0] + (hx ? 1 : -1), id[1], id[2]]), seed, rule)) hwx = 0;
+      if (!built(wrapId([id[0], id[1], id[2] + (hz ? 1 : -1)]), seed, rule)) hwz = 0;
+      if (!built(wrapId([id[0], id[1] + (hy ? 1 : -1), id[2]]), seed, rule)) hwy = 0;
+    }
+    const wx = () => wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx, 0, 2);
+    const wz = () => wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz, 2, 0);
+    const wy = () => slabOpening(L, f, hy, H, hwy);
+    const ax = wx(), az = wz(), ay = wy();
+    through(ray, ax, wx);
+    through(ray, az, wz);
+    through(ray, ay, wy);
+
+    // From inside the slab over a low room, the nearest air may be the room
+    // above. This cell says nothing else about its neighbours' rooms.
+    const above = Math.max(M - L[0] - f[0], L[0] - (R - M) + f[0], M - L[2] - f[2], L[2] - (R - M) + f[2], R + M - L[1] - f[1]);
+
+    const a = Math.min(room, above, ax, az, ay);
+    if (a <= 0) return a;
+
+    // In solid, a must not overstate how far the nearest air is (see the GLSL).
+    const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];
+    const edge = Math.min(q[0], R - q[0], q[1], R - q[1], q[2], R - q[2]);
+    const unseen = Math.min(Math.abs(q[0] - C) + (C - M - 1), Math.abs(q[2] - C) + (C - M - 1), Math.abs(q[1] - (M + H / 2)) + (HLO / 2 - 1), edge + M);
+    return Math.min(a, unseen);
   }
-  // Openings reach only one unit into the room; deeper in, they change nothing.
-  if (room < -1) return room;
 
-  // Only the nearer face on each axis can matter to a point in this cell.
-  const hx = beyond(L[0], f[0], C), hz = beyond(L[2], f[2], C), hy = beyond(L[1], f[1], M + H / 2);
-  const ox = hx ? id : wrapId([id[0] - 1, id[1], id[2]]);
-  const oz = hz ? id : wrapId([id[0], id[1], id[2] - 1]);
-  let hwx = hashCell(ox, seed ^ salt.wallX), hwz = hashCell(oz, seed ^ salt.wallZ), hwy = hy ? hup : hdn;
-  if (!here) {
-    // A face has an opening only if there is a room on one side of it at
-    // least. From a room, an opening into a solid cell is a niche.
-    if (!built(wrapId([id[0] + (hx ? 1 : -1), id[1], id[2]]), seed, rule)) hwx = 0;
-    if (!built(wrapId([id[0], id[1], id[2] + (hz ? 1 : -1)]), seed, rule)) hwz = 0;
-    if (!built(wrapId([id[0], id[1] + (hy ? 1 : -1), id[2]]), seed, rule)) hwy = 0;
-  }
-  const wx = () => wallOpening(1, L[0], f[0], L[2], f[2], L[1], f[1], hx, hwx, 0, 2);
-  const wz = () => wallOpening(0, L[2], f[2], L[0], f[0], L[1], f[1], hz, hwz, 2, 0);
-  const wy = () => slabOpening(L, f, hy, H, hwy);
-  const ax = wx(), az = wz(), ay = wy();
-  through(ray, ax, wx);
-  through(ray, az, wz);
-  through(ray, ay, wy);
-
-  // From inside the slab over a low room, the nearest air may be the room
-  // above. This cell says nothing else about its neighbours' rooms.
-  const above = Math.max(M - L[0] - f[0], L[0] - (R - M) + f[0], M - L[2] - f[2], L[2] - (R - M) + f[2], R + M - L[1] - f[1]);
-
-  const a = Math.min(room, above, ax, az, ay);
-  if (a <= 0) return a;
-
-  // In solid, a must not overstate how far the nearest air is (see the GLSL).
-  const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];
-  const edge = Math.min(q[0], R - q[0], q[1], R - q[1], q[2], R - q[2]);
-  const unseen = Math.min(Math.abs(q[0] - C) + (C - M - 1), Math.abs(q[2] - C) + (C - M - 1), Math.abs(q[1] - (M + H / 2)) + (HLO / 2 - 1), edge + M);
-  return Math.min(a, unseen);
-}
-
-export default {
-  name: 'halls',
-  R,
-  glsl: hallsGlsl + /* glsl */ `
+  const halls = {
+    name: 'halls',
+    R,
+    glsl: hallsGlsl + /* glsl */ `
 bool spaceRoom(ivec3 id, uint seed) { return true; }
 float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {
   return hallsCell(L, f, id, seed, reach, nrm);
 }
 `,
-  cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, null, ray),
-  maxInterior: 0.375,
-  longestWay: 1.4,
-  close: 0.3,
-  openArea: 0.07,
+    cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, null, ray),
+    maxInterior: 0.375,
+    longestWay: 1.4,
+    close: 0.3,
+    openArea: 0.07,
 
-  // Standing height in the middle of a room.
-  start: [0.5, (M + 4.5) / R, 0.5],
+    // Standing height in the middle of a room.
+    start: [0.5, (M + 4.5) / R, 0.5],
 
-  // By default a cell sits in the surface layer of one of its parent's four
-  // walls, above the height any opening reaches, which is the one place that
-  // is solid whatever the parent turns out to be. If the parent is a tall
-  // room, it is just outside.
-  //
-  // The cell one level in from this one must have a room for that to mean
-  // anything, so of the places this could be, take the first that gives it one.
-  ancestorDigit(level) {
-    let d = ancestors.get(level);
-    if (d) return d;
-    // (Worked from level 0 outward, and not by recursion, which a first call
-    // for a very distant level would overrun.)
-    for (let j = Math.max(level, 0); j >= level; j--) {
-      if (ancestors.has(j)) continue;
-      const inner = j < 0 ? ancestors.get(j + 1) : null;
-      for (let k = 0; ; k++) {
-        const h = hash32((j * 2 + 1) ^ Math.imul(k, 0x632be5ab));
-        const g = hash32(h);
-        const across = M + ((h >>> 8) % (R - 2 * M));
-        const y = M + HLO + ((h >>> 16) % (R - 2 * M - HLO));
-        const depth = g & 2 ? M - 1 : R - M;
-        d = g & 1 ? [depth, y, across] : [across, y, depth];
-        if (!inner || k > 60 || built(inner.map((x, a) => x + R * d[a]), levelSeed(j + 1))) break;
+    // By default a cell sits in the surface layer of one of its parent's four
+    // walls, above the height any opening reaches, which is the one place that
+    // is solid whatever the parent turns out to be. If the parent is a tall
+    // room, it is just outside.
+    //
+    // The cell one level in from this one must have a room for that to mean
+    // anything, so of the places this could be, take the first that gives it one.
+    ancestorDigit(level) {
+      let d = ancestors.get(level);
+      if (d) return d;
+      // (Worked from level 0 outward, and not by recursion, which a first call
+      // for a very distant level would overrun.)
+      for (let j = Math.max(level, 0); j >= level; j--) {
+        if (ancestors.has(j)) continue;
+        const inner = j < 0 ? ancestors.get(j + 1) : null;
+        for (let k = 0; ; k++) {
+          const h = hash32((j * 2 + 1) ^ Math.imul(k, 0x632be5ab));
+          const g = hash32(h);
+          const across = M + ((h >>> 8) % (R - 2 * M));
+          const y = M + HLO + ((h >>> 16) % (R - 2 * M - HLO));
+          const depth = g & 2 ? M - 1 : R - M;
+          d = g & 1 ? [depth, y, across] : [across, y, depth];
+          if (!inner || k > 60 || built(inner.map((x, a) => x + R * d[a]), levelSeed(j + 1))) break;
+        }
+        ancestors.set(j, d);
       }
-      ancestors.set(j, d);
-    }
-    return ancestors.get(level);
-  },
+      return ancestors.get(level);
+    },
 
-  // Each level gets its own colour so that scale is legible: hue steps by the
-  // golden angle, so neighbouring levels always contrast.
-  palette(level) {
-    const j = (hash32(level) & 0xffff) / 0xffff;
-    const h = 0.085 + level * 0.381966;
-    const s = 0.2 + 0.14 * j;
-    return {
-      wall: hsv(h, s, 0.86),
-      floor: hsv(h + 0.02, s * 1.15, 0.56),
-    };
-  },
+    // Each level gets its own colour so that scale is legible: hue steps by the
+    // golden angle, so neighbouring levels always contrast.
+    palette(level) {
+      const j = (hash32(level) & 0xffff) / 0xffff;
+      const h = 0.085 + level * 0.381966;
+      const s = 0.2 + 0.14 * j;
+      return {
+        wall: hsv(h, s, 0.86),
+        floor: hsv(h + 0.02, s * 1.15, 0.56),
+      };
+    },
 
-  sky: [0.72, 0.8, 0.9],
-  zenith: [0.3, 0.5, 0.82],
-  roof: hsv(0.09, 0.16, 0.6),
-  // The room we start in is in the top storey.
-  get ground() {
-    return this.ancestorDigit(0)[1] + 1;
-  },
-  fogK: 250, // visibility, in cells of the room we are in
-};
+    sky: [0.72, 0.8, 0.9],
+    zenith: [0.3, 0.5, 0.82],
+    roof: hsv(0.09, 0.16, 0.6),
+    // The room we start in is in the top storey.
+    get ground() {
+      return this.ancestorDigit(0)[1] + 1;
+    },
+    fogK: 250, // visibility, in cells of the room we are in
+    // For finding ways (see planner.js): a cell's room and its openings.
+    room: (id, seed, rule) => hallsRoom(id, seed, rule),
+    openings: (id, seed, rule) => hallsOpenings(id, seed, rule),
+  };
+  return { space: halls, spec, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built };
+}
+
+// The halls as they are (and their parts, for the spaces built on them).
+export const madeHalls = makeHalls();
+export default madeHalls.space;

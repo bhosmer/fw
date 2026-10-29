@@ -23,7 +23,7 @@
 // Deeper in, the cells are halls; cells the other solids cross are solid.
 
 import * as P from '../pieces.js';
-import halls, { HALLS, hallsGlsl, hallsAir, hallsRoom, hallsOpenings, built, R, M } from './halls.js';
+import { madeHalls, R, M } from './halls.js';
 import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu } from '../util.js';
 import { hexahedron, GROUND } from './hexahedron.js';
 import { townShapeJs, townShapeGlsl, TOWN_SHAPES } from './town.js';
@@ -41,10 +41,11 @@ const MID = C + R * C;
 const ABOVE = 200; // how many rows over the city's are known to be over it
 
 // The arcology, made: all that follows is worked out from its building (and,
-// as its definition grows, from the rest of it), so that a variant of it is
-// another call of this. Gives the space, and for the checks its table and
-// its parts (_V2).
-export function makeArcology() {
+// as its definition grows, from the rest of it) and the halls it is built of
+// (see makeHalls), so that a variant of it is another call of this. Gives
+// the space, and for the checks its table and its parts (_V2).
+export function makeArcology(made = madeHalls) {
+  const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built } = made;
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
   // lower's apex a cell under the plaza's floor (see GROUND).
