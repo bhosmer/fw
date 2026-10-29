@@ -2458,13 +2458,15 @@ function bareIn(q) {
   return d;
 }
 
-// See windowAir in the shader.
-function windowAir(j, L, f, d) {
+// See windowAir in the shader. (ray: as in hallsAir, for this solid's
+// openings alone; see openings.)
+function windowAir(j, L, f, d, ray) {
   const W = WINDOWS[j], base = cellB.map((x) => x * R);
   const u = W.t.sign * dLs[W.t.k] + W.tv[0] * base[0] + W.tv[2] * base[2], fu = W.t.sign * dFs[W.t.k];
   const w = W.h.sign * dLs[W.h.k] + W.hv[0] * base[0] + W.hv[2] * base[2], fw = W.h.sign * dFs[W.h.k];
   const y = base[1] + L[1] - GROUND * R;
   const K = W.K * R, outer = cdiv(K, W.alpha) + Math.ceil(W.len);
+  const along = W.tv.map((x) => x / W.len), across = W.hv.map((x) => x / W.len);
   let a = NONE, cap = NONE;
   for (let k = W.g0; k < W.g0 + W.ng; k++) {
     const { pu, wu, dw, ch, ph, py, hy, yb: rows, vary: [vk, vp, va, vi], varyB: [d0, d1, none, jit] } = GRIDS[k];
@@ -2502,17 +2504,17 @@ function windowAir(j, L, f, d) {
       if (vk) [ua, ub, back, ya, yt] = [u0 + fdiv(vo * pu, vp), u0 + fdiv((vo + vw) * pu, vp), fdiv(K, W.alpha) - fdiv(vd * pu, vp), y0 + jb, y0 + hy - jt];
       else [ua, ub, back, ya, yt] = [u0, u0 + wu, fdiv(K, W.alpha) - (c === 0 ? dw : ch), c === 0 ? y0 : -FAR, c === 0 ? y0 + hy : FAR];
       if (vk === 1 && ub - ua < fdiv(2 * pu, vp)) continue;
-      a = Math.min(a, eachPiece(1, () => {
-        piece();
-        plane((ua - u - fu) / W.len);
-        plane((u - ub + fu) / W.len);
-        plane((back - w - fw) / W.len);
-        plane((w - outer + fw) / W.len);
-        span(L[1], f[1], Math.max(ya + GROUND * R - base[1], openLo(1)), Math.min(yt + GROUND * R - base[1], openHi(1)));
-        span(L[0], f[0], openLo(0), openHi(0));
-        span(L[2], f[2], openLo(2), openHi(2));
-        return gD;
-      }));
+      a = Math.min(a, cutAir(1, () => {
+        P.airPiece();
+        P.airPlane((ua - u - fu) / W.len, -along[0], -along[1], -along[2]);
+        P.airPlane((u - ub + fu) / W.len, ...along);
+        P.airPlane((back - w - fw) / W.len, -across[0], -across[1], -across[2]);
+        P.airPlane((w - outer + fw) / W.len, ...across);
+        P.airSpan(L[1], f[1], Math.max(ya + GROUND * R - base[1], openLo(1)), Math.min(yt + GROUND * R - base[1], openHi(1)), 1);
+        P.airSpan(L[0], f[0], openLo(0), openHi(0), 0);
+        P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
+        return P.S.d;
+      }, ray));
     }
   }
   return Math.min(d, a, Math.max(cap, 0));
@@ -2547,14 +2549,15 @@ function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
   const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
   cellOpen = (wrun >>> OPEN_AT) & 63;
   cellCross = !!((wrun >>> CROSS_AT) & 1);
-  const a = openings(L, f, wins, clip);
+  const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
+  // (A ray, where the cell's air is all pockets and openings: not yet the
+  // town's.)
+  if (ray && !town) P.aim(ray);
+  else ray = null;
+  const a = openings(L, f, wins, clip, ray);
   cellOpen = (m >>> OPEN_AT) & 63;
   cellCross = !!((clip >>> CROSS_AT) & 1);
-  const t = kind === PLAIN && (m >>> TOWN_AT) & 1 ? townAir(L, f, m) : NONE;
-  // (A ray only where the cell's air is all pockets so far: skin, with no
-  // openings.)
-  if (ray && kind === SKIN && !wins) P.aim(ray);
-  else ray = null;
+  const t = town ? townAir(L, f, m) : NONE;
   return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
 }
 
@@ -2586,27 +2589,58 @@ function townAir(L, f, m) {
 }
 
 // See openings in the shader.
-function openings(L, f, wins, clip) {
+// (ray: as in hallsAir.)
+function openings(L, f, wins, clip, ray) {
   const q = cellB.map((x, i) => x + (L[i] + f[i]) / R), out = (i) => Math.max(...SOLID_PL[i].map((p) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2] - p[3]));
-  // (Each solid's openings as they are, first; then each stopped at the others.)
+  const dot = (p, x, y, z) => p[0] * x + p[1] * y + p[2] * z;
+  // (Each solid's openings as they are, first, and how far a ray goes in
+  // them; then each stopped at the others.)
   const raw = WIN_AT.map((at) => {
     const w = (wins >>> at) & ((1 << WIN_BITS) - 1), me = (w & ((1 << SOLID_BITS) - 1)) - 1;
     let b = NONE;
-    if (me >= 0) for (let k = 0; k < 4; k++) if ((w >>> SOLID_BITS) & (1 << k)) b = windowAir(SOLIDS[me].wfirst + k, L, f, b);
-    return { me, b };
+    const r = ray && { reach: -1, nx: 0, ny: 0, nz: 0 };
+    if (me >= 0) for (let k = 0; k < 4; k++) if ((w >>> SOLID_BITS) & (1 << k)) b = windowAir(SOLIDS[me].wfirst + k, L, f, b, r);
+    return { me, b, r };
   });
   let a = NONE;
-  for (const { me, b: b0 } of raw) {
+  for (const { me, b: b0, r: rr } of raw) {
     if (me < 0) continue;
     let b = b0;
     const own = out(me);
+    let r = rr ? rr.reach : -1, rn = rr && [rr.nx, rr.ny, rr.nz];
+    // (Where the ray leaves this solid, and that plane's normal.)
+    let oIn = -1e30, oOut = 1e30, oN = [0, 0, 0];
+    if (r >= 0)
+      for (const pl of SOLID_PL[me]) {
+        const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3]) * R;
+        if (rd > 0 && -g / rd < oOut) (oOut = -g / rd), (oN = pl);
+        else if (rd < 0) oIn = Math.max(oIn, g / -rd);
+        else if (rd === 0 && g > 0) oOut = -1e30;
+      }
     for (let c = clip & ((1 << CROSS_AT) - 1); c; c >>>= SOLID_BITS) {
       const i = (c & ((1 << SOLID_BITS) - 1)) - 1;
       if (i === me) continue;
-      const inside = Math.min(R * ((SOLIDS[i].keep ?? 0) - out(i)), ...raw.filter((x) => x.me === i).map((x) => x.b));
-      b = Math.max(b, (YIELDS[i] >>> me) & 1 ? Math.min(inside, R * own) : inside);
+      const through = (YIELDS[i] >>> me) & 1, keep = SOLIDS[i].keep ?? 0;
+      const inside = Math.min(R * (keep - out(i)), ...raw.filter((x) => x.me === i).map((x) => x.b));
+      b = Math.max(b, through ? Math.min(inside, R * own) : inside);
+      if (r >= 0) {
+        // (Where the ray strikes that solid, or, where this one runs on
+        // through it, where it leaves this one.)
+        let sIn = -1e30, sOut = 1e30, sN = [0, 0, 0];
+        for (const pl of SOLID_PL[i]) {
+          const rd = dot(pl, P.S.dx, P.S.dy, P.S.dz), g = (dot(pl, ...q) - pl[3] - keep) * R;
+          if (rd < 0) {
+            if (g / -rd > sIn) (sIn = g / -rd), (sN = pl);
+          } else if (rd > 0) sOut = Math.min(sOut, -g / rd);
+          else if (g > 0) sOut = -1;
+        }
+        let x = Math.max(sIn, 0), n = sN;
+        if (through && x >= oIn && x < oOut) (x = oOut), (n = oN.map((v) => -v));
+        if (x < sOut && x < r) (r = x > 0 ? x : -1), (rn = n);
+      }
     }
     a = Math.min(a, b);
+    if (ray && r > ray.reach) (ray.reach = r), ([ray.nx, ray.ny, ray.nz] = rn.slice(0, 3));
   }
   return a;
 }
@@ -2622,8 +2656,9 @@ function groundAir(L, f, own) {
   return own[1] < G ? Math.min((G - own[1]) * R - L[1] - f[1], d) : d;
 }
 
-// (ray: see hallsAir. Only the halls' cells, and cells all solid, answer it
-// yet; elsewhere it is not known.)
+// (ray: see hallsAir. The halls' cells, the relief's skin and plain cells
+// (not yet the town's), and cells all solid answer it; elsewhere (the
+// town, the city level) it is not known yet.)
 function cellAir(L, f, id, seed, dg, level, up, ray) {
   const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
   if (ray) ray.known = false;
