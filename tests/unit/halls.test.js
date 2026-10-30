@@ -1,17 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeHalls, R } from '../../src/spaces/halls.js';
-import arcology, { ARCOLOGY, CITY } from '../../src/spaces/arcology.js';
-import { levelSeed, hashCell, define, wrapId as wrapIdR } from '../../src/util.js';
+import arcology, { CITY } from '../../src/spaces/arcology.js';
+import { levelSeed, hashCell, wrapId as wrapIdR } from '../../src/util.js';
 import { h01 } from '../../src/pieces.js';
 import { rand } from './rand.js';
 
 // The halls the arcology is built of, as a catalogue, apart from the
 // arcology: their cell alone, everywhere (no rule of the arcology's keeping
 // rooms out of some cells), at the levels the arcology has halls (finer
-// than the city's), and their parts. (As the arcology makes them, from its
-// definition with its levels' own: see makeArcology.)
-const halls = makeHalls(define(ARCOLOGY, undefined).halls);
+// than the city's), and their parts.
+const halls = makeHalls();
 const P = R * R;
 const wrapId = (id) => wrapIdR(id, R);
 const LEVELS = 42, someLevel = (rnd) => CITY + 1 + Math.floor(rnd() * LEVELS);

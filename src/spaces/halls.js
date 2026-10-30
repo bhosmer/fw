@@ -88,7 +88,7 @@
 //   - a tunnel may run on into the next cell, where that cell's own
 //     description of it must agree
 
-import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, keyed, frozen } from '../util.js';
+import { hash32, hashCell, wrapId as wrapIdR, glf, hexu, define, keyed, frozen } from '../util.js';
 import * as P from '../pieces.js';
 import * as twin from '../twin.js';
 
@@ -167,15 +167,17 @@ export const HALLS = {
 // And what is otherwise at some levels: for each level given (as a whole
 // number, written: '-1'), changes there to any of the above but the salts,
 // to the halls as defined (byLevel: { '-1': { solid: 0.8 } }). Levels are
-// the world's own (in the arcology, -1 is the building's cells; the
-// arcology's halls have their own level 0: see ARCOLOGY_HALLS in
-// arcology.js).
-HALLS.byLevel = keyed(['salt']);
+// the arcology's (-1 is the building's cells). At level 0, the building's
+// chambers seen at scale 0: nine cells in ten rooms and almost no blank
+// walls, the rest of the walls open (Basil, 2026-10-30: ledger F11);
+// halls.byLevel.0.solid=0.65&halls.byLevel.0.walls.none.share=0.24 is that
+// level as it was.
+HALLS.byLevel = keyed(['salt'], { 0: { solid: 0.1, walls: { none: { share: 0.02 } } } });
 frozen(HALLS);
 const FAR = 1000;
 // The longest way through any one piece of a cell's air, and the largest
-// clearance in it (see the space's longestWay and maxInterior; families
-// checks the kinds keep to them).
+// clearance in it (families checks the kinds keep to them; the arcology's
+// own bounds, its space's longestWay and maxInterior, are no less).
 const LONGEST_WAY = 1.4, MAX_INTERIOR = 0.375;
 
 // The words the kinds are written in (see twin.js): the shared helpers, and
@@ -684,8 +686,6 @@ ${pieces(false, levels, salt)}
 
 `;
 
-  const ancestors = new Map(); // level -> where its cell sits in its parent
-
   // For finding a way through the halls (see planner.js): a cell's room, if
   // it has one (its height, its middle in its lattice units, and whether
   // what stands in it blocks the way across its middle, as piers do: the
@@ -727,79 +727,27 @@ ${pieces(false, levels, salt)}
     return out;
   }
 
-  const halls = {
-    name: 'halls',
-    R,
-    glsl: hallsGlsl + /* glsl */ `
-bool spaceRoom(ivec3 id, uint seed) { return true; }
-float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out vec3 nrm) {
-  return hallsCell(L, f, id, seed, level, reach, nrm);
+  return { spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf };
 }
-`,
-    cellAir: (L, f, id, seed, dg, level, up, ray) => hallsAir(L, f, id, seed, dg, level, null, ray),
-    maxInterior: MAX_INTERIOR,
-    longestWay: LONGEST_WAY,
-    close: 0.3,
-    openArea: 0.07,
 
-    // Standing height in the middle of a room.
-    start: [0.5, (M + 4.5) / R, 0.5],
+// Standing height in the middle of a room, in its cell.
+export const STANDING = [0.5, (M + 4.5) / R, 0.5];
 
-    // By default a cell sits in the surface layer of one of its parent's four
-    // walls, above the height any opening reaches, which is the one place that
-    // is solid whatever the parent turns out to be. If the parent is a tall
-    // room, it is just outside.
-    //
-    // The cell one level in from this one must have a room for that to mean
-    // anything, so of the places this could be, take the first that gives it one.
-    ancestorDigit(level) {
-      let d = ancestors.get(level);
-      if (d) return d;
-      // (Worked from level 0 outward, and not by recursion, which a first call
-      // for a very distant level would overrun.)
-      for (let j = Math.max(level, 0); j >= level; j--) {
-        if (ancestors.has(j)) continue;
-        const inner = j < 0 ? ancestors.get(j + 1) : null;
-        for (let k = 0; ; k++) {
-          const h = hash32((j * 2 + 1) ^ Math.imul(k, 0x632be5ab));
-          const g = hash32(h);
-          const across = M + ((h >>> 8) % (R - 2 * M));
-          const y = M + HLO + ((h >>> 16) % (R - 2 * M - HLO));
-          const depth = g & 2 ? M - 1 : R - M;
-          d = g & 1 ? [depth, y, across] : [across, y, depth];
-          if (!inner || k > 60 || built(inner.map((x, a) => x + R * d[a]), levelSeed(j + 1), j + 1)) break;
-        }
-        ancestors.set(j, d);
-      }
-      return ancestors.get(level);
-    },
-
-    // Each level gets its own colour so that scale is legible: hue steps by the
-    // golden angle, so neighbouring levels always contrast.
-    palette(level) {
-      const j = (hash32(level) & 0xffff) / 0xffff;
-      const h = 0.085 + level * 0.381966;
-      const s = 0.2 + 0.14 * j;
-      return {
-        wall: hsv(h, s, 0.86),
-        floor: hsv(h + 0.02, s * 1.15, 0.56),
-      };
-    },
-
-    sky: [0.72, 0.8, 0.9],
-    zenith: [0.3, 0.5, 0.82],
-    roof: hsv(0.09, 0.16, 0.6),
-    // The room we start in is in the top storey.
-    get ground() {
-      return this.ancestorDigit(0)[1] + 1;
-    },
-    fogK: 250, // visibility, in cells of the room we are in
-    // For finding ways (see planner.js): its rooms' walls, half their
-    // thickness; a cell's room and its openings (the cell's id, seed and
-    // level).
-    halfWall: M,
-    room: (id, seed, level) => hallsRoom(id, seed, level),
-    openings: (id, seed, level) => hallsOpenings(id, seed, level),
-  };
-  return { space: halls, spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf };
+// Where a cell of the halls sits in its parent, where nothing says otherwise
+// (as a space's ancestorDigit says, at the levels that are halls all
+// through: finer than level 0): in the surface layer of one of its parent's
+// four walls, above the height any opening reaches, which is the one place
+// that is solid whatever the parent turns out to be (if the parent is a tall
+// room, just outside it); which wall and where on it, by the level's hash.
+const ancestors = new Map(); // level -> where its cell sits in its parent
+export function ancestorDigit(level) {
+  let d = ancestors.get(level);
+  if (d) return d;
+  const h = hash32(level * 2 + 1), g = hash32(h);
+  const across = M + ((h >>> 8) % (R - 2 * M));
+  const y = M + HLO + ((h >>> 16) % (R - 2 * M - HLO));
+  const depth = g & 2 ? M - 1 : R - M;
+  d = g & 1 ? [depth, y, across] : [across, y, depth];
+  ancestors.set(level, d);
+  return d;
 }

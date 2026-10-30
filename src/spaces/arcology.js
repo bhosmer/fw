@@ -24,8 +24,8 @@
 
 import * as P from '../pieces.js';
 import * as twin from '../twin.js';
-import { makeHalls, HALLS, R, M } from './halls.js';
-import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen, keyed } from '../util.js';
+import { makeHalls, HALLS, R, M, STANDING, ancestorDigit as hallsDigit } from './halls.js';
+import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
 import { hexahedron, HEXAHEDRON, GROUND } from './hexahedron.js';
 import { townShapeJs, townShapeGlsl, townShapes, TOWN_TYPES } from './town.js';
 
@@ -83,15 +83,12 @@ const TOWN_DEF = {
 // way. (Basil chose the open plaza, 2026-10-30: ledger B33; plaza.fades=true
 // is the plaza as it was, fading.)
 const PLAZA = { fades: false };
-// The halls the arcology is built of: the halls' (see HALLS in halls.js),
-// but at level 0, the building's chambers seen at scale 0, nine cells in ten
-// rooms and almost no blank walls, the rest of the walls open (Basil,
-// 2026-10-30: ledger F11). halls.byLevel.0.solid=0.65&halls.byLevel.0.walls.none.share=0.24
-// is that level as it was, the halls' own.
-const ARCOLOGY_HALLS = { ...HALLS, byLevel: keyed(['salt'], { 0: { solid: 0.1, walls: { none: { share: 0.02 } } } }) };
 // The arcology's definition: its building (see hexahedron.js), the halls it
-// is built of, its relief, its town and its plaza.
-export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: ARCOLOGY_HALLS, relief: RELIEF, town: TOWN_DEF, plaza: PLAZA });
+// is built of (see HALLS in halls.js), its relief, its town and its plaza.
+export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF, plaza: PLAZA });
+// How far (a fraction of a cell) air is shrunk to fade a level out with
+// distance (see close, and gScale in shaders.js).
+const CLOSE = 0.3;
 
 // The most ridge rows a face's rectangle can span, one level finer: as many
 // as both copies look under (see underRidge), check's bound on the relief.
@@ -188,7 +185,7 @@ export function makeArcology(set) {
   const def = check(frozen(define(ARCOLOGY, set)));
   // (Whether the plaza's air is open at every distance: see PLAZA.)
   const UNFADED = !def.plaza.fades;
-  const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf } = makeHalls(def.halls);
+  const { spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf } = makeHalls(def.halls);
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
   // lower's apex a cell under the plaza's floor (see GROUND).
@@ -329,7 +326,7 @@ export function makeArcology(set) {
     const r0 = reach(s, 0), g = 1e-3;
     return reach(s, g).map((x, i) => (i % 2 ? x - r0[i] : r0[i] - x) / g);
   })) : 0;
-  const GROWN = GROW * halls.close * R;
+  const GROWN = GROW * CLOSE * R;
 
   // For each city cell (across from the middle one) with any solid near it,
   // the solids that reach into the air it answers for (its plaza piece, see
@@ -3031,13 +3028,15 @@ ${CELL_GLSL.cell}
   })();
 
   const arcology = {
-    ...halls,
     name: 'arcology',
+    R,
     glsl: hallsGlsl + glsl,
     cellAir,
-    // (Its rooms and their openings as the halls', where it lets them be.)
+    // (Its rooms and their openings as the halls', where it lets them be;
+    // their walls' half thickness, for finding ways: see planner.js.)
     room: (id, seed, level) => hallsRoom(id, seed, level, spaceRoom),
     openings: (id, seed, level) => hallsOpenings(id, seed, level, spaceRoom),
+    halfWall: M,
     volume: VOLUME,
     // What fraction of a surface opens at a level (see the detail asked after
     // in main, shaders.js), by where the surface is, not by the way a ray came
@@ -3073,11 +3072,17 @@ ${CELL_GLSL.cell}
     // (Where the plaza does not fade, its air is open at every distance:
     // see PLAZA.)
     openAir: UNFADED ? CITY : null,
+    close: CLOSE,
+    // Roughly what fraction of a surface is openings, where nothing says
+    // otherwise (see openAreaGlsl).
+    openArea: 0.07,
 
+    // Where a visit starts in its cell: standing in the middle of a room.
+    start: STANDING,
     // On the plaza, in the city's row; coarser than that, all is solid, so
-    // anywhere does.
+    // anywhere does; finer than level 0, as in the halls.
     ancestorDigit(level) {
-      if (level > 0) return halls.ancestorDigit(level);
+      if (level > 0) return hallsDigit(level);
       if (level === 0) return [C, 4, C];
       if (level === CITY + 1) return [START[0], G, START[1]];
       if (level === CITY) return [C, ROW, C];
@@ -3097,6 +3102,22 @@ ${CELL_GLSL.cell}
     skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),
     // Sunlight comes down into it as far as the plaza (in level-0 cells).
     sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
+
+    // Each level gets its own colour so that scale is legible: hue steps by the
+    // golden angle, so neighbouring levels always contrast.
+    palette(level) {
+      const j = (hash32(level) & 0xffff) / 0xffff;
+      const h = 0.085 + level * 0.381966;
+      const s = 0.2 + 0.14 * j;
+      return {
+        wall: hsv(h, s, 0.86),
+        floor: hsv(h + 0.02, s * 1.15, 0.56),
+      };
+    },
+    sky: [0.72, 0.8, 0.9],
+    zenith: [0.3, 0.5, 0.82],
+    roof: hsv(0.09, 0.16, 0.6),
+    fogK: 250, // visibility, in cells of the room we are in
   };
   return { arcology, def, VOLUME, _V2 };
 }

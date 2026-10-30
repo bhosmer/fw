@@ -4,7 +4,7 @@ import arcology, { makeArcology, ARCOLOGY, VOLUME, _V2 } from '../../src/spaces/
 const made = () => ({ arcology, _V2 });
 import { makeHalls } from '../../src/spaces/halls.js';
 import { viewFrag } from '../../src/shaders.js';
-import { levelSeed, define } from '../../src/util.js';
+import { levelSeed } from '../../src/util.js';
 import { Flight, FLIGHT } from '../../src/flight.js';
 import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
@@ -47,14 +47,10 @@ const townSample = (made) => {
 // A kind of building of five boxes: a row of five narrow blocks.
 const FIVE = { name: 'five', needs: 'W >= 10', else: 'block', count: '5', most: 5, each: { u0: 'ix0 + div(W * k, 5)', u1: 'ix0 + div(W * (k + 1), 5) - 1' }, box: ['u0', '0', 'iz0', 'u1', 'h1', 'iz1'] };
 
-// The halls the arcology is built of, alone (as the arcology makes them, from
-// its definition with its levels' own: see makeArcology), with changes.
-const hallsOf = (set) => makeHalls(define(ARCOLOGY, set && { halls: set }).halls);
-
 // A world made again from its definition is the same world; a variant of it
 // is another, and leaves the first as it was.
 test('a variant is made from the definition, and leaves the world as it was', () => {
-  const before = { glsl: viewFrag(12, arcology, true), at: sample(arcology), halls: hallsOf().glsl };
+  const before = { glsl: viewFrag(12, arcology, true), at: sample(arcology), halls: makeHalls().glsl };
   const again = makeArcology();
   assert.equal(viewFrag(12, again.arcology, true), before.glsl, 'made again: the same shader');
   assert.deepEqual(again.VOLUME.data, VOLUME.data, 'made again: the same table');
@@ -68,8 +64,8 @@ test('a variant is made from the definition, and leaves the world as it was', ()
   assert.notDeepEqual(sample(v.arcology), before.at, 'the variant\'s air differs');
   assert.equal(viewFrag(12, arcology, true), before.glsl, 'the world\'s shader is as it was');
   assert.deepEqual(sample(arcology), before.at, 'the world\'s air is as it was');
-  assert.equal(hallsOf().glsl, before.halls, 'the halls are as they were');
-  assert.notEqual(hallsOf({ rooms: { low: { share: 0.3 } } }).glsl, before.halls, 'a halls variant differs');
+  assert.equal(makeHalls().glsl, before.halls, 'the halls are as they were');
+  assert.notEqual(makeHalls({ rooms: { low: { share: 0.3 } } }).glsl, before.halls, 'a halls variant differs');
 });
 
 // Each part of the definition reaches what is made: a variant of any one of
@@ -109,7 +105,7 @@ test('every part of a variant is made', () => {
 // on the city's row, away from the buildings, none, though the halls alone
 // would have some; and nowhere more than the halls alone.
 test('the arcology\'s rooms are the halls\' where it lets them be', () => {
-  const seed = levelSeed(-2), halls = hallsOf();
+  const seed = levelSeed(-2), halls = makeHalls();
   let fewer = 0;
   for (let a = -9; a <= 9; a++) for (let c = -9; c <= 9; c++) for (const y of [0, 1]) {
     const id = [300 + a, 300 + y, 300 + c], mine = arcology.room(id, seed, -2), theirs = halls.room(id, seed, -2);

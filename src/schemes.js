@@ -29,8 +29,7 @@ export const SCHEME = {
   // (else they show as shadowed recesses).
   inlay: { is: 0, light: 'float' },
   // The haze, and the colour of the light from it; the sky overhead; the
-  // ground seen from above (the space's roof: space.ground is already the
-  // height of its top).
+  // ground seen from above (the space's roof).
   sky: { is: (space) => space.sky, light: 'vec3' },
   zenith: { is: (space) => space.zenith, light: 'vec3' },
   ground: { is: (space) => space.roof, light: 'vec3' },

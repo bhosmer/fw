@@ -176,7 +176,7 @@ export class Flight {
   }
 
   // How far we are above the ground: the one plane over which there is only
-  // sky (see ground in spaces/halls.js). In level-F cells, negative below it.
+  // sky (see the space's skyPlane). In level-F cells, negative below it.
   // Our height and the plane's are compared digit by digit from the coarsest
   // level at which we have ever been anywhere but the default, so that close
   // to the plane what is left is a small whole number plus our offset in the
@@ -184,17 +184,16 @@ export class Flight {
   // added at level 0 so that it stays whole where it is).
   skyHeight(under = 0) {
     const { pos, space, R } = this;
-    const plane = space.skyPlane ?? ((j) => (j < 0 ? space.ancestorDigit(j)[1] : j === 0 ? space.ground : 0));
     let acc = 0;
     for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) {
-      acc = acc * R + pos.digit(j)[1] - plane(j) + (j === 0 ? under : 0);
+      acc = acc * R + pos.digit(j)[1] - space.skyPlane(j) + (j === 0 ? under : 0);
       // (So far from the plane, finer digits cannot take us across it; and
       // deep down the height in level-F cells would soon be more than a number
       // holds: stop while it is still one.)
       if (Math.abs(acc) > 1e30) return acc > 0 ? 1e30 : -1e30;
     }
     // (Working coarser than level 0, the plane is part of the way up our cell.)
-    for (let j = pos.F + 1; j <= 0; j++) acc -= (plane(j) - (j === 0 ? under : 0)) * Math.pow(R, pos.F - j);
+    for (let j = pos.F + 1; j <= 0; j++) acc -= (space.skyPlane(j) - (j === 0 ? under : 0)) * Math.pow(R, pos.F - j);
     return Math.max(acc + pos.frac[1], -1e30);
   }
 

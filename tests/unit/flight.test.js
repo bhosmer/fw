@@ -205,7 +205,9 @@ function twoBoxes(wall) {
     return P.S.d;
   };
   return {
-    name: 'two boxes', R: 24, start: [0.5, 0.5, 0.25], fogK: 1, ground: 1e6, ancestorDigit: () => [0, 0, 0],
+    name: 'two boxes', R: 24, start: [0.5, 0.5, 0.25], fogK: 1, ancestorDigit: () => [0, 0, 0],
+    // (The sky far over level 0's cell, and level 0's cell where it is.)
+    skyPlane: (j) => (j === 0 ? 1e6 : 0),
     cellAir(L, f, id, seed, dg, level, up, ray) {
       if (ray) (ray.known = true), (ray.reach = -1);
       if (level !== 0) return 24;
