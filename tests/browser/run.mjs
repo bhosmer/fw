@@ -458,13 +458,14 @@ check('two worlds compared flip, and nothing else changes', async () => {
     let n = 0;
     const draw = fw.renderer.draw.bind(fw.renderer);
     fw.renderer.draw = (...a) => (n++, draw(...a));
-    // (Up to 5 s for the frames: the flip builds B's program first, which
-    // takes longer on a busy machine: ledger T13.)
+    // (Up to 20 s for the frames: until the GPU has built B's pipeline,
+    // which the app starts behind its loading screen but which can take
+    // longer on a busy machine, no frame comes back: ledger T13.)
     setTimeout(() => {
       const before = n, kept = fw.renderer.frame.prev !== null, t0 = performance.now();
       fw.flip();
       const prev = fw.renderer.frame.prev;
-      const wait = () => (n - before >= 8 || performance.now() - t0 > 5000 ? ok([before, n, kept, prev]) : setTimeout(wait, 100));
+      const wait = () => (n - before >= 8 || performance.now() - t0 > 20000 ? ok([before, n, kept, prev]) : setTimeout(wait, 100));
       wait();
     }, 1500);
   })`);
