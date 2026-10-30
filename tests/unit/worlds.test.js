@@ -32,11 +32,11 @@ function places(space, seed, n = 8) {
   return out;
 }
 
-// (And the arcology whose plaza does not fade, which may become the
-// default: see PLAZA in spaces/arcology.js.)
-const MADE = await Promise.all([...WORLDS.map((name) => makeWorld(name)), makeWorld('arcology', { plaza: { fades: false } })]);
+// (And the arcology whose plaza fades, as it did: see PLAZA in
+// spaces/arcology.js.)
+const MADE = await Promise.all([...WORLDS.map((name) => makeWorld(name)), makeWorld('arcology', { plaza: { fades: true } })]);
 for (const { space, set } of MADE) {
-  const label = space.name + (set ? '&plaza.fades=false' : '');
+  const label = space.name + (set ? '&plaza.fades=true' : '');
   // A distance that never overstates mostly changes no faster than the
   // point moves: an exact one cannot, and were it to here, one of the two
   // values would likely be more than the true distance. But a distance may

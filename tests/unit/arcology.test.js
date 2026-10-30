@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import arcology, { makeArcology, CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
+import arcology, { makeArcology, ARCOLOGY, CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR, hashCell } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight } from '../../src/flight.js';
@@ -434,8 +434,8 @@ test('what the openings and the town say of a ray holds', () => {
 // (Where the plaza does not fade, too: its pieces are then the whole height
 // of the city's rows, and far out one piece: see plaza.)
 for (const fades of [true, false]) {
-  test(`what the city says of a ray holds${fades ? '' : ', where the plaza does not fade'}`, () => {
-    const { arcology: space, _V2 } = fades ? { arcology, _V2: V2 } : makeArcology({ plaza: { fades } });
+  test(`what the city says of a ray holds, where the plaza ${fades ? 'fades' : 'does not fade'}`, () => {
+    const { arcology: space, _V2 } = fades === ARCOLOGY.plaza.fades ? { arcology, _V2: V2 } : makeArcology({ plaza: { fades } });
     const rnd = rand(23);
     const s = Math.SQRT1_2;
     const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
@@ -567,15 +567,15 @@ test('every opening up from under the plaza is carried on up by a light well', (
 // in the ring just past what it holds, and far off, out to the next
 // building's (cell ids repeat).
 test('where the plaza does not fade, its far cells are its air as one piece', () => {
-  const open = makeArcology({ plaza: { fades: false } }), space = open.arcology;
+  const open = makeArcology({ plaza: { fades: false } }), space = open.arcology, faded = makeArcology({ plaza: { fades: true } }).arcology;
   assert.equal(space.openAir, CITY);
-  assert.equal(arcology.openAir, null);
+  assert.equal(faded.openAir, null);
   const [x0, x1, z0, z1] = open._V2.NEAR_BOX, MID = open._V2.MID;
   const at = (s) => (q, id) => {
     const L = q.map(Math.round);
     return s.cellAir(L, q.map((x, a) => x - L[a]), id, seed, undefined, CITY);
   };
-  const mine = at(space), theirs = at(arcology), rnd = rand(31);
+  const mine = at(space), theirs = at(faded), rnd = rand(31);
   // (Cells across from the middle one: near, in the ring just past, and far
   // out, up to where ids repeat.)
   const across = () => {

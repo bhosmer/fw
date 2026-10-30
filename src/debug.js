@@ -118,7 +118,10 @@ export function compareRays(ctx, recs, points, dir, sum) {
     if (ray.reach >= 0 !== gpu.reach >= 0) return void sum.apart++;
     if (ray.reach < 0) return;
     sum.inAir[r.level] = (sum.inAir[r.level] ?? 0) + 1;
-    const ratio = (Math.abs(ray.reach - gpu.reach) * slant) / tol;
+    // (Where the ray lands is as far off as the point and its reach: single
+    // precision tells it no finer there. Far out in air open at every
+    // distance, a reach is hundreds of cells.)
+    const ratio = (Math.abs(ray.reach - gpu.reach) * slant) / Math.max(tol, 1e-6 * (far + Math.abs(ray.reach) + R));
     if (ratio > sum.ratio) Object.assign(sum, { ratio, level: r.level, F: pos.F, v: points[k], dir, cpu: ray.reach, gpu: gpu.reach });
     if (ratio < 1 && Math.hypot(ray.nx - gpu.n[0], ray.ny - gpu.n[1], ray.nz - gpu.n[2]) > 1e-3) sum.facing++;
   }));

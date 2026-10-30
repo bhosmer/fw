@@ -55,7 +55,7 @@ test('a variant is made from the definition, and leaves the world as it was', ()
   assert.equal(viewFrag(12, again.arcology, true), before.glsl, 'made again: the same shader');
   assert.deepEqual(again.VOLUME.data, VOLUME.data, 'made again: the same table');
   assert.deepEqual(sample(again.arcology), before.at, 'made again: the same air');
-  assert.equal(viewFrag(12, makeArcology({ plaza: { fades: true } }).arcology, true), before.glsl, 'the plaza fading, as it does: the same shader');
+  assert.equal(viewFrag(12, makeArcology({ plaza: { fades: false } }).arcology, true), before.glsl, 'the plaza not fading, as it does not: the same shader');
   const v = makeArcology({ building: { edge: 'cornice' }, halls: { solid: 0.5, walls: { door: { share: 0.36 } } }, town: { density: [30, 60, 90] } });
   assert.equal(v.def.building.edge, 'cornice');
   assert.equal(v.def.halls.walls.door.share, 0.36);
@@ -87,13 +87,13 @@ test('every part of a variant is made', () => {
     { town: { plans: ARCOLOGY.town.plans.map((p, i) => (i === 4 ? [[0, 0, 12, 24], [12, 0, 24, 24]] : p)) } },
     { town: { types: ARCOLOGY.town.types.filter((t) => t.name !== 'row') } },
     { town: { types: [...ARCOLOGY.town.types, FIVE] } },
-    { plaza: { fades: false } },
+    { plaza: { fades: true } },
   ]) {
     const v = makeArcology(set), what = JSON.stringify(set).slice(0, 80);
     assert.ok(v.arcology.glsl !== glsl, `${what} made no difference to the shader`);
     // (The column's rings aside, every part shows in the air the JavaScript
     // finds too.)
-    // (The plaza that does not fade, far off: see farPlaza.)
+    // (The plaza that fades, far off: see farPlaza.)
     if (!set.building?.coreFace && !set.plaza) assert.ok(JSON.stringify([sample(v.arcology), townSample(v)]) !== air, `${what} made no difference to the JavaScript`);
     if (set.plaza) assert.ok(farPlaza(v.arcology) !== farPlaza(arcology), `${what} made no difference to the JavaScript`);
     // (A building of five boxes: all five asked after, in both.)

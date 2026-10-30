@@ -80,9 +80,9 @@ const TOWN_DEF = {
 // (fades), or, being open at every distance, never does (see openAir in
 // halls.js, and plaza): the rest of the level (the building's masses, the
 // light wells, the city's pockets, the halls under the plaza) fades either
-// way. (It fades for now, until the open plaza has been looked at: ledger
-// B33.)
-const PLAZA = { fades: true };
+// way. (Basil chose the open plaza, 2026-10-30: ledger B33; plaza.fades=true
+// is the plaza as it was, fading.)
+const PLAZA = { fades: false };
 // The arcology's definition: its building (see hexahedron.js), the halls it
 // is built of (see halls.js), its relief, its town and its plaza.
 export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF, plaza: PLAZA });
