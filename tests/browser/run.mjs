@@ -19,23 +19,26 @@ const OUT = join(ROOT, 'tests', 'out');
 const update = process.argv.includes('--update');
 const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 
-const WORLDS = ['halls', 'arcology'];
 
 // Places to look from, as the app writes them into its URL.
 const at = (o) => Buffer.from(JSON.stringify(o)).toString('base64');
+// (A place in the halls, as links from before the arcology hold them: no
+// world named.)
+const HALLS_COURT = at({ F: 1, frac: [0.21925863850096122, 0.5797090086075722, 0.024052279319911128], digits: [[0, [3, 17, 3]], [1, [0, 23, 0]]], yaw: 1.5856586465201084, pitch: -0.1585233706077051 });
 const PLACES = {
-  // In a courtyard, walls near and far, one seen at a slant.
-  court: at({ F: 1, frac: [0.21925863850096122, 0.5797090086075722, 0.024052279319911128], digits: [[0, [3, 17, 3]], [1, [0, 23, 0]]], yaw: 1.5856586465201084, pitch: -0.1585233706077051 }),
-  // Out on the ground, pits in it running off to the horizon.
-  ground: at({ F: 0, frac: [0.08232830005124452, 0.18098790051953037, 0.6230254287625774], digits: [[-1, [21, 18, 8]], [0, [11, 18, 13]]], yaw: 7.824096801122629, pitch: 0.008087695913573402 }),
+  // Out on the plaza near the building, its floor's detail running off to
+  // the horizon.
+  plaza: at({ world: 'arcology', F: -1, frac: [0.5625, 0.1796875, 0.6458333333333334], digits: [[-1, [0, 3, 0]]], yaw: 0.5, pitch: -0.06 }),
   // Wherever a first visit starts.
   start: '',
-  // In a small room, looking through a doorway into a great hall on the left.
-  doorway: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6NSwiZnJhYyI6WzAuMTM4NDEyMzMxMzYzNzIzOCwwLjIxNDk5MDAyMjQwMTc0MTk4LDAuMTA2Nzk2NzA2MTM0MDM5MjRdLCJkaWdpdHMiOltbLTEsWzcsMTgsMTZdXSxbMCxbMTYsMTcsNV1dLFsxLFsxNSw2LDIxXV0sWzIsWzIwLDcsMl1dLFszLFsyMSw3LDEzXV0sWzQsWzAsMTAsMF1dLFs1LFswLDE2LDBdXV0sInlhdyI6MTMuOTYyNTg5NzIyMjkyMzM2LCJwaXRjaCI6LTAuMzM0NzMzNzg5OTMwOTczMTR9',
+  // In a small room inside the building, looking through a doorway into a
+  // great hall on the left.
+  doorway: at({ world: 'arcology', F: 2, frac: [0.14712029322981834, 0.07171971164643764, 0.9186596348881721], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [3, 3, 6]], [1, [11, 0, 0]], [2, [3, 10, 10]]], yaw: 2.856194490192345, pitch: 0.1 }),
   // Close in front of the Hexahedron's lower, its pockets filling the view.
   relief: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjQ1LDAuNiwwLjk3XSwiZGlnaXRzIjpbXSwieWF3IjowLCJwaXRjaCI6MC4xNX0=',
-  // Close to a corner where two walls meet, facing into it.
-  corner: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6MiwiZnJhYyI6WzAuNzMyOTI0NDcxMDI0NjE1NiwwLjIyODE0MzU3NzQxNjMwOTgzLDAuNzM0NDE2NTc4OTI4MTc5Nl0sImRpZ2l0cyI6W1stMSxbNywxOCwxNl1dLFswLFsxNiwxNyw1XV0sWzEsWzE1LDYsMjFdXSxbMixbMjEsNywyXV1dLCJ5YXciOjE0Ljk2OTQyMzUwNTYxNDc1MywicGl0Y2giOjAuMDAwMTE3NTk3OTM4MDI1Njk2NzZ9',
+  // Close to a corner where two walls meet, inside the building, facing
+  // into it.
+  corner: at({ world: 'arcology', F: 4, frac: [0.19527006149291992, 0.30276310443878174, 0.888072479603461], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [23, 21, 14]], [1, [12, 0, 3]], [2, [10, 7, 0]], [3, [0, 18, 3]], [4, [11, 6, 2]]], yaw: 5.497787143782138, pitch: 0 }),
   // Out on the plaza, the whole Hexahedron ahead, its shadow on the ground.
   building: at({ world: 'arcology', F: -2, frac: [0.07422150320780334, 0.062208054127398174, 0.5984701233709889], digits: [[-2, [11, 13, 11]]], yaw: 2.2291799938059276, pitch: -0.23828340489371397 }),
   // Before the lower's face, between two pillars, the plate's edge and the
@@ -53,11 +56,13 @@ const PLACES = {
 
 // Run before the app's own code on every load: the frame loop never runs (so
 // nothing moves or settles between checks), the scheme is the one asked for,
-// and random numbers come out the same every time.
-const setup = (scheme, live = false, world = 'halls') => `
+// and random numbers come out the same every time. (And the world last
+// visited is the one given; none, where the page is to find it as it was
+// left, as the next world is.)
+const setup = (scheme, live = false, world = 'arcology') => `
   ${live ? '' : 'window.requestAnimationFrame = () => 0;'}
   localStorage.setItem('fw.scheme', ${JSON.stringify(scheme)});
-  localStorage.setItem('fw.world', ${JSON.stringify(world)});
+  ${world ? `localStorage.setItem('fw.world', ${JSON.stringify(world)});` : ''}
   { let s = 12345; Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }`;
 
 // In the page: the current view drawn at w x h, top row first (live: as the
@@ -84,12 +89,12 @@ const PAGE_HELPERS = `
   };`;
 
 let page, base, loads = 0;
-async function load(place, scheme = 'alhambra', live = false, world = 'halls') {
+async function load(place, scheme = 'alhambra', live = false, world = 'arcology') {
   // (A query that differs every time, so that each load is a whole new page:
   // a change of hash alone would not even reload it.)
   // (A variant goes in the link's query, as a link names one: see fromLink.)
   const variant = /[/=]/.test(world) ? world : null;
-  await page.goto(`${base}index.html?${++loads}${variant ? '&' + variant : ''}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live, variant ? 'halls' : world));
+  await page.goto(`${base}index.html?${++loads}${variant ? '&' + variant : ''}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live, variant ? 'arcology' : world));
   await page.eval(PAGE_HELPERS);
   const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
   if (error) throw new Error('the page failed to start:\n' + error);
@@ -112,7 +117,7 @@ check('every scheme compiles and draws something', async () => {
     return page.eval(`import('./src/schemes.js').then((m) => m.SCHEMES.map((s) => s.name))`);
   })();
   for (const scheme of names) {
-    await load('court', scheme);
+    await load('inside', scheme);
     const spread = await page.eval(`(() => { const p = __snap(160, 90); let lo = 255, hi = 0;
       for (let i = 0; i < p.length; i += 4) { const v = p[i] + p[i + 1] + p[i + 2]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
       return hi - lo; })()`);
@@ -120,27 +125,29 @@ check('every scheme compiles and draws something', async () => {
   }
 });
 
-check('the shader and the JavaScript agree about each world', async () => {
-  for (const world of WORLDS) {
-    await load('start', 'alhambra', false, world);
+// (Where a first visit starts, out on the plaza; and inside the building,
+// among its halls.)
+check('the shader and the JavaScript agree about the world', async () => {
+  for (const place of ['start', 'inside']) {
+    await load(place);
     const worst = await page.eval('fw.check(300)');
     // (Never may the JavaScript say there is more air than the shader: the
     // flight would trust it.)
-    assert(worst.more.diff < 1e-3, `${world}: the JavaScript says there is more air: ${JSON.stringify(worst.more)}`);
+    assert(worst.more.diff < 1e-3, `${place}: the JavaScript says there is more air: ${JSON.stringify(worst.more)}`);
     // (And not only at the camera: the points round it were compared too.)
-    assert(worst.compared > 10000, `${world}: only ${worst.compared} comparisons away from the camera`);
-    assert(worst.diff < 1e-3, `${world}: they differ by ${JSON.stringify({ ...worst, more: undefined })}`);
+    assert(worst.compared > 10000, `${place}: only ${worst.compared} comparisons away from the camera`);
+    assert(worst.diff < 1e-3, `${place}: they differ by ${JSON.stringify({ ...worst, more: undefined })}`);
   }
 });
 
 // And about rays, where the JavaScript answers them: how far a ray goes in a
 // level's air, and the surface it meets (fw.checkRays).
 check('the shader and the JavaScript agree about rays', async () => {
-  for (const world of WORLDS) {
-    await load('start', 'alhambra', false, world);
+  for (const place of ['start', 'inside']) {
+    await load(place);
     const r = await page.eval('fw.checkRays(150)');
-    assert(r.ratio < 1 && r.apart === 0 && r.facing === 0, `${world}: they differ: ${JSON.stringify(r)}`);
-    assert(r.compared > 10000, `${world}: only ${r.compared} rays compared`);
+    assert(r.ratio < 1 && r.apart === 0 && r.facing === 0, `${place}: they differ: ${JSON.stringify(r)}`);
+    assert(r.compared > 10000, `${place}: only ${r.compared} rays compared`);
   }
 });
 
@@ -437,8 +444,10 @@ void main() {
 // JavaScript agree in it too (round the camera, and about rays), and a link
 // to a part of its definition there is not, or a world there is not, says so.
 check('a variant in a link is made, and the shader and the JavaScript agree in it', async () => {
-  for (const variant of ['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5', 'halls&rooms.low.share=0.3', 'arcology&building.slopes.upper=[3,80]', 'arcology&building.bands.storey=2.5', 'halls&byLevel.0.solid=0.4&byLevel.0.walls.none.share=0.05&byLevel.1.furniture.none.share=0.05&byLevel.1.slabs.solid.share=0.3', 'arcology&halls.byLevel.-1.solid=0.8&halls.byLevel.-1.furniture.none.share=0.1&halls.byLevel.0.walls.door.share=0.4', 'halls&solid=0.4&walls.none.share=0.1&walls.door.share=0.42&slabs.solid.share=0.4&slabs.oculus.share=0.48&furniture.none.share=0.1&furniture.piers.share=0.52']) {
-    await load('start', 'alhambra', false, variant);
+  // (Of the halls the arcology is built of, every kind's share moved, seen
+  // inside the building where they are.)
+  for (const [variant, place = 'start'] of [['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5'], ['arcology&building.slopes.upper=[3,80]'], ['arcology&building.bands.storey=2.5'], ['arcology&halls.byLevel.-1.solid=0.8&halls.byLevel.-1.furniture.none.share=0.1&halls.byLevel.0.walls.door.share=0.4'], ['arcology&halls.solid=0.4&halls.rooms.low.share=0.3&halls.walls.none.share=0.1&halls.walls.door.share=0.42&halls.slabs.solid.share=0.4&halls.slabs.oculus.share=0.48&halls.furniture.none.share=0.1&halls.furniture.piers.share=0.52', 'inside']]) {
+    await load(place, 'alhambra', false, variant);
     const shown = await page.eval(`document.querySelector('.world')?.textContent ?? ''`);
     assert(shown.startsWith(variant.split('&')[0]), `the legend says ${shown}`);
     const worst = await page.eval('fw.check(150)');
@@ -448,14 +457,14 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
   }
   // (The query names the world, though the place in the link is another's,
   // which is then no place: it starts as a first visit would.)
-  await page.goto(`${base}index.html?${++loads}&arcology/cornice#${PLACES.court}`, setup('alhambra', false, 'halls'));
+  await page.goto(`${base}index.html?${++loads}&arcology/cornice#${HALLS_COURT}`, setup('alhambra', false, null));
   const there = await page.eval(`({ world: fw.space.name, shown: document.querySelector('.world').textContent, F: fw.pos.F })`);
   assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F !== 1, `a query and another world's place: ${JSON.stringify(there)}`);
   // (Reloaded, a variant is the same variant, in the same place.)
   await page.eval(`(fw.fly(0.4, { f: 1 }), fw.saveLocation())`);
   const before = await page.eval(`({ href: location.href, F: fw.pos.F, frac: fw.pos.frac })`);
   // (A link changed only in its hash would not reload the page: its number is made new.)
-  await page.goto(before.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, 'halls'));
+  await page.goto(before.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, null));
   const after = await page.eval(`({ shown: document.querySelector('.world').textContent, F: fw.pos.F, frac: fw.pos.frac })`);
   assert(after.shown === 'arcology/cornice' && after.F === before.F && JSON.stringify(after.frac) === JSON.stringify(before.frac), `reloaded: ${JSON.stringify({ before, after })}`);
   // (The next world leaves the variant behind: the world after the
@@ -470,7 +479,7 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
   const next = await page.eval(`({ search: location.search, world: fw.space.name, shown: document.querySelector('.world').textContent })`);
   assert(next.search === '' && next.world === 'halls' && next.shown === 'halls', `the next world: ${JSON.stringify(next)}`);
   for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['arcology&town.density=[30,60', /not one/], ['arcology&vs=nope', /vs: there is no world nope/], ['arcology/cornice&vs=arcology&building.edge="cornice"', /vs: arcology is the same world/]]) {
-    await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra', false, 'halls'));
+    await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra'));
     const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
     assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
   }
@@ -528,7 +537,7 @@ check('two worlds compared flip, and nothing else changes', async () => {
   await load('relief', 'alhambra', false, A);
   await page.eval('(fw.flip(), fw.saveLocation())');
   const href = await page.eval('location.href');
-  await page.goto(href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, 'halls'));
+  await page.goto(href.replace(/\?\d+/, `?${++loads}`), setup('alhambra'));
   const again = await page.eval(`({ shown: fw.shown, label: document.querySelector('.world').textContent })`);
   assert(again.shown === 'B' && again.label === 'B: arcology relief.city.depths=[0,0.25,0.75]', `opened again: ${JSON.stringify(again)}`);
   // (Running as the app runs, at rest: a flip is drawn.)
@@ -550,23 +559,23 @@ check('two worlds compared flip, and nothing else changes', async () => {
   })`);
   assert(drawn[1] - drawn[0] >= 8, `at rest, a flip drew ${drawn[1] - drawn[0]} frames`);
   assert(drawn[2] && drawn[3] === null, 'the history (there before the flip) was kept across it');
-  // (Where the two put their defaults differently, the halls and fewer of
-  // them solid: B flipped to and saved opens as B, where it was.)
-  await load('start', 'alhambra', false, 'halls&vs.solid=0.3');
+  // (B flipped to and saved opens as B, where it was: inside the building,
+  // its halls fewer of them solid in B.)
+  await load('inside', 'alhambra', false, 'arcology&vs.halls.solid=0.3');
   await page.eval(STATE);
   const h = await page.eval(`(() => { fw.flip(); fw.fly(0.3, { f: 1 }); fw.saveLocation(); const s = __keep(); return { s, pic: __pic(s), href: location.href, sky: fw.flight.skyHeight() }; })()`);
-  await page.goto(h.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, 'halls'));
+  await page.goto(h.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra'));
   await page.eval(STATE);
   const h2 = await page.eval(`({ shown: fw.shown, F: fw.pos.F, frac: fw.pos.frac, pic: __pic(${JSON.stringify(h.s)}) })`);
-  assert(h2.shown === 'B' && h2.F === h.s.F && JSON.stringify(h2.frac) === JSON.stringify(h.s.frac) && h2.pic === h.pic, `the halls compared, saved with B shown: ${JSON.stringify({ was: h.s.F, ...h2, pic: h2.pic === h.pic })}`);
-  assert(h.sky > -1e29, 'B, flipped to, has no sky: it stands on the other\'s ground');
+  assert(h2.shown === 'B' && h2.F === h.s.F && JSON.stringify(h2.frac) === JSON.stringify(h.s.frac) && h2.pic === h.pic, `the halls inside compared, saved with B shown: ${JSON.stringify({ was: h.s.F, ...h2, pic: h2.pic === h.pic })}`);
+  assert(h.sky > -1e29, 'B, flipped to, has no sky over it');
 });
 
 // Settings in a link (how we fly): taken, refused when there is no such
 // one, and compared: the same world, flown two ways, with one program,
 // V flipping the settings alone.
 check('a link sets how we fly, and two ways of flying are compared', async () => {
-  await page.goto(`${base}index.html?${++loads}&arcology&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra', false, 'halls'));
+  await page.goto(`${base}index.html?${++loads}&arcology&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra'));
   const r = await page.eval(`(() => {
     const out = { a: { ...fw.flight.settings }, space: fw.space, label: document.querySelector('.world').textContent, programs: fw.renderer.entries.size };
     fw.flip();
@@ -582,7 +591,7 @@ check('a link sets how we fly, and two ways of flying are compared', async () =>
   assert(r.label === 'A: arcology flight.ease=2' && r.blabel === 'B: arcology flight.ease=2 flight.speed=0.5', `labels: ${r.label} / ${r.blabel}`);
   // (On to the next world: how we fly comes along; the world's changes and
   // the one compared are left behind.)
-  await page.goto(`${base}index.html?${++loads}&arcology&town.margin=0.5&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra', false, 'halls'));
+  await page.goto(`${base}index.html?${++loads}&arcology&town.margin=0.5&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra', false, null));
   await page.eval(`(window.__old = true, setTimeout(() => document.getElementById('world-button').click()), 0)`);
   for (let i = 0; i < 600; i++) {
     try {
@@ -592,8 +601,8 @@ check('a link sets how we fly, and two ways of flying are compared', async () =>
   }
   const next = await page.eval(`({ search: location.search, world: fw.space.name, settings: { ...fw.flight.settings }, shown: fw.shown })`);
   assert(next.search === '?flight.ease=2' && next.world === 'halls' && next.settings.ease === 2 && next.shown === null, `the next world: ${JSON.stringify(next)}`);
-  for (const [link, said] of [['arcology&flight.nope=1', /there is no flight\.nope/], ['halls&flight.speed=-1', /flight\.speed is a number more than 0/], ['arcology&vs=arcology&vs.flight.ease=1', /the same world as arcology, as the link changes them, with the same settings/]]) {
-    await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra', false, 'halls'));
+  for (const [link, said] of [['arcology&flight.nope=1', /there is no flight\.nope/], ['arcology&flight.speed=-1', /flight\.speed is a number more than 0/], ['arcology&vs=arcology&vs.flight.ease=1', /the same world as arcology, as the link changes them, with the same settings/]]) {
+    await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra'));
     const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
     assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
   }
@@ -603,7 +612,7 @@ check('a link sets how we fly, and two ways of flying are compared', async () =>
 // first world's way, then, flipped, the other's, each handed to the renderer
 // as the frame's; one program for both.
 check('a link sets how frames are drawn, and V flips it', async () => {
-  await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=depth#${PLACES.court}`, setup('alhambra', false, 'halls'));
+  await page.goto(`${base}index.html?${++loads}&arcology&vs.view.history=depth#${PLACES.inside}`, setup('alhambra'));
   const r = await page.eval(`(() => {
     fw.renderer.timed = () => [];
     let drawn = [];
@@ -624,7 +633,7 @@ check('a link sets how frames are drawn, and V flips it', async () => {
   // (And it does something: the gathering program has it, and moving frames
   // drawn the two ways differ.)
   const moving = async (flip) => {
-    await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=depth#${PLACES.court}`, setup('alhambra', false, 'halls'));
+    await page.goto(`${base}index.html?${++loads}&arcology&vs.view.history=depth#${PLACES.inside}`, setup('alhambra'));
     await page.eval(PAGE_HELPERS);
     return page.eval(`(() => {
       if (${flip}) fw.flip();
@@ -640,7 +649,7 @@ check('a link sets how frames are drawn, and V flips it', async () => {
   const [range, depth] = [await moving(false), await moving(true)];
   assert(range.has, 'the gathering program has no uRange');
   assert(depth.h !== range.h, 'moving frames drawn with view.history range and depth are the same');
-  await page.goto(`${base}index.html?${++loads}&halls&view.history=fog`, setup('alhambra', false, 'halls'));
+  await page.goto(`${base}index.html?${++loads}&arcology&view.history=fog`, setup('alhambra'));
   const error = await page.eval(`document.getElementById('help').textContent`);
   assert(/view\.history is depth or range, not fog/.test(error), `view.history=fog: the page said ${JSON.stringify(error)}`);
 });
@@ -649,8 +658,9 @@ check('a link sets how frames are drawn, and V flips it', async () => {
 // afresh): from what the world flipped to says of each level here, the
 // flight not having moved (see Flight.setSpace).
 check('a flip at rest is drawn from the world flipped to', async () => {
-  // (The halls, fewer of them solid in B: the levels here say other things.)
-  await load('court', 'alhambra', false, 'halls&vs.solid=0.3');
+  // (Inside the building, its halls fewer of them solid in B: the levels
+  // here say other things.)
+  await load('inside', 'alhambra', false, 'arcology&vs.halls.solid=0.3');
   const r = await page.eval(`(async () => {
     const { SLACK } = await import('./src/shaders.js');
     fw.renderer.timed = () => [];
@@ -679,60 +689,56 @@ check('a flip at rest is drawn from the world flipped to', async () => {
 
 // Every program sets, as it draws, every uniform it has (as the program
 // itself says: see finish in gl.js), samplers aside (set once, when it is
-// made): drawn as the app draws, the older way, and probed, in each world.
+// made): drawn as the app draws, the older way, and probed.
 // (The tour's look is drawn by the view's program.)
 check('every program sets every uniform it has', async () => {
-  for (const world of WORLDS) {
-    await load('start', 'alhambra', false, world);
-    const unset = await page.eval(`(() => {
-      const gl = fw.renderer.gl, set = new Map();
-      let using = null;
-      const use = gl.useProgram.bind(gl);
-      gl.useProgram = (p) => ((using = p), use(p));
-      for (const k of Object.keys(WebGL2RenderingContext.prototype).filter((k) => /^uniform/.test(k))) {
-        const f = gl[k].bind(gl);
-        gl[k] = (loc, ...a) => (set.has(using) || set.set(using, new Set()), set.get(using).add(loc), f(loc, ...a));
-      }
-      fw.renderer.reset();
-      fw.upscale = 0.5;
-      fw.fly(1 / 60, { f: 1 });
-      fw.snap(320, 180, true);
-      fw.upscale = 1;
-      fw.snap(320, 180, true);
-      fw.reference = true;
-      fw.snap(320, 180);
-      fw.reference = false;
-      fw.check(2);
-      fw.checkRays(2);
-      const e = fw.renderer.entry, f = fw.renderer.frame;
-      const out = [];
-      for (let err = gl.getError(); err; err = gl.getError()) out.push('a GL error, ' + err);
-      for (const [name, p] of [['view', e.viewProg], ['older', e.refProg], ['probe', e.probeProg], ['smoothing', f.smooth], ['upscaling', f.taau]]) {
-        const done = set.get(p.prog) ?? new Set();
-        for (const [u, loc] of Object.entries(p.u)) if (!(u in p.units) && !done.has(loc)) out.push(name + ': ' + u);
-      }
-      return out;
-    })()`);
-    assert(!unset.length, `${world}: uniforms never set, or GL errors: ${unset.join(', ')}`);
-  }
+  await load('start');
+  const unset = await page.eval(`(() => {
+    const gl = fw.renderer.gl, set = new Map();
+    let using = null;
+    const use = gl.useProgram.bind(gl);
+    gl.useProgram = (p) => ((using = p), use(p));
+    for (const k of Object.keys(WebGL2RenderingContext.prototype).filter((k) => /^uniform/.test(k))) {
+      const f = gl[k].bind(gl);
+      gl[k] = (loc, ...a) => (set.has(using) || set.set(using, new Set()), set.get(using).add(loc), f(loc, ...a));
+    }
+    fw.renderer.reset();
+    fw.upscale = 0.5;
+    fw.fly(1 / 60, { f: 1 });
+    fw.snap(320, 180, true);
+    fw.upscale = 1;
+    fw.snap(320, 180, true);
+    fw.reference = true;
+    fw.snap(320, 180);
+    fw.reference = false;
+    fw.check(2);
+    fw.checkRays(2);
+    const e = fw.renderer.entry, f = fw.renderer.frame;
+    const out = [];
+    for (let err = gl.getError(); err; err = gl.getError()) out.push('a GL error, ' + err);
+    for (const [name, p] of [['view', e.viewProg], ['older', e.refProg], ['probe', e.probeProg], ['smoothing', f.smooth], ['upscaling', f.taau]]) {
+      const done = set.get(p.prog) ?? new Set();
+      for (const [u, loc] of Object.entries(p.u)) if (!(u in p.units) && !done.has(loc)) out.push(name + ': ' + u);
+    }
+    return out;
+  })()`);
+  assert(!unset.length, `uniforms never set, or GL errors: ${unset.join(', ')}`);
 });
 
-// From up above each world too, the exact way sees nothing the older one
-// does not. (In the arcology it once saw the city as a plain: the cells
-// over it claimed to be solid further down than the city's air begins.)
-check('from above, each world is stepped through truly', async () => {
-  for (const world of WORLDS) {
-    // (Flown as flight first went, in proportion to the way open (curve 1)
-    // and nothing else (rise and reach 0), so that 4 s up and on is where
-    // this has always looked from.)
-    await load('start', 'alhambra', false, `${world}&flight.curve=1&flight.rise=0&flight.reach=0`);
-    await page.eval('(fw.flight.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
-    const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
-    assert(newNearer < 0.002, `${world}: the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`);
-  }
+// From up above too, the exact way sees nothing the older one does not.
+// (It once saw the city as a plain: the cells over it claimed to be solid
+// further down than the city's air begins.)
+check('from above, the world is stepped through truly', async () => {
+  // (Flown as flight first went, in proportion to the way open (curve 1)
+  // and nothing else (rise and reach 0), so that 4 s up and on is where
+  // this has always looked from.)
+  await load('start', 'alhambra', false, 'arcology&flight.curve=1&flight.rise=0&flight.reach=0');
+  await page.eval('(fw.flight.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
+  const above = await page.eval('fw.compare(320, 180, 0.02)');
+  assert(above.newNearer < 0.002, `the exact way sees nearer at ${(above.newNearer * 100).toFixed(2)}% of pixels`);
   // (Just under the sky's plane at the city's edge, where the plaza fades,
   // the two disagree (ledger B33); where it does not, as now, they do not.)
-  await page.goto(`${base}index.html?${++loads}#eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjAyMzQzNzUsMC44NjQ1NzkwMDk5MzY4ODA1LDAuNjA4MjQwMjI0NTY0MjM2M10sImRpZ2l0cyI6W1stMixbMTIsMTIsMTFdXV0sInlhdyI6MCwicGl0Y2giOi0wLjR9`, setup('alhambra', false, 'arcology'));
+  await page.goto(`${base}index.html?${++loads}#eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjAyMzQzNzUsMC44NjQ1NzkwMDk5MzY4ODA1LDAuNjA4MjQwMjI0NTY0MjM2M10sImRpZ2l0cyI6W1stMixbMTIsMTIsMTFdXV0sInlhdyI6MCwicGl0Y2giOi0wLjR9`, setup('alhambra'));
   const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
   assert(newNearer < 0.002, `under the sky's plane at the city's edge, the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`);
 });
@@ -749,9 +755,13 @@ check('from above, each world is stepped through truly', async () => {
 // arcology's long faces badly, there as elsewhere in it, and runs out of
 // steps in its pockets, short of the rooms the exact way sees in them:
 // there the exact way sees further, never nearer.)
-// (The start: a first visit, now a court open to the sky, its walls' long
-// top edges against it.)
-const STEPPING = { court: [0.002, 0.07], ground: [0.002, 0.06], start: [0.002, 0.02], relief: [0.015, 0.12] };
+// (Out on the plaza, from a first visit or elsewhere, sphere tracing runs
+// out of steps over the open floor far off, short of where the exact way
+// meets it: measured 37% and 38% of pixels, 2026-10-30. Inside, in a
+// hall, it falls short of the far walls most everywhere, 70%; and the
+// exact way sees nearer at 0.63% of pixels there, as it does elsewhere in
+// the arcology: ledger B34.)
+const STEPPING = { inside: [0.008, 0.75], plaza: [0.002, 0.42], start: [0.002, 0.42], relief: [0.015, 0.12] };
 check('the two ways of stepping rays agree', async () => {
   for (const [place, [nearer, most]] of Object.entries(STEPPING)) {
     await load(place);
@@ -762,14 +772,11 @@ check('the two ways of stepping rays agree', async () => {
   }
 });
 
-// Each reference picture: a place, and a scheme. (The halls: the court, the
-// ground, the start; then the arcology.)
+// Each reference picture: a place, and a scheme.
 const PICTURES = [
-  ['court', 'alhambra'], ['court', 'nocturne'], ['court', 'de chirico'],
-  ['ground', 'alhambra'], ['ground', 'de chirico'],
-  ['start', 'alhambra'], ['start', 'de chirico'],
+  ['start', 'alhambra'], ['plaza', 'alhambra'], ['plaza', 'de chirico'],
   ['building', 'alhambra'], ['building', 'de chirico'], ['front', 'alhambra'], ['relief', 'alhambra'],
-  ['town', 'alhambra'], ['under', 'alhambra'], ['inside', 'alhambra'], ['inside', 'nocturne'],
+  ['town', 'alhambra'], ['under', 'alhambra'], ['inside', 'alhambra'], ['inside', 'nocturne'], ['inside', 'de chirico'],
 ];
 // (Their size.)
 const SHOT = [320, 180];
@@ -790,7 +797,7 @@ check('views look as they did', async () => {
 // TAA_KEEP in frame.js), then come to rest (all of them, until it has
 // every sample: see TAA_N).
 // (Nothing here depends on the time: the same frames each run.)
-const LIVE = [['court', 'alhambra'], ['front', 'alhambra']];
+const LIVE = [['inside', 'alhambra'], ['front', 'alhambra']];
 check('views look as they did, as the app draws them moving and at rest', async () => {
   const failed = [];
   for (const [place, scheme] of LIVE) {
@@ -851,9 +858,9 @@ async function asBefore(name, png) {
 
 // Detail too small to show cleanly flickers as we move: count the pixels that
 // flash brighter or darker than both the frame before and the frame after,
-// flying slowly forward over the ground.
+// flying slowly down toward the town on the roof band, far below.
 check('distant detail does not sparkle', async () => {
-  await load('ground', 'de chirico');
+  await load('town', 'de chirico');
   const perFrame = await page.eval(`(() => {
     const W = 960, H = 540, N = 16, frames = [];
     for (let k = 0; k < N; k++) {
@@ -869,24 +876,31 @@ check('distant detail does not sparkle', async () => {
     }
     return n / (N - 2);
   })()`);
-  // (Measured in de chirico, 39 on 2026-10-28; in the old sunlit scheme it
-  // was 92 before detail went by its size as seen, 55 after, held under 75.)
-  assert(perFrame < 50, `${perFrame.toFixed(0)} pixels flicker per frame (39 when this was set)`);
+  // (Measured in de chirico, 7.5 on 2026-10-30, over the town. Before, over
+  // the halls' ground with pits to the horizon: 39 on 2026-10-28, held
+  // under 50; in the old sunlit scheme it was 92 before detail went by its
+  // size as seen, 55 after.)
+  assert(perFrame < 20, `${perFrame.toFixed(0)} pixels flicker per frame (7.5 when this was set)`);
 });
 
+// (From a first visit, out on the plaza, where it goes by looking; and
+// inside the building, where it plans its way through the halls.)
 check('the tour keeps to the air', async () => {
-  await load('start');
-  const log = await page.eval('fw.tour(40)');
-  const bad = log.find((e) => !(e.clear > 0) || !Number.isFinite(e.F));
-  assert(!bad, `at ${JSON.stringify(bad)}`);
-  // (And it goes somewhere: through more than one level, making for places.)
-  const levels = new Set(log.map((e) => e.F));
-  const aimed = log.filter((e) => e.aim).length;
-  assert(log.length === 160 && levels.size >= 2 && aimed >= 20, `the tour looked ${log.length} times, at ${levels.size} levels, aiming ${aimed} times`);
+  for (const place of ['start', 'inside']) {
+    await load(place);
+    const log = await page.eval('fw.tour(40)');
+    const bad = log.find((e) => !(e.clear > 0) || !Number.isFinite(e.F));
+    assert(!bad, `${place}: at ${JSON.stringify(bad)}`);
+    // (And it goes somewhere: through more than one level, making for places.)
+    const levels = new Set(log.map((e) => e.F));
+    const aimed = log.filter((e) => e.aim).length;
+    assert(log.length === 160 && levels.size >= 2 && aimed >= 20, `${place}: the tour looked ${log.length} times, at ${levels.size} levels, aiming ${aimed} times`);
+  }
 });
 
 // The tour dives some levels, then comes back up some, through rooms it
-// did not pass on the way down: out somewhere else (see planner.js).
+// did not pass on the way down: out somewhere else (see planner.js). (From
+// a first visit, out on the plaza: down into the building, and up.)
 check('the tour dives, and comes up somewhere else', async () => {
   await load('start');
   const r = await page.eval(`(async () => {
@@ -913,7 +927,7 @@ check('the tour dives, and comes up somewhere else', async () => {
   known(r.fresh > 2 * r.again, `coming up, ${r.again} of the rooms it came into it had passed going down, and ${r.fresh} it had not`, redesign);
 });
 
-// Boxed into a corner, the tour finds somewhere to go.
+// Boxed into a corner (inside the building), the tour finds somewhere to go.
 check('the tour gets out of a corner', async () => {
   await load('corner');
   const found = await page.eval(`(async () => {
@@ -938,7 +952,7 @@ check('a great hall is seen through a doorway', async () => {
 });
 
 check('rewinding retraces the way we came', async () => {
-  await load('court');
+  await load('inside');
   const where = () => page.eval('JSON.stringify({ F: fw.pos.F, frac: fw.pos.frac, d: [...fw.pos.digits].sort() })');
   const before = JSON.parse(await where());
   await page.eval(`(fw.flight.yaw += 0.7, fw.fly(1.5, { f: 1 }), fw.flight.yaw -= 1.2, fw.fly(1.5, { f: 1, r: 0.3 }))`);
@@ -951,7 +965,7 @@ check('rewinding retraces the way we came', async () => {
 });
 
 check('N goes somewhere new, with room to stand', async () => {
-  await load('court');
+  await load('inside');
   const was = await page.eval('fw.where');
   await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN' }))`);
   const now = await page.eval('fw.where');
@@ -960,7 +974,7 @@ check('N goes somewhere new, with room to stand', async () => {
 });
 
 check('a place survives a reload', async () => {
-  await load('court');
+  await load('inside');
   await page.eval(`(fw.flight.yaw += 0.3, fw.fly(0.7, { f: 1 }))`);
   const url = await page.eval('fw.where');
   const here = await page.eval('JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch])');
@@ -977,8 +991,8 @@ check('a link whose place cannot be read still opens somewhere', async () => {
   const state = 'JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch])';
   await load('start');
   const first = await page.eval(state);
-  const court = JSON.parse(Buffer.from(PLACES.court, 'base64').toString());
-  for (const [name, broken] of [['no level', { ...court, F: undefined }], ['no offset', { ...court, frac: undefined }], ['a digit too fine', { ...court, digits: [[3, [0, 0, 0]]] }], ['a yaw that is text', { ...court, yaw: 'east' }]]) {
+  const here = JSON.parse(Buffer.from(PLACES.inside, 'base64').toString());
+  for (const [name, broken] of [['no level', { ...here, F: undefined }], ['no offset', { ...here, frac: undefined }], ['a digit too fine', { ...here, digits: [[3, [0, 0, 0]]] }], ['a yaw that is text', { ...here, yaw: 'east' }]]) {
     await page.goto(`${base}index.html?${++loads}#${at(broken)}`, setup('alhambra'));
     await page.eval(PAGE_HELPERS);
     const got = await page.eval(`({ error: document.getElementById('help').classList.contains('error'), at: ${state}, spread: (() => { const p = __snap(160, 90); let lo = 765, hi = 0;
@@ -995,31 +1009,31 @@ check('a link whose place cannot be read still opens somewhere', async () => {
     for (const until = Date.now() + 20000; !text.includes('fps') && Date.now() < until; await new Promise((r) => setTimeout(r, 100))) text = await page.eval(`document.getElementById('hud').textContent`);
     return text;
   };
-  const broken = await said(at({ ...court, F: undefined }));
+  const broken = await said(at({ ...here, F: undefined }));
   assert(broken.includes("the link's place: its level is not a whole number") && !page.errors.length, `a link that cannot be read: the legend says ${JSON.stringify(broken)}`);
-  const fine = await said(PLACES.court);
+  const fine = await said(PLACES.inside);
   assert(fine.includes('fps') && !fine.includes("the link's place"), `a link that can be read: the legend says ${JSON.stringify(fine)}`);
   // (Changed to a link that cannot be read: nothing moves, and the link is
   // put back to where we are.)
-  await load('court');
+  await load('inside');
   const was = await page.eval(state);
   const link = await page.eval('(fw.saveLocation(), location.hash)');
-  await page.eval(`location.hash = ${JSON.stringify(at({ ...court, F: undefined }))}`);
+  await page.eval(`location.hash = ${JSON.stringify(at({ ...here, F: undefined }))}`);
   await new Promise((r) => setTimeout(r, 100));
   assert((await page.eval(state)) === was, 'a hash changed to a place that cannot be read moved us');
   assert((await page.eval('location.hash')) === link && !page.errors.length, `a hash changed to a place that cannot be read was left in the link, or failed: ${page.errors.join('\n')}`);
   // (No facing: the place, faced the most open way along the walls.)
-  await page.goto(`${base}index.html?${++loads}#${at({ ...court, yaw: undefined, pitch: undefined })}`, setup('alhambra'));
+  await page.goto(`${base}index.html?${++loads}#${at({ ...here, yaw: undefined, pitch: undefined })}`, setup('alhambra'));
   const [F, frac, yaw, pitch] = JSON.parse(await page.eval(state));
   assert(!page.errors.length, `no facing: the page failed: ${page.errors.join('\n')}`);
-  assert(F === court.F && JSON.stringify(frac) === JSON.stringify(court.frac), `no facing: at ${F} ${frac}`);
+  assert(F === here.F && JSON.stringify(frac) === JSON.stringify(here.frac), `no facing: at ${F} ${frac}`);
   assert(pitch === 0 && [0, 1, 2, 3].some((k) => yaw === (k * Math.PI) / 2), `no facing: faced ${yaw}, ${pitch}`);
 });
 
 // A link changed only in its digits (where we are, far up) is another place,
 // and is drawn, though nothing else in the view's key changes (view.js).
 check('a link changed only in its digits is drawn', async () => {
-  await load('court');
+  await load('inside');
   const r = await page.eval(`(async () => {
     fw.renderer.timed = () => [];
     let n = 0;
@@ -1031,7 +1045,7 @@ check('a link changed only in its digits is drawn', async () => {
     const atRest = ticks(5);
     const state = () => JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch, fw.flight.scale.toPrecision(3), fw.flight.fog.toPrecision(3)]);
     const was = state();
-    const at = JSON.parse(atob(${JSON.stringify(PLACES.court)}));
+    const at = JSON.parse(atob(${JSON.stringify(PLACES.inside)}));
     const d = fw.space.ancestorDigit(-8).slice();
     d[0] = d[0] > 0 ? d[0] - 1 : d[0] + 1;
     location.hash = btoa(JSON.stringify({ ...at, digits: [...at.digits, [-8, d]] }));
