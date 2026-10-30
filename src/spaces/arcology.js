@@ -25,7 +25,7 @@
 import * as P from '../pieces.js';
 import * as twin from '../twin.js';
 import { makeHalls, HALLS, R, M } from './halls.js';
-import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
+import { hashCell, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen, keyed } from '../util.js';
 import { hexahedron, HEXAHEDRON, GROUND } from './hexahedron.js';
 import { townShapeJs, townShapeGlsl, townShapes, TOWN_TYPES } from './town.js';
 
@@ -83,9 +83,15 @@ const TOWN_DEF = {
 // way. (Basil chose the open plaza, 2026-10-30: ledger B33; plaza.fades=true
 // is the plaza as it was, fading.)
 const PLAZA = { fades: false };
+// The halls the arcology is built of: the halls' (see HALLS in halls.js),
+// but at level 0, the building's chambers seen at scale 0, nine cells in ten
+// rooms and almost no blank walls, the rest of the walls open (Basil,
+// 2026-10-30: ledger F11). halls.byLevel.0.solid=0.65&halls.byLevel.0.walls.none.share=0.24
+// is that level as it was, the halls' own.
+const ARCOLOGY_HALLS = { ...HALLS, byLevel: keyed(['salt'], { 0: { solid: 0.1, walls: { none: { share: 0.02 } } } }) };
 // The arcology's definition: its building (see hexahedron.js), the halls it
-// is built of (see halls.js), its relief, its town and its plaza.
-export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF, plaza: PLAZA });
+// is built of, its relief, its town and its plaza.
+export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: ARCOLOGY_HALLS, relief: RELIEF, town: TOWN_DEF, plaza: PLAZA });
 
 // The most ridge rows a face's rectangle can span, one level finer: as many
 // as both copies look under (see underRidge), check's bound on the relief.

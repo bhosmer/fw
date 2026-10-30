@@ -167,7 +167,9 @@ export const HALLS = {
 // And what is otherwise at some levels: for each level given (as a whole
 // number, written: '-1'), changes there to any of the above but the salts,
 // to the halls as defined (byLevel: { '-1': { solid: 0.8 } }). Levels are
-// the world's own (in the arcology, -1 is the building's cells).
+// the world's own (in the arcology, -1 is the building's cells; the
+// arcology's halls have their own level 0: see ARCOLOGY_HALLS in
+// arcology.js).
 HALLS.byLevel = keyed(['salt']);
 frozen(HALLS);
 const FAR = 1000;

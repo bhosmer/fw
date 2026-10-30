@@ -51,13 +51,14 @@ export const hexu = (x) => `0x${(x >>> 0).toString(16).padStart(8, '0')}u`;
 // strings, arrays, functions) is replaced whole, by a copy (so that what is
 // given is left as it was). A part the defaults do not have, or of another
 // kind, is refused, saying where and what there is. A part made by keyed
-// holds, for each whole number it is given (by default, none), the parts
-// around it as defined, all but except, with that number's changes.
+// holds, for each whole number it is given (by default, those of entries),
+// the parts around it as defined, all but except, with that number's
+// changes (a number in entries, with its own there first).
 const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const kind = (x) => (Array.isArray(x) ? 'array' : x === null ? 'nothing' : Number.isNaN(x) ? 'NaN' : typeof x);
 const copy = (x) => (Array.isArray(x) ? x.map(copy) : plain(x) ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, copy(v)])) : x);
 const KEYED = Symbol('keyed');
-export const keyed = (except = []) => ({ [KEYED]: except });
+export const keyed = (except = [], entries = {}) => ({ [KEYED]: frozen({ except, entries }) });
 const isKeyed = (x) => plain(x) && KEYED in x;
 const keyedIn = (x) => plain(x) && (isKeyed(x) || Object.values(x).some(keyedIn));
 export function define(defaults, set, path = '') {
@@ -73,9 +74,9 @@ export function define(defaults, set, path = '') {
   for (const [k, v] of Object.entries(defaults)) if (!isKeyed(v)) out[k] = define(v, set[k], `${path}${k}.`);
   for (const [k, v] of Object.entries(defaults)) {
     if (!isKeyed(v)) continue;
-    const here = `${path}${k}`, given = set[k] ?? {};
-    if (!plain(given)) throw new Error(`definition: ${here} is a set of parts, one for each of some whole numbers, not ${JSON.stringify(given)}`);
-    const template = Object.fromEntries(Object.entries(out).filter(([p]) => !v[KEYED].includes(p)));
+    const here = `${path}${k}`, given = merge(v[KEYED].entries, set[k] ?? {});
+    if (!plain(given)) throw new Error(`definition: ${here} is a set of parts, one for each of some whole numbers, not ${JSON.stringify(set[k])}`);
+    const template = Object.fromEntries(Object.entries(out).filter(([p]) => !v[KEYED].except.includes(p)));
     out[k] = Object.fromEntries(Object.entries(given).map(([n, w]) => {
       if (!(/^-?(0|[1-9]\d*)$/.test(n) && n !== '-0' && Math.abs(+n) < 2 ** 31)) throw new Error(`definition: ${here}.${n}: there are parts only for whole numbers`);
       return [n, define(template, w, `${here}.${n}.`)];
