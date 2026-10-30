@@ -363,7 +363,9 @@ export class Flight {
 
   // Start out from wherever pos now is: no trail, nothing still settling.
   // fresh: we came by nothing in particular, so go on along the row of
-  // rooms until there is space to stand in.
+  // rooms until there is space to stand in. (The pace, as for a way open as
+  // far as our clearance: how open it is here, whichever way we go. Not what
+  // was carried here from wherever we were, by the senses since.)
   begin(fresh = false) {
     this.trail.length = this.travelled = 0;
     this.room = null;
@@ -373,6 +375,7 @@ export class Flight {
       this.sense();
     }
     this.scale = Math.max(this.clearance, 1e-3);
+    this.pace = this.paced(this.scale);
     this.opened = 0;
     this.fog = this.fogTarget;
   }

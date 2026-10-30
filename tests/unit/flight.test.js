@@ -391,3 +391,18 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
   const asked = (Math.hypot(...v) / 60) * Math.pow(R, jumped.lastMove.F - F);
   assert.ok(jumped.lastMove.F !== F && Math.abs(len - Math.min(asked, 0.5 * opened(jumped))) <= 1e-9 * len, `went ${len}, asked ${asked} (level ${F} to ${jumped.lastMove.F})`);
 });
+
+// Somewhere new, the pace is how open it is here (as for a way open as far
+// as our clearance), not what senses on the way there left: flying by hand
+// gets going at once.
+test('somewhere new, flying by hand gets going at once', () => {
+  for (const seed of [4, 9, 12]) {
+    const f = new Flight(halls);
+    elsewhere(f, rand(seed));
+    assert.equal(f.pace, f.paced(f.scale), `seed ${seed}: pace ${f.pace}, scale ${f.scale}`);
+    const { fwd } = f.basis();
+    let frames = 0;
+    while (!(f.step(1 / 60, fwd) * 60 > 0.5 * f.scale) && frames < 600) frames++;
+    assert.ok(frames < 6, `seed ${seed}: half a clearance a second after ${frames} frames`);
+  }
+});
