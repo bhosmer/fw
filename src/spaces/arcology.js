@@ -55,8 +55,8 @@ const RELIEF = {
 // square), from density; how far inside its lot a building keeps (margin);
 // how far inside the band's edge, in units, every building keeps (setback.by:
 // cut back to that line, so that a strip of the band's floor sets the
-// buildings apart from the band; 0, they stand to the edge, cut by the band's
-// faces, ledger F15), and how much of a box must stand past that line for it
+// buildings apart from the band: Basil's 5, 2026-10-30; 0, they stand to the
+// edge, cut by the band's faces, as they did: ledger F15), and how much of a box must stand past that line for it
 // to stand at all (setback.least: a square that many units a side, at its
 // corner furthest in; a box with less is dropped, so that what is left of the
 // box is never thinner than that there; with by 0 it does nothing); and the
@@ -73,7 +73,7 @@ const TOWN_DEF = {
   pick: [0, 0, 1, 1, 2, 3, 4, 5],
   density: [15, 45, 80],
   margin: 1,
-  setback: { by: 0, least: 2 },
+  setback: { by: 5, least: 2 },
   types: TOWN_TYPES,
 };
 // Whether the plaza's air fades with distance as the rest of its level does

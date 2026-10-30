@@ -279,8 +279,8 @@ test('the town\'s buildings keep their margin within their lots', () => {
 
 // Set back from the band's edge (town.setback, ledger F15): the strip of the
 // band's floor within `by` of its upright faces is air at every height of the
-// town, where today buildings stand in it; and buildings still stand inside
-// it.
+// town, where with no setback (by 0) buildings stand in it; and buildings
+// still stand inside it.
 test('set back from the band\'s edge, the town\'s buildings keep off the strip', () => {
   const by = 2, v = makeArcology({ town: { setback: { by } } }), { lo, size, data } = v.VOLUME, { ORIGIN, TOWN, BITS } = v._V2;
   const at = (s) => (c, q) => {
@@ -289,7 +289,7 @@ test('set back from the band\'s edge, the town\'s buildings keep off the strip',
     const L = q.map(Math.round);
     return s.cellAir(L, q.map((x, a) => x - L[a]), id, seed1, undefined, CITY + 1, up);
   };
-  const mine = at(v.arcology), theirs = at(arcology);
+  const mine = at(v.arcology), theirs = at(makeArcology({ town: { setback: { by: 0 } } }).arcology);
   // (A point's distance inside each of the band's upright faces, in units.)
   const faces = TOWN.solid.planes.filter((p) => p.n[1] === 0);
   const inside = (c, q) => faces.map(({ n, K }) => (R * (K - n[0] * (c[0] - ORIGIN[0]) - n[2] * (c[2] - ORIGIN[2])) - n[0] * q[0] - n[2] * q[2]) / Math.hypot(n[0], n[2]));
