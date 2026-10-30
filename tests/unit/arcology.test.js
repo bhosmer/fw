@@ -158,9 +158,12 @@ const clear = (c) => {
   const { lo, at, within, open, kind } = VOLUME, t = c.map((x, a) => x - lo[a]);
   return within(t) && open[at(t)] && !kind[at(t)];
 };
+// (Exactly, one level finer: n . (R (c - ORIGIN) + p) > R K, for some plane
+// of every solid, as planeAt has the planes. It only says which points to
+// leave out, so it catches a plane set too far out, not one too far in.)
 const outside = (c, p) => {
-  const X = c.map((x, a) => x + p[a] / R - _V2.ORIGIN[a]);
-  return _V2.SOLID_PL.every((pl) => pl.some(([nx, ny, nz, K]) => nx * X[0] + ny * X[1] + nz * X[2] > K));
+  const X = c.map((x, a) => R * (x - _V2.ORIGIN[a]) + p[a]);
+  return _V2.SOLID_PI.every((pl) => pl.some(([nx, ny, nz, RK]) => nx * X[0] + ny * X[1] + nz * X[2] > RK));
 };
 test('where relief crosses from one cell to the next, both cells say so', () => {
   const rnd = rand(12);
