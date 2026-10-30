@@ -206,7 +206,8 @@ function twoBoxes(wall) {
   };
   return {
     name: 'two boxes', R: 24, start: [0.5, 0.5, 0.25], fogK: 1, ancestorDigit: () => [0, 0, 0],
-    // (The sky far over level 0's cell, and level 0's cell where it is.)
+    // (The plane 1e6 level-0 cells up; coarser, its digits are the default
+    // ones (0), so they cancel.)
     skyPlane: (j) => (j === 0 ? 1e6 : 0),
     cellAir(L, f, id, seed, dg, level, up, ray) {
       if (ray) (ray.known = true), (ray.reach = -1);

@@ -1,89 +1,13 @@
 // "Halls": a lattice of built rooms, each of whose walls, floors and
 // furnishings is in turn a lattice of smaller rooms.
 //
-// A space is a description of ONE cell, in lattice units where the cell spans
-// 0..R and one unit is a child cell. The engine stacks that description at
-// every scale. What a space provides:
-//
-//   R              children per cell edge
-//   glsl           float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level,
-//                             out float reach, out vec3 nrm)
-//                  signed distance to the cell's air (negative inside air) at
-//                  the point L + f. It may understate a distance but must
-//                  never overstate one, on either side of the surface.
-//                  When gRay is set it also answers for a ray: if the point
-//                  is in air, reach is how far the ray goes before leaving
-//                  the piece of air it is in (and nrm the surface there);
-//                  otherwise reach is negative. See "Rays" below. The id
-//                  of the cell's parent is in gUp.
-//   cellAir        the same in JavaScript (see below), given (L, f, id,
-//                  seed, dg, level, up, ray), up the parent's id; the ray
-//                  ({ dir }, or none) told how far it goes (see hallsAir)
-//   volume         optionally, a table the space looks things up in rather
-//                  than work them out: { size, data, words }, data a
-//                  Uint32Array of `words` numbers (2 or 4) for each of
-//                  size[0] * size[1] * size[2] cells, x fastest; in the
-//                  shader, the usampler3D uVolume
-//   tables         optionally, more tables, 2D: [{ name, size, data }], data
-//                  an Int32Array of four numbers for each of size[0] *
-//                  size[1], x fastest; in the shader, the isampler2D of that
-//                  name (declared for it)
-//   maxInterior    largest clearance any point in a cell's air can have, as a
-//                  fraction of the cell
-//   longestWay     the longest way through any one convex piece of a cell's
-//                  air, in cells
-//   close          how far (fraction of the cell) air is shrunk to fade a level
-//                  out with distance
-//   openAir        optionally, the one level some of whose air is open at
-//                  every distance (none here): its features have no bound,
-//                  where maxInterior and longestWay bound every other
-//                  level's. The shader does not leave it out for being small
-//                  or far itself (a coarser level's bound may still end a
-//                  step's asking before it, as for any level); the space
-//                  fades the rest of it its own way (see gScale in
-//                  shaders.js), and when that is gone leaves only the open
-//                  air and what stands in it, as grown as it grows
-//   openArea       roughly what fraction of a surface is openings
-//   ancestorDigit  where a cell sits inside its parent when nothing says
-//                  otherwise (must be somewhere solid in the parent)
-//   palette, sky, fogK, start
-//   ground         the world has a top: above one horizontal plane there is
-//                  only open sky. This says where: the plane is this many
-//                  level-0 cells up from the floor of the level -1 cell that
-//                  ancestorDigit leads to. Being on a cell boundary of level
-//                  0, it leaves the rooms under it their roofs.
-//   skyPlane       optionally, in place of ground: the plane's height as a
-//                  digit at each level j <= 0 (in the cells of level j), to be
-//                  compared with ours digit by digit; where our digits are
-//                  the default ones, those of the levels coarser than any
-//                  we have been elsewhere at must cancel
-//   skyClear       how far under the plane, in level-0 cells, it is open air
-//                  everywhere (optional; none here)
-//   sunReach       how far under the ground plane, in level-0 cells, there
-//                  can be open air the sun shines into (optional; none here)
-//   zenith, roof   the sky's colour overhead; the colour of the ground seen
-//                  from above
-//
-// Rules for cellAir that keep the world exact at any depth:
-//   - put every feature on integer lattice coordinates, with faces that are
-//     axis-aligned or at 45 degrees in a coordinate plane
-//   - always form distances as float(L - anchor) + f, never float(L) + f - anchor
-//   - form the distance to a 45-degree plane with diag(), never from the f of
-//     two axes: close to the plane those cancel
-//   - when choosing which of several features a point is nearest, go by L + f,
-//     not L: a wrong choice overstates the clearance and rays step into solid
-// A feature aligned this way also never slices a child cell in half, so every
-// surface of a room is a clean facade of the rooms one level down.
-//
-// Pieces. A cell's air is a union of convex pieces (the room, a tunnel
-// through each face) less some convex solids (furniture). Each piece is
-// written once, as the planes that bound it: airPiece() then airPlane() for
-// each (or solidPiece(), solidPlane() and solidDone() for a solid). From
-// those the engine has both the piece's distance and, for a ray, where it
-// leaves the piece or strikes the solid, so the two always agree; and it
-// shrinks or grows everything with distance. The JavaScript below is the
-// same, piece for piece, on the same pieces (src/pieces.js). Rules:
-//   - pieces of one cell that join must overlap, not just touch
+// They are what the arcology's solid is made of (see arcology.js): cells as
+// a world's space describes one (see worlds.js), written as pieces (see
+// pieces.js). The halls keep to faces that are axis-aligned or at 45 degrees
+// in a coordinate plane: a feature aligned this way never slices a child
+// cell in half, so every surface of a room is a clean facade of the rooms
+// one level down. A cell's air is the room and a tunnel through each face,
+// less the furniture standing in the room; and so:
 //   - a solid may only stand in the room piece, clear of every tunnel
 //   - a tunnel may run on into the next cell, where that cell's own
 //     description of it must agree
@@ -677,8 +601,7 @@ const int FAR = ${FAR};
 const int HHI = R - 2 * M;
 // Does this cell have a room in it? Some are left solid, so that a surface
 // which cuts through cells (any diagonal) is not all cut-open rooms.
-// (And only where the space allows a room: spaceRoom, which each space
-// defines; the halls everywhere.)
+// (And only where the arcology allows a room: spaceRoom, which it defines.)
 bool spaceRoom(ivec3 id, uint seed);
 bool built(ivec3 id, uint seed, int level) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= (${[...Object.entries(spec.byLevel).filter(([, s]) => s.solid !== spec.solid).map(([l, s]) => `level == ${l} ? ${glf(threshold(s.solid))} : `), glf(threshold(spec.solid))].join('')}); }
 
@@ -731,7 +654,7 @@ ${pieces(false, levels, salt)}
 }
 
 // Standing height in the middle of a room, in its cell.
-export const STANDING = [0.5, (M + 4.5) / R, 0.5];
+export const STANDING = frozen([0.5, (M + 4.5) / R, 0.5]);
 
 // Where a cell of the halls sits in its parent, where nothing says otherwise
 // (as a space's ancestorDigit says, at the levels that are halls all
@@ -739,6 +662,7 @@ export const STANDING = [0.5, (M + 4.5) / R, 0.5];
 // four walls, above the height any opening reaches, which is the one place
 // that is solid whatever the parent turns out to be (if the parent is a tall
 // room, just outside it); which wall and where on it, by the level's hash.
+// (Each level's once, and as it is: those who ask copy it to change it.)
 const ancestors = new Map(); // level -> where its cell sits in its parent
 export function ancestorDigit(level) {
   let d = ancestors.get(level);
@@ -747,7 +671,7 @@ export function ancestorDigit(level) {
   const across = M + ((h >>> 8) % (R - 2 * M));
   const y = M + HLO + ((h >>> 16) % (R - 2 * M - HLO));
   const depth = g & 2 ? M - 1 : R - M;
-  d = g & 1 ? [depth, y, across] : [across, y, depth];
+  d = frozen(g & 1 ? [depth, y, across] : [across, y, depth]);
   ancestors.set(level, d);
   return d;
 }

@@ -2,6 +2,86 @@
 // takes most of a second), and named variants of it: the world and changes
 // to its definition (see makeArcology, and define in util.js). The app and
 // the tests take them from here; a link may name one (see fromLink).
+//
+// A world is a space: a description of ONE cell, in lattice units where the
+// cell spans 0..R and one unit is a child cell, which the engine stacks at
+// every scale. What a space provides:
+//
+//   name           the world's name
+//   R              children per cell edge
+//   glsl           float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level,
+//                             out float reach, out vec3 nrm)
+//                  signed distance to the cell's air (negative inside air) at
+//                  the point L + f. It may understate a distance but must
+//                  never overstate one, on either side of the surface.
+//                  When gRay is set it also answers for a ray: if the point
+//                  is in air, reach is how far the ray goes before leaving
+//                  the piece of air it is in (and nrm the surface there);
+//                  otherwise reach is negative (see pieces.js). The id of
+//                  the cell's parent is in gUp.
+//   cellAir        the same in JavaScript, given (L, f, id, seed, dg, level,
+//                  up, ray), up the parent's id; the ray ({ dir }, or none)
+//                  told how far it goes, and whether the cell says (known)
+//   volume         optionally, a table the space looks things up in rather
+//                  than work them out: { size, data, words }, data a
+//                  Uint32Array of `words` numbers (2 or 4) for each of
+//                  size[0] * size[1] * size[2] cells, x fastest; in the
+//                  shader, the usampler3D uVolume
+//   tables         optionally, more tables, 2D: [{ name, size, data }], data
+//                  an Int32Array of four numbers for each of size[0] *
+//                  size[1], x fastest; in the shader, the isampler2D of that
+//                  name (declared for it)
+//   openAreaGlsl   optionally, float openAreaAt(int level, ivec3 id, ivec3 up,
+//                  vec3 n): what fraction of a surface opens at a level,
+//                  where it is (see the detail asked after in main,
+//                  shaders.js); else openArea everywhere
+//   openArea       roughly what fraction of a surface is openings
+//   maxInterior    largest clearance any point in a cell's air can have, as a
+//                  fraction of the cell
+//   longestWay     the longest way through any one convex piece of a cell's
+//                  air, in cells
+//   close          how far (fraction of the cell) air is shrunk to fade a level
+//                  out with distance
+//   openAir        optionally, the one level some of whose air is open at
+//                  every distance: its features have no bound, where
+//                  maxInterior and longestWay bound every other level's.
+//                  The shader does not leave it out for being small or far
+//                  itself (a coarser level's bound may still end a step's
+//                  asking before it, as for any level); the space fades the
+//                  rest of it its own way (see gScale in shaders.js), and
+//                  when that is gone leaves only the open air and what
+//                  stands in it, as grown as it grows
+//   slants         optionally, the whole-number normals of planes, other than
+//                  the axes and the diagonals, that the cell is cut by,
+//                  carried exactly across levels (see Position.levels)
+//   ancestorDigit  where a cell sits inside its parent when nothing says
+//                  otherwise (must be somewhere solid in the parent)
+//   start          where in its level-0 cell a visit starts (see elsewhere in
+//                  arrival.js)
+//   skyPlane       the world has a top: above one horizontal plane there is
+//                  only open sky. This says where: skyPlane(j), the plane's
+//                  height as a digit at each level j <= 0 (in the cells of
+//                  level j), to be compared with ours digit by digit; where
+//                  our digits are the default ones, those of the levels
+//                  coarser than any we have been elsewhere at must cancel
+//   skyClear       optionally, how far under the plane, in level-0 cells, it
+//                  is open air everywhere
+//   sunReach       optionally, how far under the plane, in level-0 cells,
+//                  there can be open air the sun shines into
+//   palette, sky, zenith, roof, fogK
+//                  its look: each level's colours (palette(level): { wall,
+//                  floor }), the haze, the sky's colour overhead, the colour
+//                  of the ground seen from above, and how far we see in the
+//                  room we are in, in its cells
+//   room, openings, halfWall
+//                  for finding ways (see planner.js): a cell's room, if it
+//                  has one, and the openings in its faces (each given the
+//                  cell's id, seed and level), and the rooms' walls' half
+//                  thickness
+//   planned        optionally, at which levels the tour may plan its ways
+//                  (by default, every one)
+//   entrances      optionally, the ways into the rooms from air that is no
+//                  room: { level, list } (see Planner.waysFromCity)
 import { HEXAHEDRON } from './spaces/hexahedron.js';
 import { FLIGHT, flightSettings } from './flight.js';
 import { VIEW, viewSettings } from './view.js';

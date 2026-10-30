@@ -6,6 +6,23 @@
 // it, and the surface there. (Here the world is as it is, not shrunk back
 // with distance as drawing does: gO and gA are nothing.)
 //
+// A cell's air is a union of convex pieces less some convex solids standing
+// in them. Each piece is written once, as the planes that bound it:
+// airPiece() then airPlane() for each (or solidPiece(), solidPlane() and
+// solidDone() for a solid). From those both twins have the piece's distance
+// and, for a ray, where it leaves the piece or strikes the solid, so the two
+// always agree; and the shader shrinks or grows everything with distance.
+// Rules for a cell that keep the world exact at any depth:
+//   - put every feature on integer lattice coordinates, its faces on planes
+//     of whole-number normals (the axes, the diagonals in a coordinate
+//     plane, or the space's slants)
+//   - always form distances as float(L - anchor) + f, never float(L) + f - anchor
+//   - form the distance to a 45-degree plane with diag(), never from the f of
+//     two axes: close to the plane those cancel
+//   - when choosing which of several features a point is nearest, go by L + f,
+//     not L: a wrong choice overstates the clearance and rays step into solid
+//   - pieces of one cell that join must overlap, not just touch
+//
 // The state the shader keeps in globals is kept in S, one object for all the
 // worlds, set afresh for each point asked about.
 
@@ -106,8 +123,8 @@ export function solidSpan(x, f, x0, x1, a) {
 export const diag = (p, sa, sb, ca, cb, k) =>
   sa === sb ? sa * (S.Lp[p] - ca - cb) - k + sa * S.Fp[p] : sa * (S.Lm[p] - ca + cb) - k + sa * S.Fm[p];
 
-// For a ray (an object { dir } to be told how far it goes: see hallsAir in
-// spaces/halls.js), of a piece the point is in (d, its distance, as first
+// For a ray (an object { dir } to be told how far it goes: see cellAir in
+// worlds.js), of a piece the point is in (d, its distance, as first
 // asked; ask: the same piece again): asked again with the ray, it stays in
 // air to the end of whichever piece it is in for longest.
 export function through(ray, d, ask) {

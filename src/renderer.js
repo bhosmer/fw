@@ -69,7 +69,7 @@ export class Renderer {
       textures: {},
     };
     // What a space keeps as a table rather than works out (see volume in
-    // spaces/halls.js): a 3D texture of pairs (or fours) of unsigned
+    // worlds.js): a 3D texture of pairs (or fours) of unsigned
     // integers (bound to its program's unit whenever a program that reads it
     // draws).
     if (space.volume) {

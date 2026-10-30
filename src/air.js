@@ -8,7 +8,7 @@ import { levelSeed, wrapId } from './util.js';
 
 // One level's air distance at the point v from the camera (level-F cells),
 // in that level's lattice units. And if ray is given ({ dir }), what the
-// world says of a ray from there along dir (see hallsAir in spaces/halls.js).
+// world says of a ray from there along dir (see cellAir in worlds.js).
 export function airAt(space, rec, v = [0, 0, 0], ray = null) {
   if (ray) ray.known = false; // (a world that does not say, does not know)
   const R = space.R;

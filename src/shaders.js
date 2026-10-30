@@ -66,8 +66,8 @@ uniform ivec3 uL[NLEV];
 uniform vec3 uFr[NLEV];
 uniform ivec3 uId[NLEV];
 uniform ivec3 uPid[NLEV];  // the id of the cell's parent
-${space.volume ? '// The space\'s table (see volume in spaces/halls.js).\nuniform highp usampler3D uVolume;' : ''}
-${(space.tables ?? []).map((t) => `// The space's table ${t.name} (see tables in spaces/halls.js).\nuniform highp isampler2D ${t.name};`).join('\n')}
+${space.volume ? '// The space\'s table (see volume in worlds.js).\nuniform highp usampler3D uVolume;' : ''}
+${(space.tables ?? []).map((t) => `// The space's table ${t.name} (see tables in worlds.js).\nuniform highp isampler2D ${t.name};`).join('\n')}
 uniform uint uSeed[NLEV];
 uniform int uLevel[NLEV];
 uniform float uSig[NLEV];
@@ -98,7 +98,7 @@ const vec3 EX = vec3(1.0, 0.0, 0.0), EY = vec3(0.0, 1.0, 0.0), EZ = vec3(0.0, 0.
 float h01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
 bool beyond(int x, float f, int c) { return x > c || (x == c && f >= 0.0); }
 
-// What a space uses to answer for a ray (see spaces/halls.js). Lengths are in
+// What a space uses to answer for a ray (see glsl in worlds.js). Lengths are in
 // the level's lattice units. With distance, a level's air is shrunk back from
 // its surfaces by gO, which grows by gA for each unit the ray travels, so the
 // faces below are planes that move as the ray goes.
@@ -315,7 +315,7 @@ export function viewFrag(nlev, space, exact) {
     /* glsl */ `
 #define EXACT ${exact ? 1 : 0}
 ${ifOpen(`// The level whose air is open at every distance (see openAir in
-// spaces/halls.js): it is not left out for being small or far itself. What
+// worlds.js): it is not left out for being small or far itself. What
 // of it fades (all but its open air) the space fades its own way: see gScale.
 #define OPEN_AIR ${space.openAir}
 `)}uniform int uN;            // levels in use, coarsest first
@@ -340,7 +340,7 @@ uniform vec4 uOuter;
 // (negative: below it).
 uniform float uSkyH;
 // How far under that plane sunlight can come in whatever we see from (see
-// sunReach in spaces/halls.js).
+// sunReach in worlds.js).
 uniform float uSunReach;
 // The scheme's lights (see SCHEME in schemes.js): uSun, the sun's strength;
 // uSunDir, toward it.

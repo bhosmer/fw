@@ -67,8 +67,8 @@ export function check(ctx, n = 300, round = 15) {
   }
   return { ...worst, more, compared };
 }
-// The same for rays, where the JavaScript answers them (see hallsAir in
-// spaces/halls.js): along random directions, the axes and diagonals, from
+// The same for rays, where the JavaScript answers them (see cellAir in
+// worlds.js): along random directions, the axes and diagonals, from
 // the camera and points round it, how far each level says a ray goes in
 // its air and the surface it meets. The worst disagreement in reach, as a
 // multiple of what single precision can tell there (more along a ray
