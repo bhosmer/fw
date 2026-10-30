@@ -53,7 +53,14 @@ const RELIEF = {
 // a street; one whole block; a strip beside a grid), picked by the cell's
 // hash from pick; the share of lots built on, by cluster (two cells
 // square), from density; how far inside its lot a building keeps (margin);
-// and the kinds of building (see town.js).
+// how far inside the band's edge, in units, every building keeps (setback.by:
+// cut back to that line, so that a strip of the band's floor sets the
+// buildings apart from the band; 0, they stand to the edge, cut by the band's
+// faces, ledger F15), and how much of a box must stand past that line for it
+// to stand at all (setback.least: a square that many units a side, at its
+// corner furthest in; a box with less is dropped, so that what is left of the
+// box is never thinner than that there; with by 0 it does nothing); and the
+// kinds of building (see town.js).
 const TOWN_DEF = {
   plans: [
     [0, 1, 2].flatMap((j) => [0, 1, 2].map((i) => [8 * i, 8 * j, 8 * i + 8, 8 * j + 8])),
@@ -66,6 +73,7 @@ const TOWN_DEF = {
   pick: [0, 0, 1, 1, 2, 3, 4, 5],
   density: [15, 45, 80],
   margin: 1,
+  setback: { by: 0, least: 2 },
   types: TOWN_TYPES,
 };
 // Whether the plaza's air fades with distance as the rest of its level does
@@ -146,6 +154,7 @@ function check(def) {
   // (A building stands a unit inside its lot (see PREAMBLE in town.js): the
   // margin may be no more.)
   if (!(t.margin > 0 && t.margin <= 1)) bad('town.margin must be over 0 and at most 1 (buildings stand a unit inside their lots)');
+  if (![t.setback.by, t.setback.least].every((x) => Number.isInteger(x) && x >= 0 && x <= R)) bad(`town.setback: { by, least }, whole units from 0 to ${R}`);
   if (!t.types.length) bad('town.types: none');
   if (!t.density.length || !t.density.every((d) => Number.isInteger(d) && d >= 0 && d <= 100)) bad('town.density: whole percentages, at least one');
   if (!t.pick.length || !t.pick.every((i) => Number.isInteger(i) && i >= 0 && i < t.plans.length)) bad(`town.pick: plans by their index (0 to ${t.plans.length - 1}), at least one`);
@@ -878,6 +887,25 @@ export function makeArcology(set) {
   // Box k of a lot r, by the lot's hashes h, h2 and its cluster's density
   // (see town.js, whence the shader's too).
   const townShape = townShapeJs(TOWN_H, false, def.town.types);
+  // Where the town is set back from the band's edge (def.town.setback), the
+  // band's upright faces, which every building keeps `by` units inside: each
+  // with its normal across (x, z) and its K, whole numbers (n . X <= K, X in
+  // cells from the building's origin, as the cell's corner, CELL.b, is; the
+  // shader works them out in whole numbers), its length's reciprocal, and
+  // the least whole T that R K - n . p (p in units from the same origin) must
+  // be at a box's corner furthest in for the box to stand: the line `by`
+  // units in, by |n| in n . p (M, the ceiling of by |n|, found exactly:
+  // (M - 1)^2 < by^2 n . n <= M^2), and the square `least` units a side past
+  // it, least (|nx| + |nz|) more. None where it is not (by 0): the buildings
+  // stand to the edge, cut by the faces as the band ends.
+  const TOWN_EDGES = TOWN && def.town.setback.by > 0 ? TOWN.solid.planes.filter(({ n }) => n[1] === 0).map(({ n, K }) => {
+    if (!Number.isInteger(K)) throw new Error(`arcology: a face of the town's ${TOWN.solid.name} (${n}) at ${K}, not a whole number: its setback is worked out in whole numbers (see TOWN_EDGES)`);
+    const nn = n[0] * n[0] + n[2] * n[2], W2 = def.town.setback.by ** 2 * nn;
+    let M = Math.ceil(Math.sqrt(W2));
+    while (M * M < W2) M++;
+    while ((M - 1) ** 2 >= W2) M--;
+    return { n: [n[0], n[2]], K, inv: 1 / Math.sqrt(nn), T: M + def.town.setback.least * (Math.abs(n[0]) + Math.abs(n[2])) };
+  }) : [];
   // A box's distance at p (for the tests: the town asks boxSolid).
   const boxDist = ([x0, y0, z0, x1, y1, z1], [x, y, z]) => Math.max(x0 - x, x - x1, y0 - y, y - y1, z0 - z, z - z1);
   const TOWN_CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
@@ -886,7 +914,7 @@ export function makeArcology(set) {
   // (For the checks: how many rays the solids without relief have stopped
   // in the city's pockets: see the pockets' block in cellAir.)
   const SEEN = { clipped: 0 };
-  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, TOWN_SALT, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
   const VOLUME = (() => {
     const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
     const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -1694,17 +1722,40 @@ export function makeArcology(set) {
     // with distance, the shader's alone. Otherwise the text is both's: in
     // JavaScript float, min and max are as GLSL has them, vectors are
     // arrays, and whole numbers are as twin.unsigned makes them.)
-    const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep, axis: E } = twin.writer(js);
+    const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep, axis: E, num } = twin.writer(js);
     const CB = cellB(js);
+    // Set back from the band's edge (TOWN_EDGES; none, and nothing written,
+    // where the town is not): for each face i, townAir works out once, for
+    // the cell, k_i (K in units from the cell's corner: n . p <= k_i on the
+    // band's side, p in units in the cell) and e_i (the point's distance
+    // outside the line `by` units in, its whole part worked out apart, so as
+    // exact as the face's own); boxSolid then drops a box unless its corner
+    // furthest in is past the line by a square `least` units a side (k_i - n .
+    // that corner at least T, all whole numbers), and cuts the rest at the
+    // line. A
+    // box's distance is still the most of its planes' (exact inside, a lower
+    // bound outside: it never overstates), and for a ray the planes are where
+    // it strikes.
+    // (n . (x, z) for whole numbers n, as whole numbers (c: as written), or
+    // as floats (num).)
+    const dotN = ([a, b], [x, z], c = String) => [[a, x], [b, z]].filter(([k]) => k).map(([k, v], j) => (j && k < 0 ? ` - ${c(-k)} * ${v}` : `${j ? ' + ' : ''}${c(k)} * ${v}`)).join('');
+    const EDGE_ARGS = TOWN_EDGES.map((_, i) => `, e${i}, k${i}`).join('');
+    const edgeAt = TOWN_EDGES.flatMap(({ n, K, inv }, i) => [
+      decl('int', `k${i} = R * (${K} - (${dotN(n, [`${CB}.x`, `${CB}.z`])}))`),
+      decl('float', `e${i} = (float(${dotN(n, ['L.x', 'L.z'])} - k${i}) + (${dotN(n, ['f.x', 'f.z'], num)})) * ${num(inv)} + ${num(def.town.setback.by)}`),
+    ]);
+    const edgeStands = TOWN_EDGES.map(({ n, T }, i) => `k${i} - (${dotN(n, [`int(${n[0] > 0 ? 'lo' : 'hi'}.x)`, `int(${n[1] > 0 ? 'lo' : 'hi'}.z)`])}) < ${T}`);
     // (Box k of lot r, if it has one, then what to do with it, given its
     // corners.)
     const shape = (then) => (js ? `{ const b = townShape(h, h2, r, dens, k); if (b) ${then('[b[0], b[1], b[2]]', '[b[3], b[4], b[5]]')} }` : `if (townShape(h, h2, r, dens, k, lo, hi)) ${then('lo', 'hi')}`);
     const lotHash = (n, salt) => `hashCell(${iv([`${CB}.x * 16 + ${n} - l0`, `${CB}.z`, salt])}, TOWN_SALT)`;
     const box = [
       '// A box of the town as a solid at p (its distance; for a ray, where it strikes).',
-      fn('float', 'boxSolid', ['vec3 lo', 'vec3 hi', 'vec3 p']),
+      fn('float', 'boxSolid', ['vec3 lo', 'vec3 hi', 'vec3 p', ...TOWN_EDGES.flatMap((_, i) => [`float e${i}`, `int k${i}`])]),
+      ...(TOWN_EDGES.length ? [`  if (${edgeStands.join(' || ')}) return 1e9;`] : []),
       '  solidPiece();',
       ...['x', 'y', 'z'].map((c, a) => `  solidPlane(lo.${c} - p.${c}, ${E(a, '-')}); solidPlane(p.${c} - hi.${c}, ${E(a)});`),
+      ...TOWN_EDGES.map(({ n, inv }, i) => `  solidPlane(e${i}, ${js ? `${num(n[0] * inv)}, 0, ${num(n[1] * inv)}` : `vec3(${num(n[0] * inv)}, 0.0, ${num(n[1] * inv)})`});`),
       '  return solidDone();',
       '}',
     ];
@@ -1721,6 +1772,7 @@ export function makeArcology(set) {
       js ? 'function townAir(L, f, w, ray) {' : 'float townAir(ivec3 L, vec3 f, uint w, bool ray, inout float reach, inout vec3 nrm) {',
       ...ins([
         js ? 'const p = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 p = vec3(L) + f;',
+        ...edgeAt,
         decl('uint', 'open = (w >> uint(OPEN_AT)) & 63u, corner = (w >> uint(TOWN_CORNER_AT)) & 15u'),
         decl('bool', `r0 = ${RAY}`),
         decl('float', `t = 1e9${js ? '' : ', fo = gO, fa = gA'}`, true),
@@ -1763,7 +1815,7 @@ export function makeArcology(set) {
             decl('uint', `h = ${lotHash('n', '7')}, h2 = ${lotHash('n', '8')}`),
             decl('float', 'd = min(min(p.x - float(r.x), float(r.z) - p.x), min(p.z - float(r.y), float(r.w) - p.z)) + TOWN_MARGIN', true),
             `for (${js ? 'let' : 'int'} k = 0; k < TOWN_SHAPES; k++)`,
-            `  ${shape((lo, hi) => `d = min(d, boxSolid(${lo}, ${hi}, p));`)}`,
+            `  ${shape((lo, hi) => `d = min(d, boxSolid(${lo}, ${hi}, p${EDGE_ARGS}));`)}`,
             't = max(box, -d);',
             'if (!ray || t > 0.0) break;',
           ]),
@@ -1778,7 +1830,7 @@ export function makeArcology(set) {
               `if (max(max(off.x, off.y), off.z) >= ${X}) continue;`,
               decl('uint', `h = ${lotHash('l', '7')}, h2 = ${lotHash('l', '8')}`),
               `for (${js ? 'let' : 'int'} k = 0; k < TOWN_SHAPES; k++)`,
-              `  ${shape((lo, hi) => `boxSolid(${lo}, ${hi}, p);`)}`,
+              `  ${shape((lo, hi) => `boxSolid(${lo}, ${hi}, p${EDGE_ARGS});`)}`,
             ]),
             '}',
             keep,
@@ -1792,7 +1844,7 @@ export function makeArcology(set) {
       ]),
       '}',
     ];
-    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['p', 'lo', 'hi', 'off', 'r', 'CELL.b'])) : lines.join('\n'));
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['p', 'lo', 'hi', 'off', 'r', 'CELL.b', 'L', 'f'])) : lines.join('\n'));
     return { box: text(box), air: text(air) };
   }
   // The relief, in either language (js: true, or GLSL), written once from

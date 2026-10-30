@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import arcology, { makeArcology, CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
-import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
+import { levelSeed, wrapId as wrapIdR, hashCell } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight } from '../../src/flight.js';
 import { rayHolds } from './rays.js';
@@ -275,6 +275,99 @@ test('the town\'s buildings keep their margin within their lots', () => {
   }
   assert.ok(shapes > 1000, `${shapes} boxes`);
   assert.ok(worst >= 1 - 1e-9, `a box ${worst} from its lot's edge`);
+});
+
+// Set back from the band's edge (town.setback, ledger F15): the strip of the
+// band's floor within `by` of its upright faces is air at every height of the
+// town, where today buildings stand in it; and buildings still stand inside
+// it.
+test('set back from the band\'s edge, the town\'s buildings keep off the strip', () => {
+  const by = 2, v = makeArcology({ town: { setback: { by } } }), { lo, size, data } = v.VOLUME, { ORIGIN, TOWN, BITS } = v._V2;
+  const at = (s) => (c, q) => {
+    const id = wrapId([c[0] + R * C, c[1] + (ROW_ID % R) * R, c[2] + R * C]);
+    const up = wrapId([0, 1, 2].map((a) => (a === 1 ? ROW_ID : C + R * C) + Math.floor(c[a] / R)));
+    const L = q.map(Math.round);
+    return s.cellAir(L, q.map((x, a) => x - L[a]), id, seed1, undefined, CITY + 1, up);
+  };
+  const mine = at(v.arcology), theirs = at(arcology);
+  // (A point's distance inside each of the band's upright faces, in units.)
+  const faces = TOWN.solid.planes.filter((p) => p.n[1] === 0);
+  const inside = (c, q) => faces.map(({ n, K }) => (R * (K - n[0] * (c[0] - ORIGIN[0]) - n[2] * (c[2] - ORIGIN[2])) - n[0] * q[0] - n[2] * q[2]) / Math.hypot(n[0], n[2]));
+  const rnd = rand(61);
+  let strip = 0, stood = 0, standing = 0;
+  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+    if (!((data[BITS.WORDS * (x + size[0] * (y + size[1] * z))] >>> BITS.TOWN_AT) & 1)) continue;
+    const c = [x + lo[0], y + lo[1], z + lo[2]];
+    for (let k = 0; k < 300; k++) {
+      const q = [rnd() * R, 0.05 + rnd() * (TOWN.H - 0.1), rnd() * R], ds = inside(c, q);
+      if (!ds.every((d) => d > 0.02)) continue;
+      const d = mine(c, q);
+      if (Math.min(...ds) < by - 0.02) {
+        strip++;
+        assert.ok(d < 0, `solid at ${q} in ${c}, ${Math.min(...ds)} inside the band's edge`);
+        stood += theirs(c, q) > 0;
+      } else standing += d > 0;
+    }
+  }
+  assert.ok(strip > 1000 && stood > 100 && standing > 1000, `${strip} points in the strip (${stood} in buildings, set to the edge), ${standing} in buildings inside it`);
+});
+
+// And which boxes stand, exactly: over every box of the town, for several
+// setbacks, a box stands just when a square `least` units a side, at its
+// corner furthest in, is past the line `by` units in from each of the band's
+// upright faces (here in floats, from all four corners). Asked of the space
+// at a point inside each box near that corner: solid just where some box
+// that stands holds it, past the lines.
+test('set back from the band\'s edge, a box stands just when a square past the line fits at its corner', () => {
+  let solid = 0, air = 0, near = 0, dropped = 0;
+  // (Setbacks under which some box is one short of standing, just stands,
+  // or stands by one, on some face.)
+  for (const [by, least] of [[2, 2], [2, 1], [5, 1], [1, 2], [6, 3], [3, 2]]) {
+    const v = makeArcology({ town: { setback: { by, least } } }), { lo, size, data } = v.VOLUME;
+    const { ORIGIN, TOWN, BITS, TOWN_PLANS, TOWN_DENSITY, TOWN_SALT, townShape } = v._V2, PICK = v.def.town.pick;
+    const faces = TOWN.solid.planes.filter((p) => p.n[1] === 0).map(({ n, K }) => ({ n: [n[0], n[2]], K, len: Math.hypot(n[0], n[2]) }));
+    const at = (c, q) => {
+      const id = wrapId([c[0] + R * C, c[1] + (ROW_ID % R) * R, c[2] + R * C]);
+      const up = wrapId([0, 1, 2].map((a) => (a === 1 ? ROW_ID : C + R * C) + Math.floor(c[a] / R)));
+      const L = q.map(Math.round);
+      return v.arcology.cellAir(L, q.map((x, a) => x - L[a]), id, seed1, undefined, CITY + 1, up);
+    };
+    for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++) {
+      if (!((data[BITS.WORDS * (x + size[0] * (y + size[1] * z))] >>> BITS.TOWN_AT) & 1)) continue;
+      const c = [x + lo[0], y + lo[1], z + lo[2]], b = c.map((q, a) => q - ORIGIN[a]);
+      // (A point's depth inside each face's line, in units: p in units in the cell.)
+      const depth = (p) => faces.map(({ n, K, len }) => (R * (K - n[0] * b[0] - n[1] * b[2]) - n[0] * p[0] - n[1] * p[2]) / len - by);
+      const corners = (s) => [[s[0], s[2]], [s[3], s[2]], [s[0], s[5]], [s[3], s[5]]].map(([u, w]) => [u, 0, w]);
+      const hc = hashCell([Math.floor(b[0] / 2), Math.floor(b[2] / 2), 9], TOWN_SALT), hl = hashCell([b[0], b[2], 11], TOWN_SALT);
+      const dens = TOWN_DENSITY[hc % TOWN_DENSITY.length];
+      TOWN_PLANS[PICK[hl % PICK.length]].forEach((r, i) => {
+        const h = hashCell([b[0] * 16 + i, b[2], 7], TOWN_SALT), h2 = hashCell([b[0] * 16 + i, b[2], 8], TOWN_SALT);
+        const boxes = [];
+        for (let k = 0; k < v._V2.TOWN_SHAPES; k++) {
+          const s = townShape(h, h2, r, dens, k);
+          if (!s) continue;
+          // (Each face's corner furthest in, of all four, and the square's room past the line there.)
+          const room = faces.map(({ n, len }, f) => Math.max(...corners(s).map((p) => depth(p)[f])) - (least * (Math.abs(n[0]) + Math.abs(n[1]))) / len);
+          if (room.some((m) => Math.abs(m) < 1e-9)) near++;
+          boxes.push({ s, stands: room.every((m) => m >= -1e-9) });
+        }
+        for (const { s, stands } of boxes) {
+          dropped += !stands;
+          // (Inside the box by half a unit from its corner furthest in from the face it is nearest.)
+          const f = faces.map((_, j) => j).sort((j, l) => Math.min(...corners(s).map((p) => depth(p)[j])) - Math.min(...corners(s).map((p) => depth(p)[l])))[0];
+          const cin = corners(s).sort((p, q) => depth(q)[f] - depth(p)[f])[0];
+          const p = [cin[0] + (cin[0] === s[0] ? 0.5 : -0.5), (s[1] + s[4]) / 2, cin[2] + (cin[2] === s[2] ? 0.5 : -0.5)];
+          const past = depth(p);
+          if (past.some((d) => Math.abs(d) < 1e-6)) continue;
+          const held = past.every((d) => d > 0) && boxes.some((o) => o.stands && p[0] > o.s[0] && p[0] < o.s[3] && p[1] > o.s[1] && p[1] < o.s[4] && p[2] > o.s[2] && p[2] < o.s[5]);
+          const d = at(c, p);
+          assert.equal(d > 0, held, `setback ${by}, ${least}: at ${p} in ${c} (box ${s}, ${stands ? 'standing' : 'dropped'}), ${d}`);
+          held ? solid++ : air++;
+        }
+      });
+    }
+  }
+  assert.ok(solid > 2000 && air > 300 && dropped > 200, `${solid} points in boxes that stand, ${air} in air, ${dropped} boxes dropped (${near} on the line exactly)`);
 });
 
 // Rays in the buildings' openings (see openings) and the town (see

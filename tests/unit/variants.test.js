@@ -83,6 +83,7 @@ test('every part of a variant is made', () => {
     { town: { density: [30, 60, 90] } },
     { town: { pick: [0, 1, 2, 3, 4, 5] } },
     { town: { margin: 0.5 } },
+    { town: { setback: { by: 2 } } },
     { town: { plans: ARCOLOGY.town.plans.map((p, i) => (i === 4 ? [[0, 0, 12, 24], [12, 0, 24, 24]] : p)) } },
     { town: { types: ARCOLOGY.town.types.filter((t) => t.name !== 'row') } },
     { town: { types: [...ARCOLOGY.town.types, FIVE] } },
@@ -143,6 +144,8 @@ test('a variant must be one the definition has', () => {
   // (And what the rest of the arcology needs of a variant: see check.)
   for (const [set, said] of [
     [{ town: { margin: 2 } }, /town\.margin/],
+    // (A setback in whole units, none less than 0 nor more than a cell.)
+    ...[{ by: -1 }, { by: 25 }, { by: 1.5 }, { by: NaN }, { by: '2' }, { least: -2 }, { least: Infinity }].map((setback) => [{ town: { setback } }, /town\.setback/]),
     [{ relief: { finer: { quant: 1 } } }, /must be even/],
     [{ relief: { city: { sby: 3 } } }, /must be even/],
     [{ relief: { finer: { sb: 25 } } }, /whole quanta/],
@@ -215,6 +218,7 @@ test('a link names a world and changes to it', async () => {
   // (And a world to compare with: by name, or the same with changes of its own.)
   assert.deepEqual(fromLink('?arcology&town.margin=0.5&vs=arcology/cornice'), { name: 'arcology', changes: { town: { margin: 0.5 } }, settings: undefined, vs: { name: 'arcology/cornice', changes: { town: { margin: 0.5 } }, settings: undefined } });
   assert.deepEqual(fromLink('?arcology&vs.building.edge="girder"'), { name: 'arcology', changes: undefined, settings: undefined, vs: { name: 'arcology', changes: { building: { edge: 'girder' } }, settings: undefined } });
+  assert.deepEqual(fromLink('?arcology&vs.town.setback.by=2'), { name: 'arcology', changes: undefined, settings: undefined, vs: { name: 'arcology', changes: { town: { setback: { by: 2 } } }, settings: undefined } });
   assert.throws(() => fromLink('?arcology&vs=arcology'), /the same as/);
   assert.throws(() => fromLink('?vs=arcology'), /names its world/);
   assert.throws(() => fromLink('?arcology&vs.town.margin=[1'), /not one/);
