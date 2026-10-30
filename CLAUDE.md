@@ -1,6 +1,6 @@
 # fw
 
-A world without a size, in the browser: WebGL2, ray-marched, nested without end (every level is real geometry). No build step, no dependencies. Two worlds: the halls (a lattice of rooms at every scale) and the arcology (a building after Soleri's Hexahedron, standing in a city plaza, made of halls). Free flight; a tour.
+A world without a size, in the browser: WebGL2, ray-marched, nested without end (every level is real geometry). No build step, no dependencies. One world: the arcology (a building after Soleri's Hexahedron, standing in a city plaza, made of halls: a lattice of rooms at every scale). Free flight; a tour.
 
 ## Where things are
 - `.claude/ledger.md`: the state of the work. Read START HERE, Open items and the recent log before anything else (after a compaction too), and keep it current: every step, as you go.

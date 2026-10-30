@@ -2,9 +2,9 @@
 // starting from wherever the flight now is, as a link does).
 
 // Start somewhere new: a first visit is somewhere different each time, in
-// the same world. Across, not up or down (which would take us out of the
-// storey under the ground, or into the sky): our cell and its parent are
-// anywhere in theirs. rand() gives numbers in [0, 1).
+// the same world. Across, not up or down (which would take us under the
+// plaza, or up into the sky): our cell and its parent are anywhere across
+// theirs, at the same height. rand() gives numbers in [0, 1).
 export function elsewhere(flight, rand) {
   const { pos, R } = flight;
   const reset = () => {

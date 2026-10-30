@@ -592,8 +592,8 @@ export function makeHalls(set) {
     `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\n${twin.AS_GLSL}\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabHole, slabHalf, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
   )(P, C, M, R, HLO, HHI, FAR, Math.SQRT1_2, hashCell, wrapId, built);
 
-  // (Other spaces build on these halls: hallsGlsl and hallsAir are a halls
-  // cell, whatever its level.)
+  // (The arcology builds on these: hallsGlsl and hallsAir are a halls cell,
+  // whatever its level.)
   const hallsGlsl = /* glsl */ `
 const int M = ${M};
 const int HLO = ${HLO};

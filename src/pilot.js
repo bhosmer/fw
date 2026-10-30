@@ -384,8 +384,8 @@ export class Pilot {
       const toward = 1 + OUTWARD * outness;
       // How much bigger than ours a space of size e is, as going out sees
       // it. (A space a level smaller is no detour if it is straight up to
-      // the sky: from the top storey, the only ways out are through the
-      // roof.)
+      // the sky: under an opening to the sky, the way out may be only up
+      // through it.)
       const straight = outness > 0.7 && out.sky;
       const bigger = (e) => {
         const b = Math.log(Math.max(e, 1e-30) / room);
