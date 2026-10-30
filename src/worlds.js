@@ -1,19 +1,15 @@
-// The worlds there are to visit, each made when first asked for (the
-// arcology takes most of a second), and named variants of them: a world and
-// changes to its definition (see makeArcology and makeHalls, and define in
-// util.js). The app and the tests take them from here; a link names one
-// (see fromLink).
+// The world there is to visit, the arcology, made when first asked for (it
+// takes most of a second), and named variants of it: the world and changes
+// to its definition (see makeArcology, and define in util.js). The app and
+// the tests take them from here; a link may name one (see fromLink).
 import { HEXAHEDRON } from './spaces/hexahedron.js';
 import { FLIGHT, flightSettings } from './flight.js';
 import { VIEW, viewSettings } from './view.js';
 import { byPaths, merge, define, frozen } from './util.js';
 
-// (Each with the changes set, or as it is.)
+// (With the changes set, or as it is. The first is the world a link that
+// names none opens.)
 const BASES = {
-  halls: async (set) => {
-    const m = await import('./spaces/halls.js');
-    return set ? m.makeHalls(set).space : m.default;
-  },
   arcology: async (set) => {
     const m = await import('./spaces/arcology.js');
     return set ? m.makeArcology(set).arcology : m.default;
@@ -40,24 +36,22 @@ export async function makeWorld(name, changes) {
 
 // What a link's query names: ?variant&part.of.it=value&... (each value as
 // JSON: town.density=[10,30,60]; or a word alone, as text:
-// view.history=depth): its world's name (or none), and the
-// changes, as define takes them. Passed over: a number alone (as makes a
-// link new), and what is added to links as they are passed on (utm_..., and
-// the like). A link with changes names its world (the parts differ).
-// Settings, how we fly through it and how its frames are drawn (flight.ease=2:
-// see FLIGHT in flight.js; view.history=depth: see VIEW in view.js), are
-// apart from the world's changes (settings), and need no world named:
-// they are the same for every one, and go with us to the next world (see
-// nextWorld in main.js). (So no world has a part of that name: the tests
-// see to it.)
+// view.history=depth): the name of the world it opens (the one it names,
+// or else the first of WORLDS), and the changes, as define takes them.
+// Passed over: a number alone (as makes a link new), and what is added to
+// links as they are passed on (utm_..., and the like). Settings, how we fly
+// through it and how its frames are drawn (flight.ease=2: see FLIGHT in
+// flight.js; view.history=depth: see VIEW in view.js), are apart from the
+// world's changes (settings): they are the same for every world. (So no
+// world has a part of that name: the tests see to it.)
 // And a second world to compare it with, vs: ...&vs=name (by default the
-// first's name), with the same changes and settings and any of its own on
-// top (vs.part.of.it=value); it must differ from the first, if only in its
+// first), with the same changes and settings and any of its own on top
+// (vs.part.of.it=value); it must differ from the first, if only in its
 // settings.
 export const ADDED = /^(utm_\w+|fbclid|gclid|msclkid|mc_\w+|ref)$/;
 export const SETTINGS = frozen({ flight: FLIGHT, view: VIEW });
 // Whether a link's path (part.of.it, or vs.part.of.it) is of a setting.
-export const isSetting = (path) => Object.hasOwn(SETTINGS, path.replace(/^vs\./, '').split('.')[0]);
+const isSetting = (path) => Object.hasOwn(SETTINGS, path.replace(/^vs\./, '').split('.')[0]);
 // Settings, from a link's (as fromLink gives them), checked and whole.
 export function makeSettings(set) {
   const s = define(SETTINGS, set);
@@ -92,10 +86,10 @@ export function fromLink(search) {
       throw new Error(`${path}=${text}: the value is not one (a number, true or false, a word, "text", or [a, list])`);
     }
   }
-  if ((changes.size || vs !== null || theirs.size || theirSettings.size) && !names.length) throw new Error('a link with changes, or a world to compare with, names its world (?arcology&..., ?halls&...)');
   const set = (m) => (m.size ? byPaths(Object.fromEntries(m)) : undefined);
-  const name = names[0] ?? null, mine = set(changes), mySettings = set(settings);
+  const name = names[0] ?? WORLDS[0], mine = set(changes), mySettings = set(settings);
   if (vs === null && !theirs.size && !theirSettings.size) return { name, changes: mine, settings: mySettings, vs: null };
+  // (Compared with the world the link opens, unless it names another.)
   if (vs === name && !theirs.size && !theirSettings.size) throw new Error(`vs=${vs}: the same as the world it is to be compared with`);
   return { name, changes: mine, settings: mySettings, vs: { name: vs ?? name, changes: merge(mine, set(theirs)), settings: merge(mySettings, set(theirSettings)) } };
 }

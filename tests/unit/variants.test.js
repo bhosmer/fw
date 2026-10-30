@@ -202,32 +202,37 @@ test('a variant keeps what a world must', () => {
   assert.ok(inAir > 50, `${inAir} rays in air`);
 });
 
-// What a link names: a world or a variant, and changes to it by path (as
-// JSON); a number alone (as makes a link new) passed over; nonsense refused,
-// saying what there is.
+// What a link names: a world or a variant (or none: the world there is),
+// and changes to it by path (as JSON); a number alone (as makes a link new)
+// passed over; nonsense refused, saying what there is.
 test('a link names a world and changes to it', async () => {
   assert.deepEqual(fromLink('?7&arcology/cornice&town.density=%5B10,30,60%5D&halls.solid=0.5'), { name: 'arcology/cornice', changes: { town: { density: [10, 30, 60] }, halls: { solid: 0.5 } }, settings: undefined, vs: null });
-  assert.deepEqual(fromLink(''), { name: null, changes: undefined, settings: undefined, vs: null });
-  assert.deepEqual(fromLink('?3'), { name: null, changes: undefined, settings: undefined, vs: null });
-  assert.throws(() => fromLink('?halls&arcology'), /one world, not halls and arcology/);
+  assert.deepEqual(WORLDS, ['arcology']);
+  assert.deepEqual(fromLink(''), { name: 'arcology', changes: undefined, settings: undefined, vs: null });
+  assert.deepEqual(fromLink('?3'), { name: 'arcology', changes: undefined, settings: undefined, vs: null });
+  assert.throws(() => fromLink('?arcology&arcology/cornice'), /one world, not arcology and arcology\/cornice/);
   assert.throws(() => fromLink('?town.density=[1,2'), /not one/);
   assert.throws(() => fromLink('?arcology&__proto__.x=1'), /no such part/);
   assert.throws(() => fromLink('?arcology&__proto__=1'), /no such part/);
   assert.throws(() => fromLink('?arcology&a.b=1&a.b=2'), /set twice/);
-  assert.throws(() => fromLink('?halls.solid=0.5'), /names its world/);
+  assert.deepEqual(fromLink('?town.margin=0.5'), { name: 'arcology', changes: { town: { margin: 0.5 } }, settings: undefined, vs: null }, 'changes with no world named are the arcology\'s');
   assert.throws(() => fromLink('?arcology&x=%2'), /not a part of a link/);
-  assert.deepEqual(fromLink('?halls&solid=1e%2B0&utm_source=x&fbclid=AbC'), { name: 'halls', changes: { solid: 1 }, settings: undefined, vs: null });
-  assert.deepEqual(fromLink('?halls&solid=1e+0'), { name: 'halls', changes: { solid: 1 }, settings: undefined, vs: null });
+  assert.deepEqual(fromLink('?arcology&halls.solid=1e%2B0&utm_source=x&fbclid=AbC'), { name: 'arcology', changes: { halls: { solid: 1 } }, settings: undefined, vs: null });
+  assert.deepEqual(fromLink('?arcology&halls.solid=1e+0'), { name: 'arcology', changes: { halls: { solid: 1 } }, settings: undefined, vs: null });
   await assert.rejects(() => makeWorld('toString'), /there is no world toString/);
   // (And a world to compare with: by name, or the same with changes of its own.)
   assert.deepEqual(fromLink('?arcology&town.margin=0.5&vs=arcology/cornice'), { name: 'arcology', changes: { town: { margin: 0.5 } }, settings: undefined, vs: { name: 'arcology/cornice', changes: { town: { margin: 0.5 } }, settings: undefined } });
   assert.deepEqual(fromLink('?arcology&vs.building.edge="girder"'), { name: 'arcology', changes: undefined, settings: undefined, vs: { name: 'arcology', changes: { building: { edge: 'girder' } }, settings: undefined } });
   assert.deepEqual(fromLink('?arcology&vs.town.setback.by=2'), { name: 'arcology', changes: undefined, settings: undefined, vs: { name: 'arcology', changes: { town: { setback: { by: 2 } } }, settings: undefined } });
   assert.throws(() => fromLink('?arcology&vs=arcology'), /the same as/);
-  assert.throws(() => fromLink('?vs=arcology'), /names its world/);
+  // (With no world named: compared with the world there is, by default.)
+  assert.deepEqual(fromLink('?vs.town.margin=1').vs, { name: 'arcology', changes: { town: { margin: 1 } }, settings: undefined });
+  assert.deepEqual(fromLink('?town.margin=0.5&vs=arcology/cornice').vs, { name: 'arcology/cornice', changes: { town: { margin: 0.5 } }, settings: undefined });
+  assert.throws(() => fromLink('?vs=arcology'), /vs=arcology: the same as/);
   assert.throws(() => fromLink('?arcology&vs.town.margin=[1'), /not one/);
   assert.deepEqual(Object.keys(VARIANTS).sort(), Object.keys(ARCOLOGY.building.edges).filter((e) => e !== ARCOLOGY.building.edge).map((e) => `arcology/${e}`).sort());
-  await assert.rejects(() => makeWorld('nope'), /there is no world nope \(there are halls, arcology, arcology\/cornice/);
+  await assert.rejects(() => makeWorld('nope'), /there is no world nope \(there are arcology, arcology\/cornice/);
+  await assert.rejects(() => makeWorld('halls'), /there is no world halls \(there are arcology, arcology\/cornice/);
   const w = await makeWorld('arcology/cornice', { town: { density: [10, 30, 60] } });
   assert.equal(w.base, 'arcology');
   assert.deepEqual(w.set, { building: { edge: 'cornice' }, town: { density: [10, 30, 60] } });
@@ -242,14 +247,14 @@ test('a link names a world and changes to it', async () => {
 // against what there is. And no world has a part of a setting's name, which
 // a link would never reach.
 test('a link sets how we fly, apart from the world', async () => {
-  assert.deepEqual(fromLink('?flight.ease=2'), { name: null, changes: undefined, settings: { flight: { ease: 2 } }, vs: null });
+  assert.deepEqual(fromLink('?flight.ease=2'), { name: 'arcology', changes: undefined, settings: { flight: { ease: 2 } }, vs: null });
   assert.deepEqual(fromLink('?arcology&town.margin=0.5&flight.ease=2&vs.flight.speed=0.5'), {
     name: 'arcology', changes: { town: { margin: 0.5 } }, settings: { flight: { ease: 2 } },
     vs: { name: 'arcology', changes: { town: { margin: 0.5 } }, settings: { flight: { ease: 2, speed: 0.5 } } },
   });
   assert.deepEqual(fromLink('?arcology&vs=arcology&vs.flight.ease=3').vs, { name: 'arcology', changes: undefined, settings: { flight: { ease: 3 } } });
   assert.throws(() => fromLink('?arcology&flight.ease=2&flight.ease=3'), /set twice/);
-  assert.throws(() => fromLink('?vs.flight.ease=3'), /names its world/);
+  assert.deepEqual(fromLink('?vs.flight.ease=3').vs, { name: 'arcology', changes: undefined, settings: { flight: { ease: 3 } } });
   assert.deepEqual(makeSettings(undefined), SETTINGS);
   assert.deepEqual(makeSettings({ flight: { ease: 2 } }).flight, { ...FLIGHT, ease: 2 });
   assert.throws(() => makeSettings({ flight: { nope: 1 } }), /there is no flight\.nope/);
@@ -268,6 +273,6 @@ test('a link sets how we fly, apart from the world', async () => {
   assert.throws(() => fromLink('?arcology&town.density=[1,2'), /not one/);
   // (A word where a number belongs is refused as one; true and false are still JSON.)
   assert.throws(() => makeSettings(fromLink('?flight.speed=fast').settings), /is a number, not "fast"/);
-  assert.deepEqual(fromLink('?halls&a=true&b=false&c=null').changes, { a: true, b: false, c: null });
+  assert.deepEqual(fromLink('?arcology&a=true&b=false&c=null').changes, { a: true, b: false, c: null });
   for (const name of WORLDS) for (const part of Object.keys(SETTINGS)) await assert.rejects(() => makeWorld(name, { [part]: {} }), new RegExp(`there is no ${part}`), `${name} has a part named ${part}`);
 });

@@ -22,47 +22,41 @@ const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 
 // Places to look from, as the app writes them into its URL.
 const at = (o) => Buffer.from(JSON.stringify(o)).toString('base64');
-// (A place in the halls, as links from before the arcology hold them: no
-// world named.)
-const HALLS_COURT = at({ F: 1, frac: [0.21925863850096122, 0.5797090086075722, 0.024052279319911128], digits: [[0, [3, 17, 3]], [1, [0, 23, 0]]], yaw: 1.5856586465201084, pitch: -0.1585233706077051 });
 const PLACES = {
   // Out on the plaza near the building, its floor's detail running off to
   // the horizon.
-  plaza: at({ world: 'arcology', F: -1, frac: [0.5625, 0.1796875, 0.6458333333333334], digits: [[-1, [0, 3, 0]]], yaw: 0.5, pitch: -0.06 }),
+  plaza: at({ F: -1, frac: [0.5625, 0.1796875, 0.6458333333333334], digits: [[-1, [0, 3, 0]]], yaw: 0.5, pitch: -0.06 }),
   // Wherever a first visit starts.
   start: '',
   // In a small room inside the building, looking through a doorway into a
   // great hall on the left.
-  doorway: at({ world: 'arcology', F: 2, frac: [0.14712029322981834, 0.07171971164643764, 0.9186596348881721], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [3, 3, 6]], [1, [11, 0, 0]], [2, [3, 10, 10]]], yaw: 2.856194490192345, pitch: 0.1 }),
+  doorway: at({ F: 2, frac: [0.14712029322981834, 0.07171971164643764, 0.9186596348881721], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [3, 3, 6]], [1, [11, 0, 0]], [2, [3, 10, 10]]], yaw: 2.856194490192345, pitch: 0.1 }),
   // Close in front of the Hexahedron's lower, its pockets filling the view.
   relief: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjQ1LDAuNiwwLjk3XSwiZGlnaXRzIjpbXSwieWF3IjowLCJwaXRjaCI6MC4xNX0=',
   // Close to a corner where two walls meet, inside the building, facing
   // into it.
-  corner: at({ world: 'arcology', F: 4, frac: [0.19527006149291992, 0.30276310443878174, 0.888072479603461], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [23, 21, 14]], [1, [12, 0, 3]], [2, [10, 7, 0]], [3, [0, 18, 3]], [4, [11, 6, 2]]], yaw: 5.497787143782138, pitch: 0 }),
+  corner: at({ F: 4, frac: [0.19527006149291992, 0.30276310443878174, 0.888072479603461], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [23, 21, 14]], [1, [12, 0, 3]], [2, [10, 7, 0]], [3, [0, 18, 3]], [4, [11, 6, 2]]], yaw: 5.497787143782138, pitch: 0 }),
   // Out on the plaza, the whole Hexahedron ahead, its shadow on the ground.
-  building: at({ world: 'arcology', F: -2, frac: [0.07422150320780334, 0.062208054127398174, 0.5984701233709889], digits: [[-2, [11, 13, 11]]], yaw: 2.2291799938059276, pitch: -0.23828340489371397 }),
+  building: at({ F: -2, frac: [0.07422150320780334, 0.062208054127398174, 0.5984701233709889], digits: [[-2, [11, 13, 11]]], yaw: 2.2291799938059276, pitch: -0.23828340489371397 }),
   // Before the lower's face, between two pillars, the plate's edge and the
   // upper above.
-  front: at({ world: 'arcology', F: -2, frac: [0.5, 0.8071139361473042, 0.41167254170923323], digits: [[-2, [12, 12, 13]]], yaw: 0, pitch: 0.05 }),
+  front: at({ F: -2, frac: [0.5, 0.8071139361473042, 0.41167254170923323], digits: [[-2, [12, 12, 13]]], yaw: 0, pitch: 0.05 }),
   // High over the building, looking steeply down: the town on the roof
   // band between two pillars, the plaza far below.
-  town: at({ world: 'arcology', F: -2, frac: [0.5, 0.9166666666666661, 0.6875], digits: [[-2, [12, 12, 11]]], yaw: 3.14159, pitch: -0.95 }),
+  town: at({ F: -2, frac: [0.5, 0.9166666666666661, 0.6875], digits: [[-2, [12, 12, 11]]], yaw: 3.14159, pitch: -0.95 }),
   // Between the roof band and the plate: the town, the plate's underside
   // over it, a stair up a pillar.
-  under: at({ world: 'arcology', F: -2, frac: [0.5, 0.8300511199076943, 0.9533112166270068], digits: [], yaw: 0.9, pitch: 0 }),
+  under: at({ F: -2, frac: [0.5, 0.8300511199076943, 0.9533112166270068], digits: [], yaw: 0.9, pitch: 0 }),
   // In a hall inside the building, three levels down.
-  inside: at({ world: 'arcology', F: 1, frac: [0.6157683407192641, 0.9541410982350217, 0.34963503163210796], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [11, 15, 4]], [1, [19, 23, 11]]], yaw: -17.965845148832386, pitch: 0.26231536310500564 }),
+  inside: at({ F: 1, frac: [0.6157683407192641, 0.9541410982350217, 0.34963503163210796], digits: [[-2, [12, 13, 12]], [-1, [7, 0, 17]], [0, [11, 15, 4]], [1, [19, 23, 11]]], yaw: -17.965845148832386, pitch: 0.26231536310500564 }),
 };
 
 // Run before the app's own code on every load: the frame loop never runs (so
 // nothing moves or settles between checks), the scheme is the one asked for,
-// and random numbers come out the same every time. (And the world last
-// visited is the one given; none, where the page is to find it as it was
-// left, as the next world is.)
-const setup = (scheme, live = false, world = 'arcology') => `
+// and random numbers come out the same every time.
+const setup = (scheme, live = false) => `
   ${live ? '' : 'window.requestAnimationFrame = () => 0;'}
   localStorage.setItem('fw.scheme', ${JSON.stringify(scheme)});
-  ${world ? `localStorage.setItem('fw.world', ${JSON.stringify(world)});` : ''}
   { let s = 12345; Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }`;
 
 // In the page: the current view drawn at w x h, top row first (live: as the
@@ -89,12 +83,11 @@ const PAGE_HELPERS = `
   };`;
 
 let page, base, loads = 0;
-async function load(place, scheme = 'alhambra', live = false, world = 'arcology') {
+async function load(place, scheme = 'alhambra', live = false, variant = '') {
   // (A query that differs every time, so that each load is a whole new page:
   // a change of hash alone would not even reload it.)
   // (A variant goes in the link's query, as a link names one: see fromLink.)
-  const variant = /[/=]/.test(world) ? world : null;
-  await page.goto(`${base}index.html?${++loads}${variant ? '&' + variant : ''}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live, variant ? 'arcology' : world));
+  await page.goto(`${base}index.html?${++loads}${variant ? '&' + variant : ''}${PLACES[place] ? '#' + PLACES[place] : ''}`, setup(scheme, live));
   await page.eval(PAGE_HELPERS);
   const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
   if (error) throw new Error('the page failed to start:\n' + error);
@@ -159,7 +152,7 @@ check('the shader and the JavaScript agree about rays', async () => {
 // come out in steps.
 check('four levels deep against a town wall, the shader keeps the JavaScript\'s precision', async () => {
   const hash = 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6MywiZnJhYyI6WzAuMTk1MjQ5MDYwNDU1Nzc4OSwwLjI4Mjc1MjQ5MDMzNTkyMDQsMC4yNDczNjcxMzg3MjM3MDU0XSwiZGlnaXRzIjpbWy0xLFs5LDE5LDNdXSxbMCxbMTUsMTEsN11dLFsxLFswLDE5LDE3XV0sWzIsWzAsMiwyMV1dLFszLFswLDksOF1dXSwieWF3IjotMi45NjU3NTk5OTk5OTk5ODYsInBpdGNoIjotMC4wNDA2NDAwMDAwMDAwMDUwNn0=';
-  await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra', false, 'arcology'));
+  await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra'));
   const r = await page.eval(`(() => {
     const recs = fw.pos.levels(-1, fw.pos.F), j = recs.findIndex((q) => q.level === -1), rec = recs[j], { fwd } = fw.flight.basis();
     let seed = 5;
@@ -205,7 +198,7 @@ check('over a terrace\'s floor and under its ceiling, the shader keeps the JavaS
     ceiling: ['eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6MCwiZnJhYyI6WzAuOTAxMTQxMzI2NDUzMjcwNiwwLjk4MDA1MDMxODI0Mzk2ODQsMC4wNTExMjE5MjY5NTczNjQzOTRdLCJkaWdpdHMiOltbLTEsWzksMTYsMTldXSxbMCxbNCwxMSwxMV1dXSwieWF3IjowLjMsInBpdGNoIjowLjl9', 1],
   };
   for (const [name, [hash, up]] of Object.entries(places)) {
-    await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra', false, 'arcology'));
+    await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra'));
     const r = await page.eval(`(() => {
       const recs = fw.pos.levels(-1, fw.pos.F), j = recs.findIndex((q) => q.level === -1), rec = recs[j];
       const dir = [0, ${up}, 0], ray = { dir };
@@ -353,7 +346,7 @@ check('the shader and the JavaScript agree at the city\'s level', async () => {
     const w = _V2.wellOf([_V2.MID + a, ROW_ID, _V2.MID + c], levelSeed(-2));
     if (w) for (let k = 0; k < 40; k++) sets.wells.push([[(a + 0.5) * R + (2 * rnd() - 1) * (w.w - 0.5), rnd() * 4, (c + 0.5) * R + (2 * rnd() - 1) * (w.w - 0.5)], [rnd() - 0.5, k % 2 ? 1 : -1, rnd() - 0.5]]);
   }
-  await load('start', 'alhambra', false, 'arcology');
+  await load('start');
   for (const [name, at] of Object.entries(sets)) {
     const r = await page.eval(`(() => {
       const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
@@ -455,30 +448,19 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
     const r = await page.eval('fw.checkRays(80)');
     assert(r.ratio < 1 && r.apart === 0 && r.facing === 0 && r.compared > 3000, `${variant}: about rays they differ: ${JSON.stringify(r)}`);
   }
-  // (The query names the world, though the place in the link is another's,
-  // which is then no place: it starts as a first visit would.)
-  await page.goto(`${base}index.html?${++loads}&arcology/cornice#${HALLS_COURT}`, setup('alhambra', false, null));
+  // (The query names the variant, and the place in the link is where it
+  // opens.)
+  await page.goto(`${base}index.html?${++loads}&arcology/cornice#${PLACES.inside}`, setup('alhambra'));
   const there = await page.eval(`({ world: fw.space.name, shown: document.querySelector('.world').textContent, F: fw.pos.F })`);
-  assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F !== 1, `a query and another world's place: ${JSON.stringify(there)}`);
+  assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F === 1, `a variant's link with a place: ${JSON.stringify(there)}`);
   // (Reloaded, a variant is the same variant, in the same place.)
   await page.eval(`(fw.fly(0.4, { f: 1 }), fw.saveLocation())`);
   const before = await page.eval(`({ href: location.href, F: fw.pos.F, frac: fw.pos.frac })`);
   // (A link changed only in its hash would not reload the page: its number is made new.)
-  await page.goto(before.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra', false, null));
+  await page.goto(before.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra'));
   const after = await page.eval(`({ shown: document.querySelector('.world').textContent, F: fw.pos.F, frac: fw.pos.frac })`);
   assert(after.shown === 'arcology/cornice' && after.F === before.F && JSON.stringify(after.frac) === JSON.stringify(before.frac), `reloaded: ${JSON.stringify({ before, after })}`);
-  // (The next world leaves the variant behind: the world after the
-  // arcology, as it is, with no query.)
-  await page.eval(`(window.__old = true, setTimeout(() => document.getElementById('world-button').click()), 0)`);
-  for (let i = 0; i < 600; i++) {
-    try {
-      if (await page.eval(`!window.__old && !!window.fw`)) break;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  const next = await page.eval(`({ search: location.search, world: fw.space.name, shown: document.querySelector('.world').textContent })`);
-  assert(next.search === '' && next.world === 'halls' && next.shown === 'halls', `the next world: ${JSON.stringify(next)}`);
-  for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['arcology&town.density=[30,60', /not one/], ['arcology&vs=nope', /vs: there is no world nope/], ['arcology/cornice&vs=arcology&building.edge="cornice"', /vs: arcology is the same world/]]) {
+  for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['halls', /there is no world halls \(there are arcology, arcology\//], ['arcology&vs=halls', /vs: there is no world halls/], ['arcology&town.density=[30,60', /not one/], ['arcology&vs=nope', /vs: there is no world nope/], ['arcology/cornice&vs=arcology&building.edge="cornice"', /vs: arcology is the same world/]]) {
     await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra'));
     const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
     assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
@@ -589,18 +571,6 @@ check('a link sets how we fly, and two ways of flying are compared', async () =>
   assert(r.a.ease === 2 && r.a.speed === 1 && r.b.ease === 2 && r.b.speed === 0.5, `the settings: ${JSON.stringify(r)}`);
   assert(r.same && r.programs === 1, `two programs, or two worlds, for one world: ${JSON.stringify(r)}`);
   assert(r.label === 'A: arcology flight.ease=2' && r.blabel === 'B: arcology flight.ease=2 flight.speed=0.5', `labels: ${r.label} / ${r.blabel}`);
-  // (On to the next world: how we fly comes along; the world's changes and
-  // the one compared are left behind.)
-  await page.goto(`${base}index.html?${++loads}&arcology&town.margin=0.5&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra', false, null));
-  await page.eval(`(window.__old = true, setTimeout(() => document.getElementById('world-button').click()), 0)`);
-  for (let i = 0; i < 600; i++) {
-    try {
-      if (await page.eval(`!window.__old && !!window.fw`)) break;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  const next = await page.eval(`({ search: location.search, world: fw.space.name, settings: { ...fw.flight.settings }, shown: fw.shown })`);
-  assert(next.search === '?flight.ease=2' && next.world === 'halls' && next.settings.ease === 2 && next.shown === null, `the next world: ${JSON.stringify(next)}`);
   for (const [link, said] of [['arcology&flight.nope=1', /there is no flight\.nope/], ['arcology&flight.speed=-1', /flight\.speed is a number more than 0/], ['arcology&vs=arcology&vs.flight.ease=1', /the same world as arcology, as the link changes them, with the same settings/]]) {
     await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra'));
     const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);

@@ -2,8 +2,6 @@
 // the page's URL (after the #) so that a place can be bookmarked or sent to
 // someone. The hash is JSON in base64:
 //
-//   world        the world the place is in ('halls' where it is left out:
-//                a link from before there were others)
 //   F, frac      the position (see position.js): a whole number (no
 //                further either way than LEVEL_MOST), and three numbers in
 //                [0, 1)
@@ -21,41 +19,23 @@ import { faceOpen } from './arrival.js';
 
 // The furthest level from 0, either way, that a link may name, or a digit of
 // a link be at: far beyond any flight (a level a second for hours on end),
-// and near enough that the levels between are soon worked out. (Every level
-// from 0 out to one asked for is: the halls' ancestorDigit keeps each, and
-// a million levels out takes seconds, ten million more than a Map can hold,
-// failing in the midst of going there.)
+// and near enough that the levels between are soon worked out. (A position
+// keeps a digit for every level from where it is out to the coarsest it has
+// been told of: a million levels takes seconds, ten million more than a Map
+// can hold, failing in the midst of going there.)
 export const LEVEL_MOST = 1e4;
-
-// What the hash holds, where it is a place's fields, with a world that is a
-// name ('halls' where none is given); else null.
-function decode(hash) {
-  let at;
-  try {
-    at = JSON.parse(atob(hash.replace(/^#/, '')));
-  } catch {
-    return null;
-  }
-  if (!at || typeof at !== 'object' || Array.isArray(at)) return null;
-  const world = at.world ?? 'halls';
-  return typeof world === 'string' ? { ...at, world } : null;
-}
-
-// The world a link's place is in, or null where there is none to read. (It
-// is read before the world is made, and so before the rest of the place can
-// be checked: see readPlace.)
-export function placeWorld(hash) {
-  return decode(hash)?.world ?? null;
-}
 
 // The place in a link, checked against the lattice it is to be in (R cells
 // a side): { place }, or { why } it is no place. A place without yaw and
 // pitch has facing null: it is faced as a new visit would be (see
 // applyPlace).
 export function readPlace(hash, R) {
-  const at = decode(hash);
-  if (!at) return { why: 'it cannot be read' };
-  const { world, F, frac, digits = [], yaw, pitch } = at;
+  let at;
+  try {
+    at = JSON.parse(atob(hash.replace(/^#/, '')));
+  } catch {}
+  if (!at || typeof at !== 'object' || Array.isArray(at)) return { why: 'it cannot be read' };
+  const { F, frac, digits = [], yaw, pitch } = at;
   const whole = (x) => Number.isInteger(x) && Math.abs(x) <= LEVEL_MOST;
   const triple = (v, ok) => Array.isArray(v) && v.length === 3 && v.every(ok);
   if (!whole(F)) return { why: `its level is not a whole number from -${LEVEL_MOST} to ${LEVEL_MOST}` };
@@ -69,7 +49,6 @@ export function readPlace(hash, R) {
   // can, as turning would take it: see Flight.turn.)
   return {
     place: {
-      world,
       F,
       frac: frac.slice(),
       digits: digits.map(([j, d]) => [j, d.slice()]),
@@ -79,12 +58,10 @@ export function readPlace(hash, R) {
   };
 }
 
-// Where a flight is, as a place in the world named world, with the side
-// shown ('A' or 'B').
-export function placeOf(flight, world, shown = 'A') {
+// Where a flight is, as a place, with the side shown ('A' or 'B').
+export function placeOf(flight, shown = 'A') {
   const { pos } = flight;
   return {
-    world,
     F: pos.F,
     frac: pos.frac.slice(),
     digits: [...pos.digits].map(([j, d]) => [j, d.slice()]),
@@ -95,9 +72,9 @@ export function placeOf(flight, world, shown = 'A') {
 
 // The hash for a place: of its digits, only those that are not what they
 // would be anyway in each of spaces (the worlds compared, or the one).
-export function writePlace({ world, F, frac, digits, facing, shown }, spaces) {
+export function writePlace({ F, frac, digits, facing, shown }, spaces) {
   const anyway = (j, d) => spaces.every((s) => s.ancestorDigit(j).every((x, a) => x === d[a]));
-  const at = { world, F, frac, digits: digits.filter(([j, d]) => !anyway(j, d)), yaw: facing.yaw, pitch: facing.pitch, ...(shown === 'B' ? { shown } : {}) };
+  const at = { F, frac, digits: digits.filter(([j, d]) => !anyway(j, d)), yaw: facing.yaw, pitch: facing.pitch, ...(shown === 'B' ? { shown } : {}) };
   return '#' + btoa(JSON.stringify(at));
 }
 

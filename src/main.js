@@ -1,13 +1,13 @@
 import { Renderer } from './renderer.js';
 import { TAA_N } from './frame.js';
 import { Controls } from './controls.js';
-import { WORLDS, makeWorld, fromLink, makeSettings, isSetting, ADDED } from './worlds.js';
+import { makeWorld, fromLink, makeSettings, ADDED } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot, awayFrom, outward } from './pilot.js';
 import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { elsewhere } from './arrival.js';
-import { placeWorld, readPlace, placeOf, writePlace, applyPlace } from './place.js';
+import { readPlace, placeOf, writePlace, applyPlace } from './place.js';
 import { camera, makeView, viewKey, N_VIEW, FOV_TAN } from './view.js';
 import { trace, check, checkRays, compareRays } from './debug.js';
 import { Pacing } from './pacing.js';
@@ -22,23 +22,16 @@ function cannot(err) {
   throw err;
 }
 
-// The world we are in: the one a link names (?variant&part=value: see
-// fromLink in worlds.js), or that the place in a link is in (one from
-// before there were others is in the halls), or else the one last visited;
-// made from its definition with the link's changes; with the link's
-// settings (how we fly, and how frames are drawn: see fromLink). And, where
-// the link names one to compare it with (&vs=...), that one too (other), on
-// the same lattice: V flips between them. (It may be the same world, with
-// other settings.)
-const WORLD_KEY = 'fw.world';
+// The world we are in: the arcology, or the variant of it a link names
+// (?variant&part=value: see fromLink in worlds.js); made from its definition
+// with the link's changes; with the link's settings (how we fly, and how
+// frames are drawn: see fromLink). And, where the link names one to compare
+// it with (&vs=...), that one too (other), on the same lattice: V flips
+// between them. (It may be the same world, with other settings.)
 let world, other = null, link;
 try {
   link = fromLink(location.search);
-  let name = link.name || placeWorld(location.hash);
-  try {
-    name ??= localStorage.getItem(WORLD_KEY);
-  } catch {}
-  if (!name || (!link.name && !WORLDS.includes(name))) name = WORLDS[0];
+  const { name } = link;
   world = { ...(await makeWorld(name, link.changes)), settings: makeSettings(link.settings) };
   if (link.vs) {
     try {
@@ -64,10 +57,6 @@ try {
 } catch (err) {
   cannot(err);
 }
-// (A variant is the link's: what is remembered is the world it is of.)
-try {
-  localStorage.setItem(WORLD_KEY, world.base);
-} catch {}
 // What each world is called, with the changes its link makes (the other's:
 // those both share, and its own).
 const changed = location.search.slice(1).split('&').map(decodeURIComponent).filter((x) => x.includes('=') && !ADDED.test(x.split('=')[0]) && x.split('=')[0] !== 'vs');
@@ -190,41 +179,25 @@ function scaleLabel(F) {
 // Where we are and which way we face live in the URL, so a place can be
 // bookmarked or sent to someone (see place.js).
 function saveLocation() {
-  const at = writePlace(placeOf(flight, world.base, showing.side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
+  const at = writePlace(placeOf(flight, showing.side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
   // (Where the page is framed, this may not be allowed: then it is not kept.)
   try {
     history.replaceState(null, '', at);
   } catch {}
 }
 // Go to the place in the link, if it has one we can be at: whether it did.
-// (A place in another world than this one is no place here; nor is one that
-// cannot be read, which is passed over whole, and why said for a moment.)
+// (One that cannot be read is passed over whole, and why said for a moment.)
 function loadLocation() {
   const { place, why } = readPlace(location.hash, R);
   if (!place && location.hash.length > 1) said.unread = { at: performance.now(), why };
-  if (!place || place.world !== world.base) return false;
+  if (!place) return false;
   applyPlace(flight, place, (shown) => (shown === 'B') !== (showing.side === 1) && flip());
   return true;
 }
 
 // L switches between schemes (shift-L back); P starts and stops the tour; N
-// goes somewhere new, shift-N to the next world; H hides and shows the
-// legend. (The old way of stepping rays, to compare by eye: fw.reference.)
-
-// Off to the next world, somewhere in it as on a first visit (as it is: a
-// variant, and a world compared, are left behind with the link; its
-// settings, how we fly and how frames are drawn, come along).
-function nextWorld() {
-  try {
-    localStorage.setItem(WORLD_KEY, WORLDS[(WORLDS.indexOf(world.base) + 1) % WORLDS.length]);
-    const kept = location.search.slice(1).split('&').filter((x) => {
-      const path = decodeURIComponent(x.split('=')[0]);
-      return x.includes('=') && !path.startsWith('vs') && isSetting(path);
-    });
-    history.replaceState(null, '', location.pathname + (kept.length ? `?${kept.join('&')}` : ''));
-  } catch {}
-  location.reload();
-}
+// goes somewhere new; H hides and shows the legend. (The old way of stepping
+// rays, to compare by eye: fw.reference.)
 
 // The other world compared, where we are, as we are (see Flight.setSpace),
 // with its link's settings (how we fly, and how frames are drawn): nothing
@@ -275,7 +248,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyP') toggleTour();
   if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyH') toggleHelp();
-  if (e.code === 'KeyN') (e.shiftKey ? nextWorld : respawn)();
+  if (e.code === 'KeyN') respawn();
   if (e.code === 'KeyV') flip();
 });
 // The same, by buttons, for touch screens.
@@ -284,7 +257,6 @@ const BUTTONS = {
   scheme: () => nextScheme(1),
   help: toggleHelp,
   new: respawn,
-  world: nextWorld,
   vs: flip,
 };
 for (const [name, act] of Object.entries(BUTTONS)) {
