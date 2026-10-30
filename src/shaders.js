@@ -66,8 +66,9 @@ uniform ivec3 uL[NLEV];
 uniform vec3 uFr[NLEV];
 uniform ivec3 uId[NLEV];
 uniform ivec3 uPid[NLEV];  // the id of the cell's parent
-${space.volume ? '// The space\'s table (see volume in worlds.js).\nuniform highp usampler3D uVolume;' : ''}
-${(space.tables ?? []).map((t) => `// The space's table ${t.name} (see tables in worlds.js).\nuniform highp isampler2D ${t.name};`).join('\n')}
+// The space's table (see volume in worlds.js).
+uniform highp usampler3D uVolume;
+${space.tables.map((t) => `// The space's table ${t.name} (see tables in worlds.js).\nuniform highp isampler2D ${t.name};`).join('\n')}
 uniform uint uSeed[NLEV];
 uniform int uLevel[NLEV];
 uniform float uSig[NLEV];
@@ -210,7 +211,7 @@ ${space.glsl}
 // shadow, not as the level's walls: decided by where the surface is, never
 // by the way the ray came to it.)
 bool gOwnInk;
-${space.openAreaGlsl ?? 'float openAreaAt(int level, ivec3 id, ivec3 up, vec3 n) { gOwnInk = false; return OPEN_AREA; }'}
+${space.openAreaGlsl}
 
 // One level at the camera-relative point v: its air distance and, for the ray
 // gDir when gRay is set, how far that goes before leaving the air it is in.

@@ -71,7 +71,7 @@ export class Planner {
     if (fr !== undefined) return fr;
     const { pos, space } = this.flight;
     fr = null;
-    if (space.planned?.(k) ?? true) {
+    if (space.planned(k)) {
       const rec = pos.levels(Math.min(k, pos.F), Math.max(k, pos.F)).find((r) => r.level === k);
       if (rec) {
         const R = this.R;
@@ -103,7 +103,7 @@ export class Planner {
     if (r === undefined) {
       this.work++;
       const id = this.id(k, c);
-      r = this.flight.space.notRoom?.(k, id) ? null : this.flight.space.room(id, this.frame(k).seed, k);
+      r = this.flight.space.room(id, this.frame(k).seed, k);
       this.rooms.set(n, r);
     }
     return r;
@@ -425,11 +425,11 @@ export class Planner {
   }
 
   // Out in air that is not a room of the halls (the arcology's city, or a
-  // gallery in it): the level of the halls rooms that open onto it, if the
-  // world says where they do (see ENTRANCES in spaces/arcology.js).
+  // gallery in it): the level of the halls rooms that open onto it, where
+  // the world says they do (see ENTRANCES in spaces/arcology.js).
   outdoors() {
-    const { space, sky } = this.flight, k = space.entrances?.level;
-    if (k === undefined || sky > 0 || !this.frame(k) || this.here()) return null;
+    const { space, sky } = this.flight, k = space.entrances.level;
+    if (sky > 0 || !this.frame(k) || this.here()) return null;
     return k;
   }
 

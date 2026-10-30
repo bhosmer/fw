@@ -22,19 +22,19 @@
 //   cellAir        the same in JavaScript, given (L, f, id, seed, dg, level,
 //                  up, ray), up the parent's id; the ray ({ dir }, or none)
 //                  told how far it goes, and whether the cell says (known)
-//   volume         optionally, a table the space looks things up in rather
+//   volume         a table the space looks things up in rather
 //                  than work them out: { size, data, words }, data a
 //                  Uint32Array of `words` numbers (2 or 4) for each of
 //                  size[0] * size[1] * size[2] cells, x fastest; in the
 //                  shader, the usampler3D uVolume
-//   tables         optionally, more tables, 2D: [{ name, size, data }], data
+//   tables         more tables, 2D: [{ name, size, data }] (or none), data
 //                  an Int32Array of four numbers for each of size[0] *
 //                  size[1], x fastest; in the shader, the isampler2D of that
 //                  name (declared for it)
-//   openAreaGlsl   optionally, float openAreaAt(int level, ivec3 id, ivec3 up,
-//                  vec3 n): what fraction of a surface opens at a level,
-//                  where it is (see the detail asked after in main,
-//                  shaders.js); else openArea everywhere
+//   openAreaGlsl   float openAreaAt(int level, ivec3 id, ivec3 up, vec3 n):
+//                  what fraction of a surface opens at a level, where it is
+//                  (see the detail asked after in main, shaders.js), and
+//                  whether it is in the surface's own shade (gOwnInk)
 //   openArea       roughly what fraction of a surface is openings
 //   maxInterior    largest clearance any point in a cell's air can have, as a
 //                  fraction of the cell
@@ -78,10 +78,9 @@
 //                  has one, and the openings in its faces (each given the
 //                  cell's id, seed and level), and the rooms' walls' half
 //                  thickness
-//   planned        optionally, at which levels the tour may plan its ways
-//                  (by default, every one)
-//   entrances      optionally, the ways into the rooms from air that is no
-//                  room: { level, list } (see Planner.waysFromCity)
+//   planned        at which levels the tour may plan its ways (planned(level))
+//   entrances      the ways into the rooms from air that is no room: { level,
+//                  list } (see Planner.waysFromCity)
 import { HEXAHEDRON } from './spaces/hexahedron.js';
 import { FLIGHT, flightSettings } from './flight.js';
 import { VIEW, viewSettings } from './view.js';

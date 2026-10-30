@@ -72,19 +72,16 @@ export class Renderer {
     // worlds.js): a 3D texture of pairs (or fours) of unsigned
     // integers (bound to its program's unit whenever a program that reads it
     // draws).
-    if (space.volume) {
-      const { size, data, words } = space.volume;
-      const tex = gl.createTexture();
-      e.textures.uVolume = [gl.TEXTURE_3D, tex];
-      gl.bindTexture(gl.TEXTURE_3D, tex);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      const [inner, form] = words === 4 ? [gl.RGBA32UI, gl.RGBA_INTEGER] : [gl.RG32UI, gl.RG_INTEGER];
-      gl.texImage3D(gl.TEXTURE_3D, 0, inner, size[0], size[1], size[2], 0, form, gl.UNSIGNED_INT, data);
-      gl.bindTexture(gl.TEXTURE_3D, null);
-    }
-    for (const { name, size, data } of space.tables ?? []) {
+    const volume = space.volume, volumeTex = gl.createTexture();
+    e.textures.uVolume = [gl.TEXTURE_3D, volumeTex];
+    gl.bindTexture(gl.TEXTURE_3D, volumeTex);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    const [inner, form] = volume.words === 4 ? [gl.RGBA32UI, gl.RGBA_INTEGER] : [gl.RG32UI, gl.RG_INTEGER];
+    gl.texImage3D(gl.TEXTURE_3D, 0, inner, volume.size[0], volume.size[1], volume.size[2], 0, form, gl.UNSIGNED_INT, volume.data);
+    gl.bindTexture(gl.TEXTURE_3D, null);
+    for (const { name, size, data } of space.tables) {
       const tex = gl.createTexture();
       e.textures[name] = [gl.TEXTURE_2D, tex];
       gl.bindTexture(gl.TEXTURE_2D, tex);
