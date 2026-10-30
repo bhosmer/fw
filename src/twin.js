@@ -320,9 +320,10 @@ export const reask = (js, d, ask) =>
 // arguments: so only in a call) and one of whole numbers (ivec3, ivec2:
 // an array); lines
 // for the shader alone (fade: its fading with distance; the JavaScript's
-// world is as it is, see pieces.js); lines indented; where a ray's piece of
-// air ends, kept if further (keep: the reach and normal inout in GLSL, the
-// ray's object in JavaScript); an axis's normal and a vector as a call's
+// world is as it is, see pieces.js); lines indented; how far the ray goes
+// (REACH: the inout reach in GLSL, the ray's object's in JavaScript), and
+// where a ray's piece of air ends taken for it, with its normal (take: if
+// it compares with the reach as asked; keep: if further); an axis's normal and a vector as a call's
 // arguments (axis, arg3: in JavaScript, three, each signed as GLSL's -EX
 // is, -0 too); the point along slant k, its whole part into n and the rest
 // (slant: in GLSL slantAt, setting n as it gives the rest; in JavaScript
@@ -345,6 +346,7 @@ export function writer(js, state = 'S') {
     }
     return e;
   };
+  const take = (cmp) => (js ? `if (${state}.x ${cmp} ray.reach) (ray.reach = ${state}.x), (ray.nx = ${state}.nx), (ray.ny = ${state}.ny), (ray.nz = ${state}.nz);` : `if (gX ${cmp} reach) { reach = gX; nrm = gN; }`);
   return {
     fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
     decl: (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`,
@@ -376,7 +378,9 @@ export function writer(js, state = 'S') {
       };
     },
     slant: (k, n) => (js ? { whole: [`${n} = SL.Ls[${k}];`], rest: `SL.Fs[${k}]` } : { whole: [], rest: `slantAt(${k}, ${n})` }),
-    keep: js ? `if (${state}.x > ray.reach) (ray.reach = ${state}.x), (ray.nx = ${state}.nx), (ray.ny = ${state}.ny), (ray.nz = ${state}.nz);` : 'if (gX > reach) { reach = gX; nrm = gN; }',
+    REACH: js ? 'ray.reach' : 'reach',
+    take,
+    keep: take('>'),
     D: js ? `${state}.d` : 'gD',
     NOTHING: js ? 'NONE' : '1e9',
     RAY: js ? `${state}.ray` : 'gRay',

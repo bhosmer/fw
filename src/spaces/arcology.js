@@ -2274,22 +2274,36 @@ export function makeArcology(set) {
     return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']), carve: text(carve), cityFaces: text(cityFaces, ['off', 'q', 'base', 'm', 'pl']) };
   }
   // The cell's small pieces, in either language (js: true, or GLSL),
-  // written once (6d-6a): what the table says of a cell (relief), the light
-  // well under the plaza (well; in JavaScript also wellOf, for the checks:
-  // whether there is one, its hash and half width, from the same gate), and
-  // whether a point is near a solid without relief (bareNear). (Where the
-  // languages differ: what twin.writer writes (vadd, vsub among it); the
-  // cell's corner (gCellB, CELL.b: see cellB); the cell's place in its city
-  // cell (own: see ownGlsl, ownOf); a city cell's id from its corner; a city
-  // cell's id against BUILT_CELLS' (a vector's equality); built's rule
-  // (spaceRoom: the JavaScript's halls take it); and the bare boxes' bounds,
-  // part by part in JavaScript. Otherwise the text is both's: in JavaScript
-  // GLSL's vectors' functions as AS_GLSL_VEC has them (ivec3, uvec4, any,
-  // lessThan, greaterThanEqual), the table read as texelFetch reads it (see
-  // the module below: none out of its bounds, as WebGL2 gives), and whole
-  // numbers as twin.unsigned makes them.)
+  // written once (6d-6a, 6d-6d):
+  // - relief: what the table says of a cell;
+  // - well: the light well under the plaza (in JavaScript also wellOf, for
+  //   the checks: whether there is one, its hash and half width, from the
+  //   same gate);
+  // - bareNear: whether a point is near a solid without relief;
+  // - reliefCell: a table's cell. Deep: the halls cut off at the sides they
+  //   may not run on across (both passes: the distance, then a ray, kept
+  //   where it goes less far: '<'). Skin or plain: its openings (where it
+  //   has some), and a plain cell's town, its bound; a skin cell's pockets
+  //   asked after once the cell is done (see cell, cellAir). (Shader only:
+  //   gRay's second job (whether the cell is asked with a ray: saved and
+  //   restored), gSkin, and gO taken off; JavaScript only: the ray's state
+  //   cleared after the deep pass, and aim where the shader starts reach
+  //   and nrm.)
+  // (Where the languages differ: what twin.writer writes (vadd, vsub among
+  // it); the cell's corner (gCellB, CELL.b: see cellB); the cell's place in
+  // its city cell (own: see ownGlsl, ownOf); a city cell's id from its
+  // corner; a city cell's id against BUILT_CELLS' (a vector's equality);
+  // built's rule (spaceRoom: the JavaScript's halls take it); the bare
+  // boxes' bounds, part by part in JavaScript; and the carve's state
+  // (CELL's fields, the shader's gCarve globals). Otherwise the text is
+  // both's: in JavaScript GLSL's vectors' functions as AS_GLSL_VEC has them
+  // (ivec3, uvec4, any, lessThan, greaterThanEqual), the table read as
+  // texelFetch reads it (see the module below: none out of its bounds, as
+  // WebGL2 gives), and whole numbers as twin.unsigned makes them. The
+  // JavaScript's module takes openings and townAir, so is made after the
+  // town's.)
   function cellPieces(js) {
-    const { fn, decl, vadd, vsub } = twin.writer(js);
+    const { fn, decl, vadd, vsub, RAY, X, D, REACH, take, fade, axis } = twin.writer(js);
     const CB = cellB(js);
     const relief = [
       '// What the table says of the level-(CITY + 1) cell id, in a city cell',
@@ -2336,8 +2350,67 @@ export function makeArcology(set) {
       '  return false;',
       '}',
     ];
-    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['up', 'o'])) : lines.join('\n'));
-    return { relief: text(relief), well: text(well), bareNear: text(bareNear) };
+    const [OPEN, CROSS, CARVE, CARVE_FACES, BASE, E] = js ? ['CELL.open', 'CELL.cross', 'CELL.carve', 'CELL.faces', 'CELL.base', 'CELL.e'] : ['gCarveOpen', 'gCarveCross', 'gCarve', 'gCarveFaces', 'gCarveBase', 'gCarveE'];
+    const side = (bit, a, plane, sign) => `if ((open & ${bit}u) == 0u) airPlane(${plane}, ${axis(a, sign)});`;
+    const reliefCell = [
+      '// A level-(CITY + 1) cell the table says something of: deep in the',
+      "// building, the halls (d, reach and nrm being what they say of it), cut off",
+      '// at its sides across which they may not run on; in its skin, pockets and no',
+      "// rooms (they are the city's surface, coloured as the city: gSkin), and any",
+      '// openings it has (see openings); plain, solid but for its openings, and its',
+      '// town (see townAir). Its air is never further off than its sides (the next',
+      "// cell's may be just across them).",
+      js ? 'function reliefCell(L, f, id, seed, m, d, ray) {' : 'float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout float reach, inout vec3 nrm) {',
+      '  ' + decl('uint', 'kind = m.x & 3u'),
+      ...(js ? [] : ['  bool ray = gRay;']),
+      `  if (kind == ${DEEP}u) {`,
+      '    ' + decl('uint', 'open = (m.x >> uint(OPEN_AT)) & 63u'),
+      '    if (open == 63u) return d;',
+      `    ${RAY} = false;`,
+      `    ${js ? 'for (let' : 'for (int'} pass = 0; pass < 2; pass++) {`,
+      '      airPiece();',
+      '      ' + side(1, 0, 'float(L.x - R) + f.x', ''),
+      '      ' + side(2, 0, '-float(L.x) - f.x', '-'),
+      '      ' + side(4, 1, 'float(L.y - R) + f.y', ''),
+      '      ' + side(8, 1, '-float(L.y) - f.y', '-'),
+      '      ' + side(16, 2, 'float(L.z - R) + f.z', ''),
+      '      ' + side(32, 2, '-float(L.z) - f.z', '-'),
+      '      if (pass == 0) {',
+      "        // (Cut off at those sides; and the next cell's air, a skin's",
+      '        // pockets, may be just across them.)',
+      `        d = max(d, ${D});`,
+      `        if (d > 0.0) d = min(d, max(-${D}, 0.0));`,
+      `        if (!ray || ${REACH} < 0.0) break;`,
+      `        ${RAY} = true;`,
+      `      } else ${take('<')}`,
+      '    }',
+      `    ${js ? 'S.ray = false;' : 'gRay = ray;'}`,
+      '    return d;',
+      '  }',
+      `  ${js ? 'const' : 'float'} e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)),`,
+      '                min(float(R - L.z) - f.z, float(L.z) + f.z));',
+      ...(js ? ['  if (ray) aim(ray);'] : ['  reach = -1.0;', '  nrm = vec3(0.0);']),
+      `  ${OPEN} = (m.w >> uint(OPEN_AT)) & 63u;`,
+      `  ${CROSS} = ((m.w >> uint(CROSS_AT)) & 1u) != 0u;`,
+      '  ' + decl('float', `a = m.z != 0u ? ${js ? 'openings(L, f, m, ray)' : 'openings(L, f, m, ray, reach, nrm)'} : 1e9`, true),
+      ...(js ? [] : ['  gRay = ray;']),
+      `  ${OPEN} = (m.x >> uint(OPEN_AT)) & 63u;`,
+      `  ${CROSS} = ((m.y >> uint(CROSS_AT)) & 1u) != 0u;`,
+      `  if (kind == ${PLAIN}u) {`,
+      `    if (((m.x >> uint(TOWN_AT)) & 1u) != 0u) a = min(a, ${js ? 'townAir(L, f, m.x, ray)' : 'townAir(L, f, m.x, ray, reach, nrm)'});`,
+      ...fade('    gSkin = ray ? reach >= 0.0 : a < 0.0;', '    // (Less gO, which map takes off the whole level again: see cell.)'),
+      `    return min(a${js ? '' : ' - gO'}, max(e, 0.0));`,
+      '  }',
+      '  // (Its pockets, with its openings: see cell.)',
+      `  ${CARVE} = 1;`,
+      `  ${CARVE_FACES} = (m.x >> uint(FACE_AT)) & 63u;`,
+      `  ${BASE} = ${js ? 'CELL.b.map((x) => x * R)' : 'gCellB * R'};`,
+      `  ${E} = e;`,
+      `  return a${js ? '' : ' - gO'};`,
+      '}',
+    ];
+    const text = (lines, names = ['up', 'o']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
+    return { relief: text(relief), well: text(well), bareNear: text(bareNear), reliefCell: text(reliefCell, ['m', 'L', 'f']) };
   }
   const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false), CELL_GLSL = cellPieces(false);
 
@@ -2528,63 +2601,7 @@ ${TOWN_GLSL.box}
 
 ${TOWN_GLSL.air}
 
-// A level-(CITY + 1) cell the table says something of: deep in the
-// building, the halls (d, reach and nrm being what they say of it), cut off
-// at its sides across which they may not run on; in its skin, pockets and no
-// rooms (they are the city's surface, coloured as the city: gSkin), and any
-// openings it has (see openings); plain, solid but for its openings, and its
-// town (see townAir). Its air is never further off than its sides (the next
-// cell's may be just across them).
-float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout float reach, inout vec3 nrm) {
-  uint kind = m.x & 3u;
-  bool ray = gRay;
-  if (kind == ${DEEP}u) {
-    uint open = (m.x >> uint(OPEN_AT)) & 63u;
-    if (open == 63u) return d;
-    gRay = false;
-    for (int pass = 0; pass < 2; pass++) {
-      airPiece();
-      if ((open & 1u) == 0u) airPlane(float(L.x - R) + f.x, EX);
-      if ((open & 2u) == 0u) airPlane(-float(L.x) - f.x, -EX);
-      if ((open & 4u) == 0u) airPlane(float(L.y - R) + f.y, EY);
-      if ((open & 8u) == 0u) airPlane(-float(L.y) - f.y, -EY);
-      if ((open & 16u) == 0u) airPlane(float(L.z - R) + f.z, EZ);
-      if ((open & 32u) == 0u) airPlane(-float(L.z) - f.z, -EZ);
-      if (pass == 0) {
-        // (Cut off at those sides; and the next cell's air, a skin's
-        // pockets, may be just across them.)
-        d = max(d, gD);
-        if (d > 0.0) d = min(d, max(-gD, 0.0));
-        if (!ray || reach < 0.0) break;
-        gRay = true;
-      } else if (gX < reach) { reach = gX; nrm = gN; }
-    }
-    gRay = ray;
-    return d;
-  }
-  float e = min(min(min(float(R - L.x) - f.x, float(L.x) + f.x), min(float(R - L.y) - f.y, float(L.y) + f.y)),
-                min(float(R - L.z) - f.z, float(L.z) + f.z));
-  reach = -1.0;
-  nrm = vec3(0.0);
-  gCarveOpen = (m.w >> uint(OPEN_AT)) & 63u;
-  gCarveCross = ((m.w >> uint(CROSS_AT)) & 1u) != 0u;
-  float a = m.z != 0u ? openings(L, f, m, ray, reach, nrm) : 1e9;
-  gRay = ray;
-  gCarveOpen = (m.x >> uint(OPEN_AT)) & 63u;
-  gCarveCross = ((m.y >> uint(CROSS_AT)) & 1u) != 0u;
-  if (kind == ${PLAIN}u) {
-    if (((m.x >> uint(TOWN_AT)) & 1u) != 0u) a = min(a, townAir(L, f, m.x, ray, reach, nrm));
-    gSkin = ray ? reach >= 0.0 : a < 0.0;
-    // (Less gO, which map takes off the whole level again: see cell.)
-    return min(a - gO, max(e, 0.0));
-  }
-  // (Its pockets, with its openings: see cell.)
-  gCarve = 1;
-  gCarveFaces = (m.x >> uint(FACE_AT)) & 63u;
-  gCarveBase = gCellB * R;
-  gCarveE = e;
-  return a - gO;
-}
+${CELL_GLSL.reliefCell}
 
 ${CELL_GLSL.well}
 
@@ -2717,14 +2734,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // (No entry in the table: relief's answer outside it.)
   const NO_ENTRY = [0, 0, 0, 0];
 
-  // The cell's small pieces in JavaScript (see cellPieces), made into
-  // functions; the table read as the shader's texelFetch reads its texture.
-  const CELL_JS = cellPieces(true);
-  const { relief, well, wellOf, bareNear } = new Function(
-    'CELL', 'R', 'M', 'G', 'fromMiddle', 'ownOf', 'wrapId', 'built', 'spaceRoom', 'hashCell', 'slabHole', 'slabHalf', 'NBUILT', 'BUILT_CELLS', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
-    `'use strict';\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst max = Math.max;\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.well}\n${CELL_JS.bareNear}\nreturn { relief, well, wellOf, bareNear };\n//# sourceURL=cellPieces.gen.js`,
-  )(CELL, R, M, G, fromMiddle, ownOf, wrapId, built, spaceRoom, hashCell, slabHole, slabHalf, BUILT_CELLS.length, BUILT_CELLS, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
-
   // (The lowest bit set in m: GLSL's lowBit.)
   const lowBit = (m) => 31 - Math.clz32(m & -m);
   // The openings in JavaScript (see openingsPieces), made into functions.
@@ -2756,51 +2765,13 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
   )(P, CELL, R, Math.SQRT1_2, hashCell, fdiv, townShape, TOWN_LOT, TOWN_PLAN_AT, TOWN_PICK, TOWN_H, TOWN_SALT, TOWN_MARGIN, TOWN_SHAPES, OPEN_AT, TOWN_CORNER_AT);
 
-
-  function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
-    const kind = m & 3;
-    if (kind === DEEP) {
-      const open = (m >>> OPEN_AT) & 63;
-      if (open === 63) return d;
-      // (Cut off at its closed sides, the halls' air and a ray through it.)
-      const sides = () => {
-        P.airPiece();
-        if (!(open & 1)) P.airPlane(L[0] - R + f[0], 1, 0, 0);
-        if (!(open & 2)) P.airPlane(-L[0] - f[0], -1, 0, 0);
-        if (!(open & 4)) P.airPlane(L[1] - R + f[1], 0, 1, 0);
-        if (!(open & 8)) P.airPlane(-L[1] - f[1], 0, -1, 0);
-        if (!(open & 16)) P.airPlane(L[2] - R + f[2], 0, 0, 1);
-        if (!(open & 32)) P.airPlane(-L[2] - f[2], 0, 0, -1);
-        return P.S.d;
-      };
-      const g = sides();
-      d = Math.max(d, g);
-      if (ray && ray.reach >= 0) {
-        P.S.ray = true;
-        sides();
-        P.S.ray = false;
-        if (P.S.x < ray.reach) (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
-      }
-      return d > 0 ? Math.min(d, Math.max(-g, 0)) : d;
-    }
-    const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
-    if (ray) P.aim(ray);
-    CELL.open = (wrun >>> OPEN_AT) & 63;
-    CELL.cross = !!((wrun >>> CROSS_AT) & 1);
-    let a = wins ? openings(L, f, [m, clip, wins, wrun], ray) : NONE;
-    CELL.open = (m >>> OPEN_AT) & 63;
-    CELL.cross = !!((clip >>> CROSS_AT) & 1);
-    if (kind === PLAIN) {
-      if ((m >>> TOWN_AT) & 1) a = Math.min(a, townAir(L, f, m, ray));
-      return Math.min(a, Math.max(e, 0));
-    }
-    // (Its pockets, with its openings: asked after in cellAir.)
-    CELL.carve = 1;
-    CELL.faces = (m >>> FACE_AT) & 63;
-    CELL.base = CELL.b.map((x) => x * R);
-    CELL.e = e;
-    return a;
-  }
+  // The cell's small pieces in JavaScript (see cellPieces), made into
+  // functions; the table read as the shader's texelFetch reads its texture.
+  const CELL_JS = cellPieces(true);
+  const { relief, well, wellOf, bareNear, reliefCell } = new Function(
+    'P', 'openings', 'townAir', 'OPEN_AT', 'CROSS_AT', 'TOWN_AT', 'FACE_AT', 'CELL', 'R', 'M', 'G', 'fromMiddle', 'ownOf', 'wrapId', 'built', 'spaceRoom', 'hashCell', 'slabHole', 'slabHalf', 'NBUILT', 'BUILT_CELLS', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
+    `'use strict';\nconst { S, airPiece, airPlane, aim } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.well}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\nreturn { relief, well, wellOf, bareNear, reliefCell };\n//# sourceURL=cellPieces.gen.js`,
+  )(P, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, FACE_AT, CELL, R, M, G, fromMiddle, ownOf, wrapId, built, spaceRoom, hashCell, slabHole, slabHalf, BUILT_CELLS.length, BUILT_CELLS, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
 
   // A cell of any level, in the shader's order (see cell in the shader):
   // the city's cells, the sky over them; one level finer, the cells the
