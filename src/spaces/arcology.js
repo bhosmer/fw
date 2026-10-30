@@ -211,14 +211,29 @@ export function makeArcology(set) {
     s.last = PLANES.length;
   });
 
-  // Whether a level-(CITY + 1) cell, its corner c (lattice units from the
-  // middle cell's corner), is wholly inside a solid (all its corners are),
-  // and whether it is wholly outside it (all outside one of its planes).
-  const corners = (c) => [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [c[0] + (i & 1), c[1] + ((i >> 1) & 1), c[2] + ((i >> 2) & 1)]);
+  // Of the corners of the level-(CITY + 1) cell whose corner is c (lattice
+  // units from the middle cell's corner), the one furthest along n (e 1),
+  // or furthest back (e -1): n . q over the cell's corners q is at its most
+  // (its least) there. The solids' normals are whole numbers, as the corners
+  // are, so n . q is exact there and at every corner: what rises or falls
+  // with n . q (a plane's side, a face's depth) is at its most or its least
+  // there, exactly as trying all eight would find it.
+  const toward = (n, c, e) => [c[0] + (e * n[0] > 0 ? 1 : 0), c[1] + (e * n[1] > 0 ? 1 : 0), c[2] + (e * n[2] > 0 ? 1 : 0)];
+  for (const s of SOLIDS) for (const { n } of s.planes) if (!n.every(Number.isInteger)) throw new Error(`arcology: a plane of ${s.name} whose normal (${n}) is not in whole numbers: the cells' tests take a plane's side at one of a cell's corners for its least or most over all eight, exact only for whole numbers (see toward)`);
+  // Whether such a cell is wholly inside a solid (all its corners are), and
+  // whether it is wholly outside it (all outside one of its planes), or
+  // outside one by at least w (cellOutBy).
   const side = (p, q) => p.n[0] * q[0] + p.n[1] * q[1] + p.n[2] * q[2] - p.K;
   const planesOf = (s) => PLANES.slice(s.first, s.last);
-  const cellIn = (s, c) => corners(c).every((q) => planesOf(s).every((p) => side(p, q) <= 0));
-  const cellOut = (s, c) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= 0));
+  const cellIn = (s, c) => {
+    for (let i = s.first; i < s.last; i++) if (!(side(PLANES[i], toward(PLANES[i].n, c, 1)) <= 0)) return false;
+    return true;
+  };
+  const cellOutBy = (s, c, w) => {
+    for (let i = s.first; i < s.last; i++) if (side(PLANES[i], toward(PLANES[i].n, c, -1)) >= w * PLANES[i].len) return true;
+    return false;
+  };
+  const cellOut = (s, c) => cellOutBy(s, c, 0);
 
   // (The point where three planes n . X = b meet.)
   const solve3 = (M, b) => {
@@ -816,8 +831,9 @@ export function makeArcology(set) {
   // they make no air that isn't air already, or are stopped: see CLIP.)
   const slabMeets = (W, c) => {
     if (cellOut(W.solid, c)) return false;
-    const K = W.K * R, ws = corners(c).map((q) => (R * W.n.reduce((a, x, i) => a + x * (q[i] - ORIGIN[i]), 0)) / W.alpha);
-    return Math.min(...ws) < cdiv(K, W.alpha) + Math.ceil(W.len) && Math.max(...ws) > fdiv(K, W.alpha) - W.deep;
+    // (Its w across the cell, the least and the most: see toward; alpha is over 0.)
+    const K = W.K * R, w = (q) => (R * W.n.reduce((a, x, i) => a + x * (q[i] - ORIGIN[i]), 0)) / W.alpha;
+    return w(toward(W.n, c, -1)) < cdiv(K, W.alpha) + Math.ceil(W.len) && w(toward(W.n, c, 1)) > fdiv(K, W.alpha) - W.deep;
   };
 
   // The table, one cell of level CITY + 1 to an entry (see volume in
@@ -892,8 +908,8 @@ export function makeArcology(set) {
       let f = 0;
       FACES.forEach((F, i) => {
         if (cellOut(F.solid, c)) return;
-        const ds = corners(c).map((q) => (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]) - F.K) / Math.hypot(...F.n));
-        if (Math.max(...ds) > -REACH) f |= 1 << i;
+        const q = toward(F.n, c, 1);
+        if ((F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]) - F.K) / Math.hypot(...F.n) > -REACH) f |= 1 << i;
       });
       // Skin where pockets reach and only masses, their rims and solids out of
       // the pockets' heights touch it (a post's top that is the plate's: see
@@ -934,8 +950,9 @@ export function makeArcology(set) {
       const c = [v % size[0], Math.floor(v / size[0]) % size[1], Math.floor(v / size[0] / size[1])].map((x, a) => x + lo[a]);
       FACES.forEach((F, i) => {
         if (c[1] - ORIGIN[1] >= F.solid.yhi || c[1] + 1 - ORIGIN[1] <= F.solid.ylo) return; // (pockets are cut at those heights only)
-        const ds = corners(c).map((q) => (F.K - (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]))) / F.nl);
-        if (Math.min(...ds) < REACH && Math.max(...ds) > -lip) deaf[v] |= 1 << i;
+        // (Its depth behind the face at the cell's corners, the least and the most: see toward.)
+        const depth = (q) => (F.K - (F.n[0] * (q[0] - ORIGIN[0]) + F.n[1] * (q[1] - ORIGIN[1]) + F.n[2] * (q[2] - ORIGIN[2]))) / F.nl;
+        if (depth(toward(F.n, c, 1)) < REACH && depth(toward(F.n, c, -1)) > -lip) deaf[v] |= 1 << i;
       });
     }
     // (The steps along each axis to the cells in the box of the open sides.)
@@ -970,7 +987,6 @@ export function makeArcology(set) {
     // cell their stopping is the same whichever cell asks (a solid that does
     // not touch a cell has nothing in it).
     // (A solid's `keep`: how far clear of it, in cells, others' openings stop.)
-    const cellOutBy = (s, c, w) => planesOf(s).some((p) => corners(c).every((q) => side(p, q) >= w * p.len));
     const clipOf = (x, y, z, open) => {
       const out = [], ax = boxOf(open);
       for (const dx of ax[0]) for (const dy of ax[1]) for (const dz of ax[2]) {
