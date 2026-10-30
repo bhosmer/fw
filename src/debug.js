@@ -2,7 +2,7 @@
 // fw.checkRays, fw.compareRays), and a ray marched in it as the shader marches
 // (fw.trace), from the console and the tests: each given the app's fw object
 // (see main.js) as ctx, for its pos, flight, renderer, controls and fly.
-import { UP, DOWN } from './flight.js';
+import { UP, DOWN, builtClearance } from './flight.js';
 
 // How far from the camera, in a level's lattice units, the shader and the
 // JavaScript are compared.
@@ -20,9 +20,8 @@ export function trace(ctx, dir, steps = 60, finest = Infinity) {
   for (let i = 0; i < steps; i++) {
     flight.sense();
     const unit = Math.pow(R, -pos.F);
-    const seen = flight.sensed.filter((s) => s.level <= finest);
-    const d = Math.max(...seen.map((s) => -s.air / s.sig));
-    log.push({ t, d: d * unit, levels: seen.filter((s) => s.level >= -1).map((s) => [s.level, s.air]) });
+    const d = builtClearance(flight.sensed, (s) => s.air, finest);
+    log.push({ t, d: d * unit, levels: flight.sensed.filter((s) => s.level >= -1 && s.level <= finest).map((s) => [s.level, s.air]) });
     if (d <= 0) break;
     pos.move(dir.map((x) => x * 0.9 * d));
     t += 0.9 * d * unit;

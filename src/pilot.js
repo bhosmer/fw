@@ -58,7 +58,7 @@ const OUT = 4;
 export function awayFrom(flight) {
   if (!(flight.clearance > flight.sky)) return [0, 0, 0];
   const h = 0.25 * flight.clearance;
-  const g = gradient((v) => Math.max(flight.sky + v[1], ...flight.here.map((r) => -flight.airAt(r, v) / r.sig)), h);
+  const g = gradient((v) => flight.clearanceAt(v), h);
   const l = Math.hypot(...g);
   return l > 0 ? g.map((x) => x / l) : [0, 0, 0];
 }

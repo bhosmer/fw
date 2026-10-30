@@ -256,6 +256,8 @@ test('the way found open is air all the way', async () => {
       const dir = d.map((x) => x / l), open = f.ahead(dir);
       for (let j = 1; j <= 200; j++) {
         const t = (open * j) / 200;
+        // (The clearance worked out here, not by Flight.clearanceAt: kept
+        // apart from the code it checks.)
         assert.ok(Math.max(f.sky + dir[1] * t, ...f.here.map((r) => -f.airAt(r, dir.map((x) => x * t)) / r.sig)) > -1e-9 * open, `${space.name}: solid at ${t} of ${open} open`);
       }
     }

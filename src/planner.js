@@ -165,7 +165,7 @@ export class Planner {
   }
   point(k, p) {
     const f = this.flight, v = this.toUs(this.frame(k), p);
-    return [...v, Math.max(f.sky + v[1], ...f.here.map((r) => -f.airAt(r, v) / r.sig))];
+    return [...v, f.clearanceAt(v)];
   }
 
   // Is the way straight from a to b (offsets from us, level-F cells) in air?
@@ -175,14 +175,13 @@ export class Planner {
   clear(a, b) {
     const f = this.flight, len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
     const at = (t) => a.map((x, k) => x + ((b[k] - x) * t) / len);
-    const room = (v) => Math.max(f.sky + v[1], ...f.here.map((r) => -f.airAt(r, v) / r.sig));
     let t = 0;
     for (let i = 0; i < 48 && !this.late(); i++) {
       this.work += 8;
-      const c = room(at(t));
+      const c = f.clearanceAt(at(t));
       if (!(c > 0)) return false;
       t += c;
-      if (t >= len) return room(b) > 0;
+      if (t >= len) return f.clearanceAt(b) > 0;
     }
     return false;
   }

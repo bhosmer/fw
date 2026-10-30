@@ -48,6 +48,19 @@ const RAY_STEPS = 4; // the most of a ray's steps in one look ahead (see ahead)
 // nothing, or less than a number can say, there is no easing: straight to y.)
 const toward = (x, y, w) => (x > 0 ? Math.exp(Math.log(x) + (Math.log(y) - Math.log(x)) * w) : y);
 
+// Where we are, as an offset from us.
+const ORIGIN = Object.freeze([0, 0, 0]);
+
+// The clearance levels give, in level-F cells: the most room any of the
+// levels gives, each one's air distance (air(r): what level r says of its
+// air, in its own units: see airAt) taken to level-F cells. (finest: only
+// the levels no finer than it.)
+export function builtClearance(levels, air, finest = Infinity) {
+  let most = -Infinity;
+  for (const r of levels) if (r.level <= finest) most = Math.max(most, -air(r) / r.sig);
+  return most;
+}
+
 export class Flight {
   // controls: which way we face (yaw, pitch), and how much faster than usual
   // to go (boost()).
@@ -123,6 +136,22 @@ export class Flight {
     return Math.max(acc + pos.frac[1], -1e30);
   }
 
+  // The clearance at v (an offset from us, in level-F cells): how far from
+  // there, at least, nothing is in the way. It is whichever is more of two
+  // figures, neither of which ever overstates: what the levels around us
+  // say (built: see builtAt, where it is already known), and, over the
+  // ground, how high v is above it (or above what stands highest on it:
+  // see sky).
+  clearanceAt(v, built = this.builtAt(v)) {
+    return Math.max(this.sky + v[1], built);
+  }
+
+  // The clearance the levels around us give at v, the sky aside (see
+  // builtClearance).
+  builtAt(v) {
+    return builtClearance(this.here, (r) => this.airAt(r, v));
+  }
+
   // How far the way is open in direction dir, in level-F cells. Each stride
   // is the clearance where it starts, so everything up to the distance
   // returned is air. The width is the most clearance met on the way, not the
@@ -136,7 +165,6 @@ export class Flight {
   // further than a stride would, the look goes on from there.
   ahead(dir) {
     const at = (t) => [dir[0] * t, dir[1] * t, dir[2] * t];
-    const clear = (v) => Math.max(...this.here.map((r) => -this.airAt(r, v) / r.sig));
     const ray = { dir };
     let t = 0, open = 0, width = 0;
     const far = () => Math.max(LOOK * width, SKY_LOOK * this.sky);
@@ -145,7 +173,7 @@ export class Flight {
     // a ray's, onto it and on past it.)
     for (let i = 0, rays = 0; i < 10 + rays && t < far() + 1e-30; i++) {
       const v = at(t);
-      const built = clear(v), c = Math.max(this.sky + v[1], built);
+      const built = this.builtAt(v), c = this.clearanceAt(v, built);
       // (The levels are asked about a ray where the strides would stop, and
       // where they would run out: coming up to a face at a slant, they
       // shrink toward it, but a ray goes straight to it.)
@@ -171,7 +199,7 @@ export class Flight {
         rays++;
         // (How wide the way is within the stretch so passed: the clearance
         // at its middle, no more than half of it.)
-        width = Math.max(width, built, Math.min(clear(at(t + e / 2)), e / 2));
+        width = Math.max(width, built, Math.min(this.builtAt(at(t + e / 2)), e / 2));
         open = t += e;
         // (Just past where that piece of air ends, to be in the next: a point
         // on the face two pieces share is in both, but each level says which
@@ -226,7 +254,7 @@ export class Flight {
       // level gives us that is the space we are in.)
       let most = 0;
       for (const s of this.sensed) if (-s.air / s.sig > most) (most = -s.air / s.sig), (this.room = s.level);
-      this.clearance = Math.max(this.sky, ...this.sensed.map((s) => -s.air / s.sig));
+      this.clearance = this.clearanceAt(ORIGIN, builtClearance(this.sensed, (s) => s.air));
       // (In a room too far up to ask, there is more room than we can say:
       // enough to work our way up toward it.)
       if (!(this.clearance > 0) && this.room !== null && this.room < pos.F - DEEPEST) this.clearance = R * COARSEN_ABOVE;
