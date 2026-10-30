@@ -767,6 +767,40 @@ check('a place survives a reload', async () => {
   assert(here === there, `${here} became ${there}`);
 });
 
+// A link whose place cannot be read (see place.js) starts where a first
+// visit would, and draws; one changed to such a place leaves us where we
+// are. One without a facing faces the most open way, as a first visit does.
+check('a link whose place cannot be read still opens somewhere', async () => {
+  const state = 'JSON.stringify([fw.pos.F, fw.pos.frac, fw.controls.yaw, fw.controls.pitch])';
+  await load('start');
+  const first = await page.eval(state);
+  const court = JSON.parse(Buffer.from(PLACES.court, 'base64').toString());
+  for (const [name, broken] of [['no level', { ...court, F: undefined }], ['no offset', { ...court, frac: undefined }], ['a digit too fine', { ...court, digits: [[3, [0, 0, 0]]] }], ['a yaw that is text', { ...court, yaw: 'east' }]]) {
+    await page.goto(`${base}index.html?${++loads}#${at(broken)}`, setup('alhambra'));
+    await page.eval(PAGE_HELPERS);
+    const got = await page.eval(`({ error: document.getElementById('help').classList.contains('error'), at: ${state}, spread: (() => { const p = __snap(160, 90); let lo = 765, hi = 0;
+      for (let i = 0; i < p.length; i += 4) { const v = p[i] + p[i + 1] + p[i + 2]; lo = Math.min(lo, v); hi = Math.max(hi, v); } return hi - lo; })() })`);
+    assert(!got.error && !page.errors.length, `${name}: the page failed: ${page.errors.join('\n')}`);
+    assert(got.at === first, `${name}: opened at ${got.at}, not where a first visit does (${first})`);
+    assert(got.spread > 60, `${name}: the picture is nearly flat (spread ${got.spread})`);
+  }
+  // (Changed to a link that cannot be read: nothing moves, and the link is
+  // put back to where we are.)
+  await load('court');
+  const was = await page.eval(state);
+  const link = await page.eval('(fw.saveLocation(), location.hash)');
+  await page.eval(`location.hash = ${JSON.stringify(at({ ...court, F: undefined }))}`);
+  await new Promise((r) => setTimeout(r, 100));
+  assert((await page.eval(state)) === was, 'a hash changed to a place that cannot be read moved us');
+  assert((await page.eval('location.hash')) === link && !page.errors.length, `a hash changed to a place that cannot be read was left in the link, or failed: ${page.errors.join('\n')}`);
+  // (No facing: the place, faced the most open way along the walls.)
+  await page.goto(`${base}index.html?${++loads}#${at({ ...court, yaw: undefined, pitch: undefined })}`, setup('alhambra'));
+  const [F, frac, yaw, pitch] = JSON.parse(await page.eval(state));
+  assert(!page.errors.length, `no facing: the page failed: ${page.errors.join('\n')}`);
+  assert(F === court.F && JSON.stringify(frac) === JSON.stringify(court.frac), `no facing: at ${F} ${frac}`);
+  assert(pitch === 0 && [0, 1, 2, 3].some((k) => yaw === (k * Math.PI) / 2), `no facing: faced ${yaw}, ${pitch}`);
+});
+
 check('reading back what the tour sees raises no warnings', async () => {
   const warnings = [];
   const on = (m) => {

@@ -4,7 +4,7 @@
 // collision; the only thing scale does is set how fast we travel (see step in
 // flight.js).
 
-const PITCH_MAX = 1.55;
+export const PITCH_MAX = 1.55; // the furthest up or down we can face
 const SHIFT = (25 * Math.PI) / 180; // the most of the pitch that slides the picture rather than tilts it (see camera)
 const WHEEL = 0.004; // clearances travelled per unit of wheel
 const WHEEL_EASE = 0.08; // seconds over which a turn of the wheel is spent

@@ -35,7 +35,7 @@ export function elsewhere(flight, rand) {
 // Turn level, to whichever of the four ways along the walls is open
 // furthest. (Not the diagonals: in a closed room, the furthest of all is
 // into a corner.)
-function faceOpen(flight) {
+export function faceOpen(flight) {
   let best = -1;
   for (let k = 0; k < 4; k++) {
     const yaw = (k * Math.PI) / 2;

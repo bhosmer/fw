@@ -14,7 +14,7 @@
 // and is the same every time you return to it. Levels below F have no stored
 // state at all: they are just further digits of frac.
 
-const ALMOST_ONE = 1 - 2 ** -53;
+export const ALMOST_ONE = 1 - 2 ** -53;
 
 // The pairs of axes whose sum and difference are tracked: (x, y), (z, y), (x, z).
 export const DIAGONALS = [[0, 1], [2, 1], [0, 2]];

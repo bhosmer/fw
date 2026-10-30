@@ -1,0 +1,192 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { Flight } from '../../src/flight.js';
+import { elsewhere } from '../../src/arrival.js';
+import { placeWorld, readPlace, placeOf, writePlace, applyPlace, LEVEL_MOST } from '../../src/place.js';
+import { PITCH_MAX } from '../../src/controls.js';
+import { WORLDS, makeWorld, fromLink } from '../../src/worlds.js';
+import { rand } from './rand.js';
+
+const controls = () => ({ yaw: 0, pitch: 0, boost: () => 1 });
+const hash = (o) => '#' + Buffer.from(JSON.stringify(o)).toString('base64');
+const worlds = await Promise.all(WORLDS.map((name) => makeWorld(name)));
+const R = worlds[0].space.R;
+
+// Where a flight is, to compare: its level, offset, every digit from well
+// above anything stored down to its level, and its facing.
+function where(flight, top = -100) {
+  const { pos, controls } = flight;
+  const digits = [];
+  for (let j = Math.min(top, ...pos.digits.keys()); j <= pos.F; j++) digits.push([j, pos.digit(j).slice()]);
+  return JSON.stringify({ F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch });
+}
+
+// Places a visit might be: first visits, flown on from a little way.
+function visits(space, seed, n = 12) {
+  const rnd = rand(seed);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const flight = new Flight(space, controls());
+    elsewhere(flight, rnd);
+    flight.controls.yaw = (rnd() - 0.5) * 20;
+    flight.controls.pitch = (rnd() - 0.5) * 2;
+    const dir = [rnd() - 0.5, (rnd() - 0.5) * 0.3, rnd() - 0.5];
+    for (let s = 0; s < 30 * i; s++) flight.step(1 / 30, dir.map((x) => x * 4));
+    out.push(flight);
+  }
+  return out;
+}
+
+test('a place written and read again is the same place', () => {
+  for (const [w, { base, space }] of worlds.entries()) {
+    for (const flight of visits(space, 11 + w)) {
+      const text = writePlace(placeOf(flight, base), [space]);
+      assert.equal(placeWorld(text), base);
+      const { place, why } = readPlace(text, R);
+      assert.ok(place, `${base}: refused (${why}): ${text}`);
+      assert.equal(place.shown, 'A');
+      const there = new Flight(space, controls());
+      there.controls.yaw = 99;
+      applyPlace(there, place);
+      assert.equal(where(there), where(flight), `${base}: ${text}`);
+      // (And written again, the same link.)
+      assert.equal(writePlace(placeOf(there, base), [space]), text);
+    }
+  }
+});
+
+// Two worlds compared, which put their default digits differently: a place
+// flown to with the second shown, written for both, is the same place gone
+// to from the first, flipped as the app flips (see Flight.setSpace), once
+// its level is set and before its offset and digits are.
+test('a place shown on the other side of a comparison is there again', async () => {
+  const link = fromLink('?halls&vs=halls&vs.solid=0.3');
+  const A = (await makeWorld(link.name, link.changes)).space, B = (await makeWorld(link.vs.name, link.vs.changes)).space;
+  const rnd = rand(3);
+  for (const flight of visits(A, 3, 6)) {
+    flight.setSpace(B);
+    const dir = [rnd() - 0.5, 0, rnd() - 0.5];
+    for (let s = 0; s < 60; s++) flight.step(1 / 30, dir.map((x) => x * 4));
+    const text = writePlace(placeOf(flight, 'halls', 'B'), [A, B]);
+    const { place } = readPlace(text, R);
+    assert.equal(place.shown, 'B');
+    const there = new Flight(A, controls());
+    const snap = () => ({ F: there.pos.F, frac: there.pos.frac.slice(), digits: [...there.pos.digits].map(([j, d]) => [j, d.slice()]) });
+    const before = snap();
+    let seen = null;
+    applyPlace(there, place, (shown) => {
+      seen = { shown, ...snap() };
+      if (shown === 'B') there.setSpace(B);
+    });
+    assert.deepEqual(seen, { shown: 'B', ...before, F: place.F });
+    // (Written again, the same link: before where() fills in digits, which
+    // would be written where they are B's defaults and not A's.)
+    assert.equal(writePlace(placeOf(there, 'halls', 'B'), [A, B]), text);
+    assert.equal(where(there), where(flight), text);
+    // (Shown A, nothing is written of it.)
+    assert.ok(!Object.hasOwn(JSON.parse(atob(writePlace(placeOf(flight, 'halls'), [A, B]).slice(1))), 'shown'));
+  }
+});
+
+test('a place without a facing faces the most open way, as a new visit does', () => {
+  const { base, space } = worlds[0];
+  for (const flight of visits(space, 5, 6)) {
+    const at = JSON.parse(atob(writePlace(placeOf(flight, base), [space]).slice(1)));
+    for (const facing of [{ yaw: undefined, pitch: undefined }, { yaw: null, pitch: null }, { yaw: 1, pitch: undefined }]) {
+      const { place } = readPlace(hash({ ...at, ...facing }), R);
+      assert.equal(place.facing, null);
+      const there = new Flight(space, controls());
+      there.controls.yaw = 0.6;
+      there.controls.pitch = -0.05;
+      applyPlace(there, place);
+      assert.equal(there.controls.pitch, 0);
+      assert.ok([0, 1, 2, 3].some((k) => there.controls.yaw === (k * Math.PI) / 2), `faced ${there.controls.yaw}`);
+      assert.equal(there.pos.F, flight.pos.F);
+    }
+  }
+});
+
+test('what may be left out of a place', () => {
+  const at = { F: -1, frac: [0.5, 0.25, 0], yaw: 1, pitch: 0 };
+  const { place } = readPlace(hash(at), R);
+  assert.equal(place.world, 'halls', 'a link from before there were others is in the halls');
+  assert.deepEqual(place.digits, []);
+  assert.equal(placeWorld(hash(at)), 'halls');
+  assert.equal(placeWorld(hash({ ...at, world: 'arcology' })), 'arcology');
+  // (A pitch further than we can face is taken to the most we can.)
+  assert.deepEqual(readPlace(hash({ ...at, pitch: 3 }), R).place.facing, { yaw: 1, pitch: PITCH_MAX });
+  assert.deepEqual(readPlace(hash({ ...at, pitch: -3 }), R).place.facing, { yaw: 1, pitch: -PITCH_MAX });
+});
+
+test('a place that cannot be read is refused whole', () => {
+  const good = { world: 'halls', F: 1, frac: [0.2, 0.6, 0.02], digits: [[0, [3, 17, 3]], [1, [0, R - 1, 0]]], yaw: 1.5, pitch: -0.1 };
+  assert.ok(readPlace(hash(good), R).place);
+  const bad = {
+    'nothing at all': '',
+    'not base64': '#%%%',
+    'not JSON': '#' + btoa('{F: 1'),
+    'null': hash(null),
+    'a number': hash(3),
+    'a list': hash([1, 2, 3]),
+    'no level': hash({ ...good, F: undefined }),
+    'a level in between': hash({ ...good, F: 1.5 }),
+    'a level as text': hash({ ...good, F: '1' }),
+    'a level beyond counting': hash({ ...good, F: 1e300 }),
+    'a level too far down': hash({ ...good, F: LEVEL_MOST + 1, digits: [] }),
+    'a level too far up': hash({ ...good, F: -LEVEL_MOST - 1, digits: [] }),
+    'a digit too far up': hash({ ...good, digits: [[-LEVEL_MOST - 1, [3, 17, 3]]] }),
+    'no offset': hash({ ...good, frac: undefined }),
+    'two offsets': hash({ ...good, frac: [0.2, 0.6] }),
+    'an offset of 1': hash({ ...good, frac: [0.2, 1, 0.02] }),
+    'an offset below 0': hash({ ...good, frac: [0.2, -0.1, 0.02] }),
+    'an offset as text': hash({ ...good, frac: [0.2, '0.6', 0.02] }),
+    'an offset of null': hash({ ...good, frac: [0.2, null, 0.02] }),
+    'digits not a list': hash({ ...good, digits: { 0: [3, 17, 3] } }),
+    'a digit finer than the level': hash({ ...good, digits: [[2, [3, 17, 3]]] }),
+    'a digit at no level': hash({ ...good, digits: [[0.5, [3, 17, 3]]] }),
+    'a digit of two': hash({ ...good, digits: [[0, [3, 17]]] }),
+    'a digit of R': hash({ ...good, digits: [[0, [3, R, 3]]] }),
+    'a digit below 0': hash({ ...good, digits: [[0, [3, -1, 3]]] }),
+    'a digit in between': hash({ ...good, digits: [[0, [3, 1.5, 3]]] }),
+    'a digit without its level': hash({ ...good, digits: [[[3, 17, 3]]] }),
+    'a yaw as text': hash({ ...good, yaw: 'east' }),
+    'a pitch as a thing': hash({ ...good, pitch: {} }),
+    'a world as a number': hash({ ...good, world: 5 }),
+  };
+  for (const [name, text] of Object.entries(bad)) {
+    const read = readPlace(text, R);
+    assert.ok(!read.place && typeof read.why === 'string', `${name}: ${JSON.stringify(read)}`);
+  }
+  // (Where there is nothing to read, or the world is no name, there is no world either.)
+  for (const name of ['nothing at all', 'not base64', 'not JSON', 'null', 'a number', 'a list', 'a world as a number']) assert.equal(placeWorld(bad[name]), null, name);
+});
+
+// A place is checked whole before anything of it is applied, so applying
+// one that was read cannot fail halfway: even at the furthest levels a link
+// may name, it is gone to, and flown from.
+test('a place at the furthest levels a link may name is gone to whole', () => {
+  for (const { base, space } of worlds) {
+    for (const at of [{ F: -LEVEL_MOST }, { F: LEVEL_MOST }, { F: 0, digits: [[-LEVEL_MOST, [1, 1, 1]]] }]) {
+      const { place, why } = readPlace(hash({ world: base, frac: [0.5, 0.5, 0.5], yaw: 0, pitch: 0, ...at }), R);
+      assert.ok(place, `${base} ${JSON.stringify(at)}: refused (${why})`);
+      const flight = new Flight(space, controls());
+      applyPlace(flight, place);
+      for (let s = 0; s < 30; s++) flight.step(1 / 30, [0, 0, -1]);
+      const { F, frac } = flight.pos;
+      assert.ok(Number.isInteger(F) && frac.every((x) => x >= 0 && x < 1), `${base} ${JSON.stringify(at)}: at ${F} ${frac}`);
+      assert.ok([flight.clearance, flight.scale, flight.fog].every(Number.isFinite), `${base} ${JSON.stringify(at)}: ${flight.clearance} ${flight.scale} ${flight.fog}`);
+    }
+  }
+});
+
+test('a place read is its own: changing it changes nothing it was read from or applied to', () => {
+  const { base, space } = worlds[0];
+  const [flight] = visits(space, 9, 1);
+  const { place } = readPlace(writePlace(placeOf(flight, base), [space]), R);
+  const there = new Flight(space, controls());
+  applyPlace(there, place);
+  const was = where(there);
+  place.frac[0] = 0.999;
+  for (const [, d] of place.digits) d[0] = 0;
+  assert.equal(where(there), was);
+});

@@ -7,6 +7,7 @@ import { Pilot, awayFrom, outward } from './pilot.js';
 import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { elsewhere } from './arrival.js';
+import { placeWorld, readPlace, placeOf, writePlace, applyPlace } from './place.js';
 import { visible, outerAir } from './view.js';
 import { trace, check, checkRays, compareRays } from './debug.js';
 import { Pacing } from './pacing.js';
@@ -31,10 +32,7 @@ const WORLD_KEY = 'fw.world';
 let world, other = null, link;
 try {
   link = fromLink(location.search);
-  let name = link.name;
-  try {
-    if (!name && location.hash.length > 1) name = JSON.parse(atob(location.hash.slice(1))).world ?? 'halls';
-  } catch {}
+  let name = link.name || placeWorld(location.hash);
   try {
     name ??= localStorage.getItem(WORLD_KEY);
   } catch {}
@@ -191,33 +189,22 @@ function scaleLabel(F) {
 }
 
 // Where we are and which way we face live in the URL, so a place can be
-// bookmarked or sent to someone.
+// bookmarked or sent to someone (see place.js).
 function saveLocation() {
-  // (Only the digits that are not what they would be anyway, in either
-  // world compared; and which is shown.)
-  const anyway = (j, d) => [world, other].every((w) => !w || w.space.ancestorDigit(j).every((x, a) => x === d[a]));
-  const digits = [...pos.digits].filter(([j, d]) => !anyway(j, d));
-  const at = { world: world.base, F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch, ...(side ? { shown: 'B' } : {}) };
+  const at = writePlace(placeOf(flight, world.base, side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
   // (Where the page is framed, this may not be allowed: then it is not kept.)
   try {
-    history.replaceState(null, '', '#' + btoa(JSON.stringify(at)));
+    history.replaceState(null, '', at);
   } catch {}
 }
+// Go to the place in the link, if it has one we can be at: whether it did.
+// (A place in another world than this one is no place here; nor is one that
+// cannot be read, which is passed over whole.)
 function loadLocation() {
-  try {
-    const here = JSON.parse(atob(location.hash.slice(1)));
-    // (A place in another world than this one is no place here.)
-    if ((here.world ?? 'halls') !== world.base) return false;
-    pos.F = here.F;
-    if (other && (here.shown === 'B') !== (side === 1)) flip();
-    pos.frac = here.frac;
-    pos.digits = new Map(here.digits);
-    controls.yaw = here.yaw;
-    controls.pitch = here.pitch;
-    return true;
-  } catch {
-    return false;
-  }
+  const { place } = readPlace(location.hash, R);
+  if (!place || place.world !== world.base) return false;
+  applyPlace(flight, place, (shown) => (shown === 'B') !== (side === 1) && flip());
+  return true;
 }
 
 // L switches between schemes (shift-L back); P starts and stops the tour; N
@@ -299,11 +286,13 @@ for (const [name, act] of Object.entries(BUTTONS)) {
   });
 }
 
+// (A link changed to no place we can be at leaves us where we are, and says
+// so: back to where that is.)
 addEventListener('hashchange', () => {
-  if (loadLocation()) flight.begin(), renderer.reset();
+  if (loadLocation()) renderer.reset();
+  else saveLocation();
 });
-if (location.hash.length > 1 && loadLocation()) flight.begin();
-else elsewhere(flight, Math.random);
+if (!loadLocation()) elsewhere(flight, Math.random);
 
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
