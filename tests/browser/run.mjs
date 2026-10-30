@@ -597,11 +597,18 @@ check('every program sets every uniform it has', async () => {
 // over it claimed to be solid further down than the city's air begins.)
 check('from above, each world is stepped through truly', async () => {
   for (const world of WORLDS) {
-    await load('start', 'alhambra', false, world);
+    // (Flown as flight first went, in proportion to the way open (curve 1),
+    // so that 4 s up and on is where this has always looked from.)
+    await load('start', 'alhambra', false, `${world}&flight.curve=1`);
     await page.eval('(fw.flight.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
     const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
     assert(newNearer < 0.002, `${world}: the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`);
   }
+  // (Just under the sky's plane at the city's edge, the two disagree: ledger
+  // B33. Shown on every run until it is understood.)
+  await page.goto(`${base}index.html?${++loads}#eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjAyMzQzNzUsMC44NjQ1NzkwMDk5MzY4ODA1LDAuNjA4MjQwMjI0NTY0MjM2M10sImRpZ2l0cyI6W1stMixbMTIsMTIsMTFdXV0sInlhdyI6MCwicGl0Y2giOi0wLjR9`, setup('alhambra', false, 'arcology'));
+  const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
+  known(newNearer < 0.002, `under the sky's plane at the city's edge, the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`, 'the two ways of stepping disagree there, why not yet known (ledger B33)');
 });
 
 // The older way (sphere tracing) stops once within half a pixel of a

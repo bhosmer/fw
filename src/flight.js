@@ -35,17 +35,29 @@ const COARSEN_ABOVE = 0.5;
 
 // How it flies, as a link may set it (?flight.ease=2: see fromLink in
 // worlds.js), at its defaults:
-//   speed   open distances a second (see step), the keys held (not the
+//   speed   paces a second (see paced and step), the keys held (not the
 //           wheel's and drag's moves, which go by the pace alone; nor the
 //           tour, which goes at its own speed: see step's carry)
 //   ease    seconds over which speeding up is eased (slowing is not; 0:
 //           not eased at all)
-export const FLIGHT = frozen({ speed: 1, ease: 1 });
+//   curve   how speed follows the way open ahead, in clearances: as that
+//           to this power (see paced). 0.5, the square root: four times as
+//           open, twice as fast. 1: in proportion to it, as flight first
+//           went (F17)
+//   rise    the most speeding up may multiply the pace by in a second (2:
+//           doubling, at most, each second), on top of the easing; 0, no
+//           such limit
+//   reach   how far open, in clearances, the curve sees the way at most (see
+//           paced): beyond that, no faster; 0, no such limit
+export const FLIGHT = frozen({ speed: 1, ease: 1, curve: 0.5, rise: 0, reach: 0 });
 // Settings for a flight, from FLIGHT with changes, checked.
 export function flightSettings(set) {
   const s = define(FLIGHT, set, 'flight.');
   if (!(Number.isFinite(s.speed) && s.speed > 0)) throw new Error(`definition: flight.speed is a number more than 0, not ${s.speed}`);
   if (!(Number.isFinite(s.ease) && s.ease >= 0)) throw new Error(`definition: flight.ease is a number of seconds, 0 or more, not ${s.ease}`);
+  if (!(s.curve > 0 && s.curve <= 1)) throw new Error(`definition: flight.curve is a power more than 0 and at most 1, not ${s.curve}`);
+  if (!(s.rise === 0 || (Number.isFinite(s.rise) && s.rise > 1))) throw new Error(`definition: flight.rise is 0 (no limit) or a factor more than 1, not ${s.rise}`);
+  if (!(s.reach === 0 || (Number.isFinite(s.reach) && s.reach >= 1))) throw new Error(`definition: flight.reach is 0 (no limit) or a number of clearances, 1 or more, not ${s.reach}`);
   return s;
 }
 
@@ -101,7 +113,7 @@ export class Flight {
     this.sky = -1e30; // how high we are above the ground, or what stands highest on it (level-F cells)
     this.clearance = 0;
     this.scale = 0.25; // smoothed clearance, level-F cells
-    this.pace = 0.25; // smoothed open distance the way we are going
+    this.pace = 0.25; // how far a wish of 1 goes in a second (before speed): eased toward paced(the way open), level-F cells
     this.fog = 0; // smoothed visibility, level-F cells
     this.fogTarget = 0;
     this.opened = 0; // what ahead() last found
@@ -419,15 +431,18 @@ export class Flight {
     // never covers more than half of that, so nothing is ever reached, only
     // approached. Going by what is ahead and not by what is nearest means a
     // doorway or a wall alongside does not slow us, only a wall in front.
-    // (Slowing down is immediate; only speeding up is eased, over about a
-    // second, and always from the speed we are actually going.) Of all this,
-    // the carried travel keeps only the cap: half the way open.
+    // (Slowing down is immediate; only speeding up is eased, over about
+    // flight.ease seconds, no faster than flight.rise allows, and always from
+    // the speed we are actually going.) Of all this, the carried travel
+    // keeps only the cap: half the way open.
     const way = by.map((x) => x / size);
     // (In air, or on a face two pieces of air share, which is air too.)
     const inAir = this.clearance > 0 || this.goesOn(way);
     const open = (this.opened = inAir ? this.ahead(way) : 0);
-    const target = this.paced(open);
+    const target = this.paced(open), { rise } = this.settings;
+    const was = this.pace;
     this.pace = toward(this.pace, Math.max(target, 1e-6), 1 - Math.exp(-dt / this.settings.ease));
+    if (rise) this.pace = Math.min(this.pace, was * Math.pow(rise, dt));
     this.pace = Math.min(this.pace, Math.max(target, 0.05 * this.scale));
     // (How far: the paced travel at the pace now set, and the carried.)
     const want = Math.hypot(...aim.map((x, a) => x * this.pace + carried[a]));
@@ -447,10 +462,18 @@ export class Flight {
   }
 
   // The pace for a way open this far ahead (level-F cells): how far a wish
-  // of 1 takes us in a second, before the speed setting (see step). In
-  // proportion to how far the way is open.
+  // of 1 takes us in a second, before the speed setting (see step). The
+  // clearance (scale) times the way open in clearances (no more than reach
+  // of them, where reach is set) to the power curve. Where the way is open
+  // just the clearance, that is the clearance; the curve 0.5, it is twice
+  // the clearance where the way is open four clearances, ten where a
+  // hundred. (Where the way is open less than the clearance, more than in
+  // proportion; but a step never covers more than half the way open.)
+  // Written so that at curve 1 it is the way open itself, to the bit.
   paced(open) {
-    return open;
+    const { curve, reach } = this.settings;
+    const way = reach ? Math.min(open, reach * this.scale) : open;
+    return Math.pow(way, curve) * Math.pow(this.scale, 1 - curve);
   }
 
   // Fly dt seconds along the trail, backwards (way = -1) or forwards again

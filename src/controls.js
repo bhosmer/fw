@@ -87,8 +87,8 @@ export class Controls {
   }
 
   // What the mouse has asked for since last time, as a displacement in paces
-  // (one is as far as the way ahead is open: see Flight.step). A drag is
-  // travelled at once; the wheel is spent smoothly.
+  // (one is the distance a wish of 1 goes in a second: see Flight.paced and
+  // step). A drag is travelled at once; the wheel is spent smoothly.
   nudge(dt) {
     const { fwd, right, up } = this.flight.basis();
     const go = this.dolly * (1 - Math.exp(-dt / WHEEL_EASE));

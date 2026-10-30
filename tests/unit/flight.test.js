@@ -65,19 +65,42 @@ test('the working level follows how much room there is', () => {
   }, 4);
 });
 
+// The pace goes toward paced(the way open): up, eased (on a log scale, over
+// flight.ease seconds); down, at once (to the curve, or a twentieth of the
+// clearance). At either curve.
 test('speeding up is eased; slowing down is not', () => {
-  const flight = new Flight(halls);
-  flight.begin(true);
-  let before = null;
-  wander(flight, 1500, (f) => {
-    // (In cells of one fixed level, since F moves.)
-    const pace = f.pace * Math.pow(R, -f.pos.F), open = f.opened * Math.pow(R, -f.pos.F);
-    if (before && pace > before.pace) {
-      const most = before.pace * Math.pow(Math.max(open / before.pace, 1), 1 - Math.exp(-1 / 60));
-      assert.ok(pace <= most * (1 + 1e-9), `sped up from ${before.pace} to ${pace}, at most ${most}`);
-    }
-    before = { pace };
-  }, 5);
+  for (const curve of [0.5, 1]) {
+    const flight = new Flight(halls, { curve });
+    flight.begin(true);
+    let before = null, rose = 0;
+    wander(flight, 1500, (f) => {
+      // (In cells of one fixed level, since F moves.)
+      const k = Math.pow(R, -f.pos.F), pace = f.pace * k, target = f.paced(f.opened) * k;
+      if (before && pace > before.pace) {
+        rose++;
+        const most = before.pace * Math.pow(Math.max(target / before.pace, 1), 1 - Math.exp(-1 / 60));
+        assert.ok(pace <= most * (1 + 1e-9), `curve ${curve}: sped up from ${before.pace} to ${pace}, at most ${most}`);
+      }
+      assert.ok(pace <= Math.max(target, 0.05 * f.scale * k) * (1 + 1e-9), `curve ${curve}: going at ${pace}, over the curve's ${target}`);
+      before = { pace };
+    }, 5);
+    assert.ok(rose > 100, `curve ${curve}: sped up only ${rose} times`);
+  }
+});
+
+// The curve: where the way open is the clearance, as fast as in proportion
+// to it; four clearances open, twice the clearance's pace (the square root),
+// not four times; in proportion at curve 1, to the bit.
+test('the pace follows the square root of the way open, in clearances', () => {
+  const f = new Flight(halls);
+  f.begin(true);
+  const c = f.scale;
+  assert.ok(Math.abs(f.paced(c) / c - 1) < 1e-12 && Math.abs(f.paced(4 * c) / c - 2) < 1e-12 && Math.abs(f.paced(100 * c) / c - 10) < 1e-12);
+  const g = new Flight(halls, { curve: 1 });
+  g.begin(true);
+  for (const x of [0.3, 1, 7.7, 1e6]) assert.equal(g.paced(x * g.scale), x * g.scale);
+  assert.throws(() => new Flight(halls, { curve: 0 }), /flight\.curve is a power/);
+  assert.throws(() => new Flight(halls, { curve: 2 }), /flight\.curve is a power/);
 });
 
 test('rewinding comes back to where we started', () => {
@@ -405,4 +428,50 @@ test('somewhere new, flying by hand gets going at once', () => {
     while (!(f.step(1 / 60, fwd) * 60 > 0.5 * f.scale) && frames < 600) frames++;
     assert.ok(frames < 6, `seed ${seed}: half a clearance a second after ${frames} frames`);
   }
+});
+
+// flight.rise: speeding up never more than rise times over in a second, step
+// by step, at any frame rate alike; slowing as without it; out of range
+// refused. And flight.reach: the curve sees the way open no further than
+// that many clearances.
+test('flight.rise caps speeding up, alike at any frame rate, and leaves slowing alone; flight.reach caps the way the curve sees', () => {
+  const fly = (settings, hz, seconds = 6, each) => {
+    const f = new Flight(halls, settings);
+    f.begin(true);
+    for (let i = 0; i < seconds * hz; i++) {
+      const was = f.pace * Math.pow(R, -f.pos.F);
+      const { fwd } = f.basis();
+      f.step(1 / hz, fwd);
+      each?.(f, was);
+    }
+    return f;
+  };
+  let capped = 0;
+  fly({ rise: 1.2 }, 60, 6, (f, was) => {
+    const pace = f.pace * Math.pow(R, -f.pos.F);
+    assert.ok(pace <= was * Math.pow(1.2, 1 / 60) * (1 + 1e-9), `rose from ${was} to ${pace} in a frame`);
+    if (pace >= was * Math.pow(1.2, 1 / 60) * (1 - 1e-9)) capped++;
+  });
+  assert.ok(capped > 60, `the cap bound on only ${capped} frames`);
+  // (Where it ends up after 6 s, at 30, 60 and 120 frames a second: alike.)
+  const at = (hz) => {
+    const f = fly({ rise: 1.2 }, hz);
+    return { pace: f.pace * Math.pow(R, -f.pos.F) };
+  };
+  const [p30, p60, p120] = [30, 60, 120].map(at);
+  for (const p of [p30, p120]) assert.ok(Math.abs(Math.log(p.pace / p60.pace)) < 0.05, `the pace after 6 s: ${p30.pace}, ${p60.pace}, ${p120.pace}`);
+  // (Slowing: a cut to the curve, as without the cap.)
+  let cuts = 0;
+  fly({ rise: 1.5 }, 60, 10, (f, was) => {
+    const pace = f.pace, target = Math.max(f.paced(f.opened), 0.05 * f.scale);
+    assert.ok(pace <= target * (1 + 1e-9), `going at ${pace}, over the curve's ${target}`);
+    if (pace * Math.pow(R, -f.pos.F) < was * 0.98) cuts++;
+  });
+  assert.ok(cuts > 0, 'never slowed');
+  for (const rise of [1, 0.5, -2, Infinity]) assert.throws(() => new Flight(halls, { rise }), /flight\.rise is 0 \(no limit\) or a factor more than 1/, String(rise));
+  // (reach: no further than that many clearances.)
+  const g = new Flight(halls, { reach: 8 });
+  g.begin(true);
+  assert.ok(Math.abs(g.paced(100 * g.scale) / (Math.sqrt(8) * g.scale) - 1) < 1e-12 && Math.abs(g.paced(4 * g.scale) / (2 * g.scale) - 1) < 1e-12);
+  for (const reach of [0.5, -1, Infinity]) assert.throws(() => new Flight(halls, { reach }), /flight\.reach is 0 \(no limit\) or a number of clearances/, String(reach));
 });
