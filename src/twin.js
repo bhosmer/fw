@@ -330,7 +330,9 @@ export const reask = (js, d, ask) =>
 // own); a struct, declared and made (struct: in JavaScript an object); a
 // piece's distance (D), no piece (NOTHING), and the ray's state
 // (RAY: whether there is one; X: how far it goes in the piece).
-export function writer(js) {
+// (state: the name the JavaScript knows the pieces' state by, S unless
+// that is taken.)
+export function writer(js, state = 'S') {
   return {
     fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
     decl: (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`,
@@ -358,11 +360,11 @@ export function writer(js) {
       };
     },
     slant: (k, n) => (js ? { whole: [`${n} = SL.Ls[${k}];`], rest: `SL.Fs[${k}]` } : { whole: [], rest: `slantAt(${k}, ${n})` }),
-    keep: js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : 'if (gX > reach) { reach = gX; nrm = gN; }',
-    D: js ? 'S.d' : 'gD',
+    keep: js ? `if (${state}.x > ray.reach) (ray.reach = ${state}.x), (ray.nx = ${state}.nx), (ray.ny = ${state}.ny), (ray.nz = ${state}.nz);` : 'if (gX > reach) { reach = gX; nrm = gN; }',
+    D: js ? `${state}.d` : 'gD',
     NOTHING: js ? 'NONE' : '1e9',
-    RAY: js ? 'S.ray' : 'gRay',
-    X: js ? 'S.x' : 'gX',
+    RAY: js ? `${state}.ray` : 'gRay',
+    X: js ? `${state}.x` : 'gX',
   };
 }
 // (In the JavaScript they write, float, abs, int, uint and ceil are as GLSL

@@ -1075,6 +1075,8 @@ export function makeArcology(set) {
       // its notch's edge's measure.)
       FEG: FACES.flatMap((F) => F.edges.map((E) => FACES.indexOf(E.G))),
       EGL: FACES.flatMap((F) => F.edges.map((E) => E.gl)),
+      EGN: FACES.flatMap((F) => F.edges.map((E) => E.gn)),
+      FLEN: FACES.map((F) => F.len),
       FCAPS: caps,
       FCR: at,
       FEDGE: FACES.flatMap((F) => F.edges.map((E) => [E.dl, E.al, E.be, E.sg * E.W])),
@@ -1232,7 +1234,7 @@ export function makeArcology(set) {
   // solids without relief (cityPlaneAt, bareIn), where the city's pockets
   // stop.
   // (The JavaScript's, made into functions below; the cell's state, CELL,
-  // as relief, reliefCell, eachPiece and windowAir set it.)
+  // as relief, reliefCell, facePocket and windowAir set it.)
   function openingsPieces(js) {
     // (Where the languages differ: what twin.writer writes; the cell's state
     // (gCellB and the rest, or CELL); the point along a slant; vectors (a
@@ -1679,7 +1681,8 @@ export function makeArcology(set) {
     // JavaScript float, int, uint, abs, floor, round, clamp, min and max are
     // as GLSL has them, vectors are arrays, and whole numbers are as
     // twin.unsigned makes them.)
-    const { fn, decl, loop, ivec3: iv, indent: ins, struct } = twin.writer(js);
+    // (S is the level's scale here, as in the shader: the pieces' state is PS.)
+    const { fn, decl, loop, ivec3: iv, indent: ins, struct, fade, axis, arg3, slant, ivec2, D, RAY, keep } = twin.writer(js, 'PS');
     const g = (name) => (js ? `RS.${name}` : `g${name}`);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (A vector b set to the parts xs: as GLSL assigns one, part by part in
@@ -1875,7 +1878,6 @@ export function makeArcology(set) {
     // slant (slantAt, or SL: GLSL's out parameter as a statement), an axis's
     // normal and a vector as a call's arguments, and the fade with distance
     // (gCfz), the shader's alone.)
-    const { fade, axis, arg3, slant, ivec2 } = twin.writer(js);
     // (n the whole part of slant k, target factor times the rest.)
     const along = (target, factor, k, n) => {
       const { whole, rest } = slant(k, n);
@@ -2054,9 +2056,161 @@ export function makeArcology(set) {
       ]),
       '}',
     ];
+    // A face's cuts where the point is (6d-5b): the pocket's box and the
+    // notches' (see notchBox), each united with d, in one loop over the boxes
+    // there are, by their bits (pocket, notch 0, notch 1; a ray kept where
+    // it goes further: '>' on ties); and where the point is in none, how far
+    // off their edges are at least (the caps, taken together). (Where the
+    // languages differ, beyond the above: the boxes (structs, or objects:
+    // copied, or shared, as nothing changes one once made); the point's
+    // cell's pieces and the ray's state (gCarveCross, gAxis, gRay: CELL and
+    // PS); vectors as a call's arguments; and the fade with distance (fo, fa,
+    // fr, fg, fz's terms, gO), the shader's alone: left out of the
+    // JavaScript, not made nothing (-0 + 0 would turn -0 to 0).)
+    // (Each plane as the shader forms it: the whole numbers first, then the
+    // rest, so that where two cuts meet, their planes meet exactly.)
+    const [CROSS, AXIS] = js ? ['CELL.cross', 'CELL.axis'] : ['gCarveCross', 'gAxis'];
+    // (A vector times s, as a call's arguments.)
+    const scaled = (s, v) => (js ? [0, 1, 2].map((a) => `${s} * ${v}[${a}]`).join(', ') : `${s} * ${v}`);
+    const face_ = [
+      "// Face k's cuts where the point is, at level lv (see facePocket in the JS),",
+      "// united with d; and where it is in none, how far off their edges are at",
+      '// least. For a ray, how far it can go in them (reach, and the surface there).',
+      js ? 'function facePocket(lv, k, L, f, base, d, ray) {' : 'float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {',
+      ...ins([
+        decl('int', 'S = lv == 0 ? 1 : R'),
+        'faceAt(k, S, base);',
+        decl('int', `pu = ${g('Pu')}, pYi = ${g('PYi')}, pni = ${g('Pni')}, py = ${g('Py')}`),
+        decl('float', `pfu = ${g('Pfu')}, pYf = ${g('PYf')}, pnf = ${g('Pnf')}, pfy = ${g('Pfy')}`),
+        "// The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.",
+        decl('int', 'ru = pu, ry = py', true),
+        decl('float', 'rfu = pfu, rfy = pfy', true),
+        'if (lv == 1) {',
+        ...ins([
+          'ru = fdiv(pu + (pfu < 0.0 ? -1 : 0), R);',
+          'rfu = (float(pu - R * ru) + pfu) / float(R);',
+          'ry = fdiv(py, R);',
+          'rfy = (float(py - R * ry) + pfy) / float(R);',
+        ]),
+        '}',
+        '// (Each level in turn, in one loop, so that the compiler makes one copy:',
+        '// one level finer, tiled afresh from the city rectangle\'s corner, on its floor.)',
+        decl('int', 'u0 = 0, u1 = 0, y0 = 0, y1 = 0, o0 = 0, o1 = 0, tc = 0, t = 0, fl = 0, cy0 = 0, cy1 = 0', true),
+        decl('uint', 'tile = 0u', true),
+        `for (${js ? 'let' : 'int'} l = 0; l <= lv; l++) {`,
+        ...ins([
+          'rectangle(l, k, ru, rfu, ry, rfy, tile);',
+          `u0 = ${g('U0')} + o0; u1 = ${g('U1')} + o0; y0 = ${g('Y0')} + o1; y1 = ${g('Y1')} + o1;`,
+          'fl = t;',
+          `t = rectDepth(k, l, u0, u1, y0, y1, ${g('Depth')}, fl, cy0, cy1);`,
+          'if (l == 0) {',
+          ...ins([
+            'tc = t; cy0 = y0; cy1 = y1;',
+            'o0 = R * u0; o1 = R * y0;',
+            'ru = pu - o0; rfu = pfu; ry = py - o1; rfy = pfy;',
+            `tile = hashCell(${iv(['u0', 'y0', 'k'])}, TILE_SALT);`,
+          ]),
+          '}',
+        ]),
+        '}',
+        decl('float', 'inv = 1.0 / FLEN[k]'),
+        decl('float', 'cap = min(min(float(pu - u0) + pfu, float(u1 - pu) - pfu) * inv, min(float(pYi - y0) + pYf, float(y1 - pYi) - pYf))', true),
+        '// (fz: how deep the box fades from, see below: one level finer, only the',
+        "// finer part, from the city's floor (as it is cut, in the city's",
+        "// measure), in the level's units.)",
+        'cutOf(k, lv, S, y0, y1, t, fl, R * cy0, R * cy1);',
+        ...(js
+          ? [`const bp = ${BOX.make({ on: 't > fl', A: 'u0', sa: '-1', B: 'u1', sb: '1', y0: 'y0', y1: 'y1', dn: g('Cdn'), g: 'k', fz: '0', e: '-1', sv: '0.0', ter: g('Cter'), yin: g('Cyin'), yb: g('Cyb'), back: g('Cback') })};`, 'let bs1 = {}, bs2 = {};']
+          : [`Box bp = ${BOX.make({ on: 't > fl', A: 'u0', sa: '-1', B: 'u1', sb: '1', y0: 'y0', y1: 'y1', dn: 'gCdn', g: 'k', fz: 'lv == 0 ? 0.0 : gCfz', e: '-1', sv: '0.0', ter: 'gCter', yin: 'gCyin', yb: 'gCyb', back: 'gCback' })}, bs1, bs2;`]),
+        'bs1.on = false; bs2.on = false;',
+        decl('int', 'n1 = 0, n2 = 0', true),
+        decl('float', 'f1 = 0.0, f2 = 0.0', true),
+        `for (${js ? 'let' : 'uint'} m = 3u; m != 0u; m &= m - 1u) {`,
+        ...ins([
+          decl('int', 'e = lowBit(m)'),
+          'notchBox(k, e, lv, py, pu, pfu, pYi, pYf);',
+          `cap = min(cap, ${g('Cap')});`,
+          `if (${g('S')}.on) faceAt(FEG[k * 2 + e], S, base);`,
+          `if (e == 0) { bs1 = ${g('S')}; n1 = ${g('Pni')}; f1 = ${g('Pnf')}; }`,
+          `else { bs2 = ${g('S')}; n2 = ${g('Pni')}; f2 = ${g('Pnf')}; }`,
+        ]),
+        '}',
+        js ? 'const tn = [FT[k][0] * inv, FT[k][1] * inv, FT[k][2] * inv];' : 'vec3 tn = vec3(FT[k]) * inv;',
+        decl('int', `pieces = lv == 1 && ${CROSS} ? 3 : 1`),
+        '// (Over the boxes there are, by their bits, so that the compiler cannot',
+        '// copy the loop out once per box.)',
+        decl('uint', 'boxes = (bp.on ? 1u : 0u) | (bs1.on ? 2u : 0u) | (bs2.on ? 4u : 0u)'),
+        ...fade(
+          '// With distance (see the march), the relief one level finer fades by',
+          "// getting shallower: each box's floor rises by fr of its fading depth,",
+          '// growing by fg of it for each unit the ray goes; its walls stay. (Not by',
+          "// the uniform shrinking of the rest of the level's air, which would fill in",
+          '// shallow relief long before deep, and leave slivers where boxes meet:',
+          '// cell() takes that out again for map.)',
+          "// (The city's own cuts keep the uniform shrinking: their face is the",
+          "// plaza's air's, which shrinks so; and by the time the city fades they",
+          '// are under a pixel.)',
+          'float fo = gO, fa = gA, fr = lv == 1 ? gO / (CLOSE * float(R)) : 0.0, fg = lv == 1 ? gA / (CLOSE * float(R)) : 0.0;',
+          'if (lv == 1) { gO = 0.0; gA = 0.0; }',
+        ),
+        `for (${js ? 'let' : 'uint'} m = boxes; m != 0u; m &= m - 1u) {`,
+        ...ins([
+          decl('int', 'b = lowBit(m)'),
+          decl('Box', 'x = bs2', true),
+          'if (b == 0) x = bp; else if (b == 1) x = bs1;',
+          decl('int', 'gn = b == 0 ? pni : b == 1 ? n1 : n2'),
+          decl('float', 'gf = b == 0 ? pnf : b == 1 ? f1 : f2'),
+          loop('a', 0, 'pieces'),
+          ...ins([
+            `${AXIS} = pieces == 1 ? -1 : a;`,
+            `${RAY} = false;`,
+            decl('float', 'gd = 1e9', true),
+            loop('pass', 0, 2),
+            ...ins([
+              'airPiece();',
+              `if (x.e >= 0) airPlane(x.sv, ${arg3('EGN[k * 2 + x.e]')});`,
+              'else {',
+              ...ins([
+                `airPlane(float(x.sa) * (float(pu - x.A) + pfu) * inv, ${scaled('float(x.sa)', 'tn')});`,
+                `airPlane(float(x.sb) * (float(pu - x.B) + pfu) * inv, ${scaled('float(x.sb)', 'tn')});`,
+              ]),
+              '}',
+              `airPlane(float(x.y0 - pYi) - pYf, ${axis(1, '-')});`,
+              `airPlane(float(pYi - x.y1) + pYf, ${axis(1)});`,
+              ...fade('gA = fg * x.fz;'),
+              'if (x.ter) {',
+              ...ins([
+                decl('vec2', 'nh = FNH[k]'),
+                decl('bool', 'up = nh.x > 0.0'),
+                `airPlane(up ? x.yb - float(pYi) - pYf : float(pYi) + pYf - x.yb, ${js ? '...(up ? [-0, -1, -0] : [0, 1, 0])' : 'up ? -EY : EY'});`,
+                ...(js ? ['const wn = normalize([FN[k][0], 0.0, FN[k][2]]);'] : []),
+                `airPlane((float(FPLANE[k].z * S - pni) + nh.x * (float(pYi - x.yin) + pYf) - x.back * nh.y - pnf) / nh.y${js ? '' : ' + fr * x.fz'}, ${js ? arg3('wn', '-') : '-normalize(vec3(FN[k].x, 0.0, FN[k].z))'});`,
+              ]),
+              `} else airPlane((float(FPLANE[k].z * S - x.dn - pni) - pnf) / FNS[k].x${js ? '' : ' + fr * x.fz'}, ${arg3('FN[k]', '-')});`,
+              ...fade('gA = 0.0;'),
+              'depthOut(k, S, pni, pnf);',
+              'if (x.g != k) depthOut(x.g, S, gn, gf);',
+              'heights(lv, L, f, base, FQY[k].z, FQY[k].w);',
+              'if (pass == 0) {',
+              ...ins([`gd = ${D};`, `if (!ray || gd${js ? '' : ' + gO'} > 0.0) break;`, `${RAY} = true;`]),
+              '} else {',
+              ...ins([`${RAY} = false;`, keep]),
+              '}',
+            ]),
+            '}',
+            'd = min(d, gd);',
+          ]),
+          '}',
+        ]),
+        '}',
+        ...fade('gO = fo; gA = fa;'),
+        'return min(d, max(cap, 0.0));',
+      ]),
+      '}',
+    ];
     const text = (lines, names = ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
     const onFace = ['ht', 'sl', 'pl', 'ms', 'mn', 'base', 'x', 'L', 'f'];
-    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch) };
+    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']) };
   }
   const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false);
 
@@ -2106,7 +2260,7 @@ ${table('vec3', 'FN', 'NF', (r) => `vec3(${r.map(glf).join(', ')})`, RELIEF_ROWS
 ${table('ivec4', 'FHT', 'NF', vrow('ivec4'), RELIEF_ROWS)}
 ${table('ivec4', 'FQY', 'NF', vrow('ivec4'), RELIEF_ROWS)}
 ${table('ivec3', 'FT', 'NF', vrow('ivec3'), RELIEF_ROWS)}
-const float FLEN[NF] = float[NF](${FACES.map((F) => glf(F.len)).join(', ')});
+${table('float', 'FLEN', 'NF', glf, RELIEF_ROWS)}
 ${table('ivec4', 'FSL', 'NF', vrow('ivec4'), RELIEF_ROWS)}
 // Each face's normal's upright part and the length of its level part (raw: see terrace in the JS).
 ${table('vec2', 'FNH', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
@@ -2121,7 +2275,7 @@ ${table('int', 'FWT', 'NF * 68', String, RELIEF_ROWS)}
 const int NRID = ${RIDGES.length};
 ${table('int', 'FER', 'NF * 2', String, RELIEF_ROWS)}
 ${table('float', 'EGL', 'NF * 2', glf, RELIEF_ROWS)}
-const vec3 EGN[NF * 2] = vec3[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => `vec3(${E.gn.map(glf).join(', ')})`)).join(', ')});
+${table('vec3', 'EGN', 'NF * 2', (r) => `vec3(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
 // Each ridge's two faces. Each face's caps (see F.cap, F.ncap: cap, and
 // each level's ncap, five bits each), from F.c0, and where they are (offset,
 // c0, how many); and each ridge's bare rows (see r.barep), likewise.
@@ -2247,118 +2401,7 @@ ${RELIEF_GLSL.box}
 ${RELIEF_GLSL.cut}
 ${RELIEF_GLSL.notch}
 
-// Face k's cuts where the point is, at level lv (see facePocket in the JS),
-// united with d; and where it is in none, how far off their edges are at
-// least. For a ray, how far it can go in them (reach, and the surface there).
-float facePocket(int lv, int k, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {
-  int S = lv == 0 ? 1 : R;
-  faceAt(k, S, base);
-  int pu = gPu, pYi = gPYi, pni = gPni, py = gPy;
-  float pfu = gPfu, pYf = gPYf, pnf = gPnf, pfy = gPfy;
-  // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
-  int ru = pu, ry = py;
-  float rfu = pfu, rfy = pfy;
-  if (lv == 1) {
-    ru = fdiv(pu + (pfu < 0.0 ? -1 : 0), R);
-    rfu = (float(pu - R * ru) + pfu) / float(R);
-    ry = fdiv(py, R);
-    rfy = (float(py - R * ry) + pfy) / float(R);
-  }
-  // (Each level in turn, in one loop, so that the compiler makes one copy:
-  // one level finer, tiled afresh from the city rectangle's corner, on its floor.)
-  int u0 = 0, u1 = 0, y0 = 0, y1 = 0, o0 = 0, o1 = 0, tc = 0, t = 0, fl = 0, cy0 = 0, cy1 = 0;
-  uint tile = 0u;
-  for (int l = 0; l <= lv; l++) {
-    rectangle(l, k, ru, rfu, ry, rfy, tile);
-    u0 = gU0 + o0; u1 = gU1 + o0; y0 = gY0 + o1; y1 = gY1 + o1;
-    fl = t;
-    t = rectDepth(k, l, u0, u1, y0, y1, gDepth, fl, cy0, cy1);
-    if (l == 0) {
-      tc = t; cy0 = y0; cy1 = y1;
-      o0 = R * u0; o1 = R * y0;
-      ru = pu - o0; rfu = pfu; ry = py - o1; rfy = pfy;
-      tile = hashCell(ivec3(u0, y0, k), TILE_SALT);
-    }
-  }
-  float inv = 1.0 / FLEN[k];
-  float cap = min(min(float(pu - u0) + pfu, float(u1 - pu) - pfu) * inv, min(float(pYi - y0) + pYf, float(y1 - pYi) - pYf));
-  // (fz: how deep the box fades from, see below: one level finer, only the
-  // finer part, from the city's floor (as it is cut, in the city's
-  // measure), in the level's units.)
-  cutOf(k, lv, S, y0, y1, t, fl, R * cy0, R * cy1);
-  Box bp = Box(t > fl, u0, -1, u1, 1, y0, y1, gCdn, k, lv == 0 ? 0.0 : gCfz, -1, 0.0, gCter, gCyin, gCyb, gCback), bs1, bs2;
-  bs1.on = false; bs2.on = false;
-  int n1 = 0, n2 = 0;
-  float f1 = 0.0, f2 = 0.0;
-  for (uint m = 3u; m != 0u; m &= m - 1u) {
-    int e = lowBit(m);
-    notchBox(k, e, lv, py, pu, pfu, pYi, pYf);
-    cap = min(cap, gCap);
-    if (gS.on) faceAt(FEG[k * 2 + e], S, base);
-    if (e == 0) { bs1 = gS; n1 = gPni; f1 = gPnf; }
-    else { bs2 = gS; n2 = gPni; f2 = gPnf; }
-  }
-  vec3 tn = vec3(FT[k]) * inv;
-  int pieces = lv == 1 && gCarveCross ? 3 : 1;
-  // (Over the boxes there are, by their bits, so that the compiler cannot
-  // copy the loop out once per box.)
-  uint boxes = (bp.on ? 1u : 0u) | (bs1.on ? 2u : 0u) | (bs2.on ? 4u : 0u);
-  // With distance (see the march), the relief one level finer fades by
-  // getting shallower: each box's floor rises by fr of its fading depth,
-  // growing by fg of it for each unit the ray goes; its walls stay. (Not by
-  // the uniform shrinking of the rest of the level's air, which would fill in
-  // shallow relief long before deep, and leave slivers where boxes meet:
-  // cell() takes that out again for map.)
-  // (The city's own cuts keep the uniform shrinking: their face is the
-  // plaza's air's, which shrinks so; and by the time the city fades they
-  // are under a pixel.)
-  float fo = gO, fa = gA, fr = lv == 1 ? gO / (CLOSE * float(R)) : 0.0, fg = lv == 1 ? gA / (CLOSE * float(R)) : 0.0;
-  if (lv == 1) { gO = 0.0; gA = 0.0; }
-  for (uint m = boxes; m != 0u; m &= m - 1u) {
-    int b = lowBit(m);
-    Box x = bs2;
-    if (b == 0) x = bp; else if (b == 1) x = bs1;
-    int gn = b == 0 ? pni : b == 1 ? n1 : n2;
-    float gf = b == 0 ? pnf : b == 1 ? f1 : f2;
-    for (int a = 0; a < pieces; a++) {
-      gAxis = pieces == 1 ? -1 : a;
-      gRay = false;
-      float gd = 1e9;
-      for (int pass = 0; pass < 2; pass++) {
-        airPiece();
-        if (x.e >= 0) airPlane(x.sv, EGN[k * 2 + x.e]);
-        else {
-          airPlane(float(x.sa) * (float(pu - x.A) + pfu) * inv, float(x.sa) * tn);
-          airPlane(float(x.sb) * (float(pu - x.B) + pfu) * inv, float(x.sb) * tn);
-        }
-        airPlane(float(x.y0 - pYi) - pYf, -EY);
-        airPlane(float(pYi - x.y1) + pYf, EY);
-        gA = fg * x.fz;
-        if (x.ter) {
-          vec2 nh = FNH[k];
-          bool up = nh.x > 0.0;
-          airPlane(up ? x.yb - float(pYi) - pYf : float(pYi) + pYf - x.yb, up ? -EY : EY);
-          airPlane((float(FPLANE[k].z * S - pni) + nh.x * (float(pYi - x.yin) + pYf) - x.back * nh.y - pnf) / nh.y + fr * x.fz, -normalize(vec3(FN[k].x, 0.0, FN[k].z)));
-        } else airPlane((float(FPLANE[k].z * S - x.dn - pni) - pnf) / FNS[k].x + fr * x.fz, -FN[k]);
-        gA = 0.0;
-        depthOut(k, S, pni, pnf);
-        if (x.g != k) depthOut(x.g, S, gn, gf);
-        heights(lv, L, f, base, FQY[k].z, FQY[k].w);
-        if (pass == 0) {
-          gd = gD;
-          if (!ray || gd + gO > 0.0) break;
-          gRay = true;
-        } else {
-          gRay = false;
-          if (gX > reach) { reach = gX; nrm = gN; }
-        }
-      }
-      d = min(d, gd);
-    }
-  }
-  gO = fo; gA = fa;
-  return min(d, max(cap, 0.0));
-}
+${RELIEF_GLSL.pocket}
 
 // The pockets and notches at level lv of the faces with a bit in faces
 // (base: the point's cell's corner from the building's origin, in the
@@ -2617,32 +2660,29 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // written below, made into functions, as by the rest.
   const CELL = { b: [0, 0, 0], open: 0, cross: false, axis: -1 };
 
+  // (The lowest bit set in m: GLSL's lowBit.)
+  const lowBit = (m) => 31 - Math.clz32(m & -m);
   // The openings in JavaScript (see openingsPieces), made into functions.
   const OPEN_JS = openingsPieces(true);
   const { openLo, openHi, openings, bareIn } = new Function(
     'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', 'NBARE', ...Object.keys(OPEN_ROWS),
     `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\n${OPEN_JS.bare}\nreturn { openLo, openHi, openings, bareIn };\n//# sourceURL=openingsPieces.gen.js`,
-  )(P, SL, CELL, R, hashCell, fdiv, (m) => 31 - Math.clz32(m & -m), SEGMENT_SALT, WIN_BITS, SOLID_BITS, BARE.length, ...Object.values(OPEN_ROWS));
+  )(P, SL, CELL, R, hashCell, fdiv, lowBit, SEGMENT_SALT, WIN_BITS, SOLID_BITS, BARE.length, ...Object.values(OPEN_ROWS));
   // The relief's whole-number decisions in JavaScript (see reliefPieces),
   // made into functions, and what the shader keeps in globals (gU0, gRY0 and
   // the rest), RS.
   const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0, Cap: 0, S: { on: false } };
   const RELIEF_JS = reliefPieces(true);
-  const { rectangle, ridgeRow: ridgeRowAt, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox } = new Function(
-    'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
-    `'use strict';\nconst { beyond, h01, airPlane, airSpan } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\n${RELIEF_JS.notch}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox };\n//# sourceURL=reliefPieces.gen.js`,
-  )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
+  const { ridgeRow: ridgeRowAt, depthN, facePocket } = new Function(
+    'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'CELL', 'lowBit', 'TILE_SALT', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
+    `'use strict';\nconst { S: PS, beyond, h01, airPiece, airPlane, airSpan } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b), normalize = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\n${RELIEF_JS.notch}\n${RELIEF_JS.pocket}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox, facePocket };\n//# sourceURL=reliefPieces.gen.js`,
+  )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, CELL, lowBit, TILE_SALT, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
   // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
   // a whole number of its measure deep: else one would not be cut at all.)
   if (FACES.some((F, k) => [1, 2, 3].some((t) => !(depthN(k, R, [Math.floor(t / 3), t % 3]) > 0)))) throw new Error('arcology: a cut too shallow for its face');
-  // (A rectangle, as the hand-written relief takes it; and a ridge's row, as
-  // the test of the ridges' rows looks it up: see _V2.ridgeRows.)
-  const rectOf = (lv, k, u, fu, y, fy, tile) => (rectangle(lv, k, u, fu, y, fy, tile), { u0: RS.U0, u1: RS.U1, y0: RS.Y0, y1: RS.Y1, depth: RS.Depth });
+  // (A ridge's row, as the test of the ridges' rows looks it up: see
+  // _V2.ridgeRows.)
   const rowOf = (r, lv, y) => (ridgeRowAt(r, lv, y), { y0: RS.RY0, y1: RS.RY1, t: RS.RT, tc: RS.RTC, cy0: RS.RCY0, cy1: RS.RCY1 });
-  // (Where the point is on face k, and the back of a cut, likewise: see
-  // faceAt and cutOf.)
-  const faceOf = (k, S, base) => (faceAt(k, S, base), { u: RS.Pu, fu: RS.Pfu, y: RS.Py, fy: RS.Pfy, Yi: RS.PYi, Yf: RS.PYf, ni: RS.Pni, nf: RS.Pnf, S });
-  const cutAt = (k, lv, S, y0, y1, t, fl, cy0, cy1) => (cutOf(k, lv, S, y0, y1, t, fl, cy0, cy1), RS.Cter ? { up: FACES[k].n[1] > 0, yin: RS.Cyin, yb: RS.Cyb, back: RS.Cback } : { dn: RS.Cdn });
 
   // The town in JavaScript (see townPieces), made into functions.
   const TOWN_JS = townPieces(true);
@@ -2650,15 +2690,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     'P', 'CELL', 'R', 'H2', 'hashCell', 'fdiv', 'townShape', 'TOWN_LOT', 'TOWN_PLAN_AT', 'TOWN_PICK', 'TOWN_H', 'TOWN_SALT', 'TOWN_MARGIN', 'TOWN_SHAPES', 'OPEN_AT', 'TOWN_CORNER_AT',
     `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
   )(P, CELL, R, Math.SQRT1_2, hashCell, fdiv, townShape, TOWN_LOT, TOWN_PLAN_AT, TOWN_PICK, TOWN_H, TOWN_SALT, TOWN_MARGIN, TOWN_SHAPES, OPEN_AT, TOWN_CORNER_AT);
-  // The least of piece(), called once for each of the pieces (one level finer:
-  // three where the cell's pockets run on as three).
-  function eachPiece(lv, piece) {
-    if (lv !== 1 || !CELL.cross) return (CELL.axis = -1), piece();
-    let d = NONE;
-    for (CELL.axis = 0; CELL.axis < 3; CELL.axis++) d = Math.min(d, piece());
-    CELL.axis = -1;
-    return d;
-  }
   function relief(id, up) {
     if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0, 0, 0];
     const o = fromMiddle(up), own = ownOf(id), v = [0, 1, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
@@ -2668,100 +2699,10 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return [VOLUME.data[i], VOLUME.data[i + 1], VOLUME.data[i + 2], VOLUME.data[i + 3]];
   }
 
-
-
-  // The planes of a cut's back: behind the face (dn, in n . X), or a terrace's
-  // wall and its floor or ceiling. (As pieces: see pieces.js; with the
-  // shader's normals.)
-  // (Each plane as the shader forms it: the whole numbers first, then the
-  // rest, so that where two cuts meet, their planes meet exactly.)
-  function cutBack(F, p, cut) {
-    if (cut.dn !== undefined) return P.airPlane((F.K * p.S - cut.dn - p.ni - p.nf) / F.nl, -F.n[0] / F.nl, -F.n[1] / F.nl, -F.n[2] / F.nl);
-    const nh = Math.hypot(F.n[0], F.n[2]), ny = F.n[1];
-    P.airPlane(cut.up ? cut.yb - p.Yi - p.Yf : p.Yi + p.Yf - cut.yb, 0, cut.up ? -1 : 1, 0);
-    P.airPlane((F.K * p.S - p.ni + ny * (p.Yi - cut.yin + p.Yf) - cut.back * nh - p.nf) / nh, -F.n[0] / nh, 0, -F.n[2] / nh);
-  }
-  // Rows y0 to y1 (true heights).
-  function rows(p, y0, y1) {
-    P.airPlane(y0 - p.Yi - p.Yf, 0, -1, 0);
-    P.airPlane(p.Yi - y1 + p.Yf, 0, 1, 0);
-  }
-  // One of a cut's pieces (box: its planes, as distance) united over the pieces
-  // it is (see eachPiece), and for a ray, how far it goes in them.
-  const cutAir = (lv, box, ray) => eachPiece(lv, () => {
-    const d = box();
-    P.through(ray, d, box);
-    return d;
-  });
-
-  // The air of a pocket of face F (p from faceOf) over [u0, u1] x [y0, y1],
-  // cut as cut says (see cutBack), to a unit past the face, within its
-  // heights and, one level finer, within the cell or a cell past each side
-  // in CELL.open (see heights; base: the cell's corner, as faceOf's).
-  function pocketAir(F, lv, p, L, f, base, u0, u1, y0, y1, cut, ray) {
-    const [tx, ty, tz] = F.tv.map((x) => x / F.len);
-    return cutAir(lv, () => {
-      P.airPiece();
-      P.airPlane(-(p.u - u0 + p.fu) / F.len, -tx, -ty, -tz);
-      P.airPlane((p.u - u1 + p.fu) / F.len, tx, ty, tz);
-      rows(p, y0, y1);
-      cutBack(F, p, cut);
-      depthOut(F.index, p.S, p.ni, p.nf);
-      heights(lv, L, f, base, F.lo4, F.hi4);
-      return P.S.d;
-    }, ray);
-  }
-  // The air of a notch of face F (p from faceOf at level lv), from its box
-  // (see notchBox): from past the ridge (a unit past the other face, x.g) to
-  // its edge (x.sv), within its row, cut as its box says (see cutBack),
-  // within its heights and, one level finer, the cell or a cell past each
-  // side in CELL.open (see heights; base: the cell's corner, as faceOf's).
-  function notchAir(F, x, lv, p, L, f, base, ray) {
-    const S = p.S, pG = faceOf(x.g, S, base), cut = x.ter ? { up: F.n[1] > 0, yin: x.yin, yb: x.yb, back: x.back } : { dn: x.dn };
-    return cutAir(lv, () => {
-      P.airPiece();
-      P.airPlane(x.sv, ...F.edges[x.e].gn);
-      rows(p, x.y0, x.y1);
-      cutBack(F, p, cut);
-      depthOut(F.index, S, p.ni, p.nf);
-      depthOut(x.g, S, pG.ni, pG.nf);
-      heights(lv, L, f, base, F.lo4, F.hi4);
-      return P.S.d;
-    }, ray);
-  }
-
-  // Face k's cuts where the point is, at level lv, united with d: its
-  // rectangle's pocket and its ridges' notches; and where it is in none, how
-  // far off their edges are at least.
-  function facePocket(lv, k, L, f, base, d, ray) {
-    const F = FACES[k], S = lv ? R : 1, p = faceOf(k, S, base);
-    // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
-    const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
-    const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
-    const c = rectOf(0, k, uc, fuc, yc, fyc, 0), tc = rectDepth(k, 0, c.u0, c.u1, c.y0, c.y1, c.depth, 0, 0, 0);
-    let r = c, t = tc, fl = 0;
-    if (lv) {
-      // One level finer: tiled afresh from the city rectangle's corner, on its floor.
-      const ou = R * c.u0, oy = R * c.y0, salt = hashCell([c.u0, c.y0, k], TILE_SALT) >>> 0;
-      const q = rectOf(1, k, p.u - ou, p.fu, p.y - oy, p.fy, salt);
-      r = { u0: q.u0 + ou, u1: q.u1 + ou, y0: q.y0 + oy, y1: q.y1 + oy };
-      t = rectDepth(k, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
-      fl = tc;
-    }
-    const Y = p.Yi + p.Yf;
-    let cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
-    // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
-    if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, base, r.u0, r.u1, r.y0, r.y1, cutAt(k, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), ray));
-    // (Each ridge's notch, as the shader's: its box decided (and how far off
-    // its edges the point is, with the pocket's), then its air.)
-    for (const e of [0, 1]) {
-      notchBox(k, e, lv, p.y, p.u, p.fu, p.Yi, p.Yf);
-      cap = Math.min(cap, RS.Cap);
-      if (RS.S.on) d = Math.min(d, notchAir(F, RS.S, lv, p, L, f, base, ray));
-    }
-    return Math.min(d, Math.max(cap, 0));
-  }
-
+  // The pockets one level finer of the faces with a bit in faces (see carve
+  // in the shader). (No bare test one level finer: its pockets are only in
+  // skin cells, which nothing bare touches, and run on only where the cells
+  // agree.)
   function pockets(L, f, faces, d, ray) {
     const base = CELL.b.map((x) => x * R);
     FACES.forEach((F, k) => {
