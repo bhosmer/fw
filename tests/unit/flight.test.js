@@ -90,13 +90,18 @@ test('speeding up is eased; slowing down is not', () => {
 
 // The curve: where the way open is the clearance, as fast as in proportion
 // to it; four clearances open, twice the clearance's pace (the square root),
-// not four times; in proportion at curve 1, to the bit.
+// not four times; in proportion at curve 1, to the bit (the way seen however
+// far open: reach 0). And as it flies, the way seen no further than 16
+// clearances (flight.reach).
 test('the pace follows the square root of the way open, in clearances', () => {
-  const f = new Flight(halls);
+  const f = new Flight(halls, { reach: 0 });
   f.begin(true);
   const c = f.scale;
   assert.ok(Math.abs(f.paced(c) / c - 1) < 1e-12 && Math.abs(f.paced(4 * c) / c - 2) < 1e-12 && Math.abs(f.paced(100 * c) / c - 10) < 1e-12);
-  const g = new Flight(halls, { curve: 1 });
+  const d = new Flight(halls);
+  d.begin(true);
+  assert.ok(Math.abs(d.paced(4 * d.scale) / d.scale - 2) < 1e-12 && Math.abs(d.paced(100 * d.scale) / d.scale - 4) < 1e-12, 'the way seen no further than 16 clearances');
+  const g = new Flight(halls, { curve: 1, reach: 0 });
   g.begin(true);
   for (const x of [0.3, 1, 7.7, 1e6]) assert.equal(g.paced(x * g.scale), x * g.scale);
   assert.throws(() => new Flight(halls, { curve: 0 }), /flight\.curve is a power/);

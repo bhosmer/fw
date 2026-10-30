@@ -49,7 +49,9 @@ const COARSEN_ABOVE = 0.5;
 //           such limit
 //   reach   how far open, in clearances, the curve sees the way at most (see
 //           paced): beyond that, no faster; 0, no such limit
-export const FLIGHT = frozen({ speed: 1, ease: 1, curve: 0.5, rise: 0, reach: 0 });
+// (Basil chose rise 2 and reach 16, 2026-10-30: F17. flight.rise=0 and
+// flight.reach=0 are the square root's curve alone, as it was.)
+export const FLIGHT = frozen({ speed: 1, ease: 1, curve: 0.5, rise: 2, reach: 16 });
 // Settings for a flight, from FLIGHT with changes, checked.
 export function flightSettings(set) {
   const s = define(FLIGHT, set, 'flight.');

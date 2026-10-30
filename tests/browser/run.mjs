@@ -643,9 +643,10 @@ check('every program sets every uniform it has', async () => {
 // over it claimed to be solid further down than the city's air begins.)
 check('from above, each world is stepped through truly', async () => {
   for (const world of WORLDS) {
-    // (Flown as flight first went, in proportion to the way open (curve 1),
-    // so that 4 s up and on is where this has always looked from.)
-    await load('start', 'alhambra', false, `${world}&flight.curve=1`);
+    // (Flown as flight first went, in proportion to the way open (curve 1)
+    // and nothing else (rise and reach 0), so that 4 s up and on is where
+    // this has always looked from.)
+    await load('start', 'alhambra', false, `${world}&flight.curve=1&flight.rise=0&flight.reach=0`);
     await page.eval('(fw.flight.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
     const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
     assert(newNearer < 0.002, `${world}: the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`);
