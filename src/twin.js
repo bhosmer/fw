@@ -327,7 +327,8 @@ export const reask = (js, d, ask) =>
 // is, -0 too); the point along slant k, its whole part into n and the rest
 // (slant: in GLSL slantAt, setting n as it gives the rest; in JavaScript
 // the slants as setPoint sets them, SL, the whole part a statement of its
-// own); a piece's distance (D), no piece (NOTHING), and the ray's state
+// own); a struct, declared and made (struct: in JavaScript an object); a
+// piece's distance (D), no piece (NOTHING), and the ray's state
 // (RAY: whether there is one; X: how far it goes in the piece).
 export function writer(js) {
   return {
@@ -342,6 +343,20 @@ export function writer(js) {
     axis: (a, sign = '') => (js ? [0, 1, 2].map((b) => `${sign}${b === a ? 1 : 0}`).join(', ') : `${sign}${AXES[a]}`),
     arg3: (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`),
     indent: (lines, by = '  ') => lines.map((l) => by + l),
+    // (A struct: its fields by type, in groups, as GLSL declares them (in
+    // JavaScript, nothing to declare); a value of it, given every field's by
+    // name: GLSL's constructor, in the fields' order, or an object.)
+    struct: (name, groups) => {
+      const fields = groups.flatMap(([, fs]) => fs);
+      return {
+        decl: js ? '' : `struct ${name} { ${groups.map(([type, fs]) => `${type} ${fs.join(', ')};`).join(' ')} };`,
+        make: (values) => {
+          const given = Object.keys(values);
+          if (given.length !== fields.length || fields.some((f) => !(f in values))) throw new Error(`twin: a ${name} of ${given.join(', ')}, not ${fields.join(', ')}`);
+          return js ? `{ ${fields.map((f) => `${f}: ${values[f]}`).join(', ')} }` : `${name}(${fields.map((f) => values[f]).join(', ')})`;
+        },
+      };
+    },
     slant: (k, n) => (js ? { whole: [`${n} = SL.Ls[${k}];`], rest: `SL.Fs[${k}]` } : { whole: [], rest: `slantAt(${k}, ${n})` }),
     keep: js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : 'if (gX > reach) { reach = gX; nrm = gN; }',
     D: js ? 'S.d' : 'gD',

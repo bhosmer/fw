@@ -979,7 +979,7 @@ export function makeArcology(set) {
     return { lo, size, data, words: WORDS, kind, open, at, within };
   })();
   // (Both copies look a ridge's rows up in RIDGE_ROWS, at the heights of the
-  // table's cells (notchAir) and, within them, of the faces' masses
+  // table's cells (notchBox) and, within them, of the faces' masses
   // (underRidge: no deeper than the caps, which are nothing outside them): so
   // the ridges' rows' table must hold the table's heights.)
   if (VOLUME.lo[1] - ORIGIN[1] < RR0 || VOLUME.lo[1] + VOLUME.size[1] - ORIGIN[1] > RR1) throw new Error('arcology: the ridges\' rows\' table short of the table\'s heights (RR0, RR1)');
@@ -1071,6 +1071,10 @@ export function makeArcology(set) {
       FHT: FACES.map((F) => [F.h.k, F.h.sign, F.t.k, F.t.sign]),
       FT: FACES.map((F) => F.tv),
       FSL: FACES.map((F) => [F.ms.k, F.ms.sign, F.gm, F.p]),
+      // (Each ridge of each face (see F.edges): the other face's index, and
+      // its notch's edge's measure.)
+      FEG: FACES.flatMap((F) => F.edges.map((E) => FACES.indexOf(E.G))),
+      EGL: FACES.flatMap((F) => F.edges.map((E) => E.gl)),
       FCAPS: caps,
       FCR: at,
       FEDGE: FACES.flatMap((F) => F.edges.map((E) => [E.dl, E.al, E.be, E.sg * E.W])),
@@ -1675,7 +1679,7 @@ export function makeArcology(set) {
     // JavaScript float, int, uint, abs, floor, round, clamp, min and max are
     // as GLSL has them, vectors are arrays, and whole numbers are as
     // twin.unsigned makes them.)
-    const { fn, decl, loop, ivec3: iv, indent: ins } = twin.writer(js);
+    const { fn, decl, loop, ivec3: iv, indent: ins, struct } = twin.writer(js);
     const g = (name) => (js ? `RS.${name}` : `g${name}`);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (A vector b set to the parts xs: as GLSL assigns one, part by part in
@@ -2004,9 +2008,55 @@ export function makeArcology(set) {
       ]),
       '}',
     ];
+    // A notch (6d-5a). (Where the languages differ, beyond the above: the
+    // box (a struct, or an object; no box: on false, or an object saying
+    // so), and its fading depth (fz), the shader's alone.)
+    // - notchBox: face k's notch at its e-th ridge at level lv, where the
+    //   point is (from faceAt: py, pu, pfu, pYi, pYf): past the widest a
+    //   notch can be, only how far past it the point is; and within it no
+    //   more than how far back from it, so that the distance runs on unbroken
+    //   across it (Cap). One level finer, only its own part: the city's row
+    //   is the city's. Its edge is W in from the ridge, along it: past it,
+    //   only how far past it the point is; on the ridge's side, the box (S),
+    //   from past the ridge (a unit past the other face, g) to its edge
+    //   (sv), within the row, cut as cutOf says; and how far back from its
+    //   edge, so the distance runs on unbroken across it, as across a
+    //   rectangle's. The caller builds its air (see facePocket), and takes
+    //   its cap with the pocket's.
+    const BOX = struct('Box', [['bool', ['on']], ['int', ['A', 'sa', 'B', 'sb', 'y0', 'y1', 'dn', 'g']], ['float', ['fz']], ['int', ['e']], ['float', ['sv']], ['bool', ['ter']], ['int', ['yin']], ['float', ['yb', 'back']]]);
+    const box = [BOX.decl];
+    const notch = [
+      "// Face k's notch at its e-th ridge, at level lv, for the point (see faceAt):",
+      "// the box, if the point is on the ridge's side of its edge (gS); and how far",
+      "// off its row's ends, or past its edge, the point is (gCap: so the distance",
+      "// runs on unbroken across the edge, as across a rectangle's). See notchAir",
+      '// in the JS.',
+      ...(js ? [] : ['float gCap;', 'Box gS;']),
+      fn('void', 'notchBox', ['int k', 'int e', 'int lv', 'int py', 'int pu', 'float pfu', 'int pYi', 'float pYf']),
+      ...ins([
+        decl('int', 'S = lv == 0 ? 1 : R'),
+        js ? 'RS.S = { on: false };' : 'gS.on = false;',
+        decl('ivec4', 'E = FEDGE[k * 2 + e]'),
+        decl('int', 'sg = E.w > 0 ? 1 : -1, sd = E.x > 0 ? 1 : -1, wi = ((k * 2 + e) * 2 + lv) * 17'),
+        decl('int', 'Z = sg * sd * (pu * E.x - E.y * pYi - S * E.z)'),
+        decl('float', 'fz0 = float(sg * sd) * (float(E.x) * pfu - float(E.y) * pYf), nz = float(abs(E.x)) * EGL[k * 2 + e]'),
+        '// (Past the widest a notch can be, only how far past it; see notchAir in the JS.)',
+        decl('float', 'widest = (float(Z - FWT[wi + 16] * abs(E.x)) + fz0) / nz'),
+        `if (widest > 0.0) { ${g('Cap')} = widest; return; }`,
+        'ridgeRow(FER[k * 2 + e], lv, py);',
+        `${g('Cap')} = min(min(float(pYi - ${g('RY0')}) + pYf, float(${g('RY1')} - pYi) - pYf), -widest);`,
+        `if (${g('RT')} == 0 || (lv == 1 && ${g('RT')} == ${g('RTC')})) return;`,
+        decl('float', `edge = (float(Z - FWT[wi + ${g('RT')}] * abs(E.x)) + fz0) / nz`),
+        `if (edge > 0.0) { ${g('Cap')} = min(${g('Cap')}, edge); return; }`,
+        `${g('Cap')} = min(${g('Cap')}, -edge);`,
+        `cutOf(k, lv, S, ${g('RY0')}, ${g('RY1')}, ${g('RT')}, lv == 1 ? ${g('RTC')} : 0, ${g('RCY0')}, ${g('RCY1')});`,
+        `${g('S')} = ${BOX.make({ on: 'true', A: '0', sa: '0', B: '0', sb: '0', y0: g('RY0'), y1: g('RY1'), dn: g('Cdn'), g: 'FEG[k * 2 + e]', fz: js ? '0' : 'lv == 1 ? gCfz : 0.0', e: 'e', sv: 'edge', ter: g('Cter'), yin: g('Cyin'), yb: g('Cyb'), back: g('Cback') })};`,
+      ]),
+      '}',
+    ];
     const text = (lines, names = ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
     const onFace = ['ht', 'sl', 'pl', 'ms', 'mn', 'base', 'x', 'L', 'f'];
-    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace) };
+    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch) };
   }
   const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false);
 
@@ -2063,14 +2113,14 @@ ${table('vec2', 'FNH', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROW
 ${table('vec2', 'FNS', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
 // Each face's two ridges (see F.edges): dl, al, be, and sg (as sg W(DMAX)); and the other face's index.
 ${table('ivec4', 'FEDGE', 'NF * 2', vrow('ivec4'), RELIEF_ROWS)}
-const int FEG[NF * 2] = int[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => FACES.indexOf(E.G))).join(', ')});
+${table('int', 'FEG', 'NF * 2', String, RELIEF_ROWS)}
 // W(t) at each ridge of each face (see F.edges), at each level, t twelfths, 0 to 16.
 ${table('int', 'FWT', 'NF * 68', String, RELIEF_ROWS)}
 // Each face's ridges: which (see RIDGES), and the plane of a notch's edge
 // there (see F.edges: gl, and gn, its unit normal into the face).
 const int NRID = ${RIDGES.length};
 ${table('int', 'FER', 'NF * 2', String, RELIEF_ROWS)}
-const float EGL[NF * 2] = float[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => glf(E.gl))).join(', ')});
+${table('float', 'EGL', 'NF * 2', glf, RELIEF_ROWS)}
 const vec3 EGN[NF * 2] = vec3[NF * 2](${FACES.flatMap((F) => F.edges.map((E) => `vec3(${E.gn.map(glf).join(', ')})`)).join(', ')});
 // Each ridge's two faces. Each face's caps (see F.cap, F.ncap: cap, and
 // each level's ncap, five bits each), from F.c0, and where they are (offset,
@@ -2193,34 +2243,9 @@ int lowBit(uint m) { return int(round(log2(float(m & (~m + 1u))))); } // (findLS
 // bounded a unit past face g (for notches, the other face at the ridge;
 // for the pocket, its own); fz: how deep it fades from (see below). Kept in
 // separate variables, not arrays: indexed arrays make the compile crawl.
-struct Box { bool on; int A, sa, B, sb, y0, y1, dn, g; float fz; int e; float sv; bool ter; int yin; float yb, back; };
+${RELIEF_GLSL.box}
 ${RELIEF_GLSL.cut}
-// Face k's notch at its e-th ridge, at level lv, for the point (see faceAt):
-// the box, if the point is on the ridge's side of its edge (gS); and how far
-// off its row's ends, or past its edge, the point is (gCap: so the distance
-// runs on unbroken across the edge, as across a rectangle's). See notchAir
-// in the JS.
-float gCap;
-Box gS;
-void notchBox(int k, int e, int lv, int py, int pu, float pfu, int pYi, float pYf) {
-  int S = lv == 0 ? 1 : R;
-  gS.on = false;
-  ivec4 E = FEDGE[k * 2 + e];
-  int sg = E.w > 0 ? 1 : -1, sd = E.x > 0 ? 1 : -1, wi = ((k * 2 + e) * 2 + lv) * 17;
-  int Z = sg * sd * (pu * E.x - E.y * pYi - S * E.z);
-  float fz0 = float(sg * sd) * (float(E.x) * pfu - float(E.y) * pYf), nz = float(abs(E.x)) * EGL[k * 2 + e];
-  // (Past the widest a notch can be, only how far past it; see notchAir in the JS.)
-  float widest = (float(Z - FWT[wi + 16] * abs(E.x)) + fz0) / nz;
-  if (widest > 0.0) { gCap = widest; return; }
-  ridgeRow(FER[k * 2 + e], lv, py);
-  gCap = min(min(float(pYi - gRY0) + pYf, float(gRY1 - pYi) - pYf), -widest);
-  if (gRT == 0 || (lv == 1 && gRT == gRTC)) return;
-  float edge = (float(Z - FWT[wi + gRT] * abs(E.x)) + fz0) / nz;
-  if (edge > 0.0) { gCap = min(gCap, edge); return; }
-  gCap = min(gCap, -edge);
-  cutOf(k, lv, S, gRY0, gRY1, gRT, lv == 1 ? gRTC : 0, gRCY0, gRCY1);
-  gS = Box(true, 0, 0, 0, 0, gRY0, gRY1, gCdn, FEG[k * 2 + e], lv == 1 ? gCfz : 0.0, e, edge, gCter, gCyin, gCyb, gCback);
-}
+${RELIEF_GLSL.notch}
 
 // Face k's cuts where the point is, at level lv (see facePocket in the JS),
 // united with d; and where it is in none, how far off their edges are at
@@ -2601,16 +2626,17 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // The relief's whole-number decisions in JavaScript (see reliefPieces),
   // made into functions, and what the shader keeps in globals (gU0, gRY0 and
   // the rest), RS.
-  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0 };
+  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0, Cap: 0, S: { on: false } };
   const RELIEF_JS = reliefPieces(true);
-  const { rectangle, ridgeRow: ridgeRowAt, rectDepth, faceAt, depthN, depthOut, heights, cutOf } = new Function(
+  const { rectangle, ridgeRow: ridgeRowAt, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox } = new Function(
     'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
-    `'use strict';\nconst { beyond, h01, airPlane, airSpan } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf };\n//# sourceURL=reliefPieces.gen.js`,
+    `'use strict';\nconst { beyond, h01, airPlane, airSpan } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\n${RELIEF_JS.notch}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox };\n//# sourceURL=reliefPieces.gen.js`,
   )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
   // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
   // a whole number of its measure deep: else one would not be cut at all.)
   if (FACES.some((F, k) => [1, 2, 3].some((t) => !(depthN(k, R, [Math.floor(t / 3), t % 3]) > 0)))) throw new Error('arcology: a cut too shallow for its face');
-  // (A rectangle, and a ridge's row, as the hand-written relief takes them.)
+  // (A rectangle, as the hand-written relief takes it; and a ridge's row, as
+  // the test of the ridges' rows looks it up: see _V2.ridgeRows.)
   const rectOf = (lv, k, u, fu, y, fy, tile) => (rectangle(lv, k, u, fu, y, fy, tile), { u0: RS.U0, u1: RS.U1, y0: RS.Y0, y1: RS.Y1, depth: RS.Depth });
   const rowOf = (r, lv, y) => (ridgeRowAt(r, lv, y), { y0: RS.RY0, y1: RS.RY1, t: RS.RT, tc: RS.RTC, cy0: RS.RCY0, cy1: RS.RCY1 });
   // (Where the point is on face k, and the back of a cut, likewise: see
@@ -2685,43 +2711,23 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       return P.S.d;
     }, ray);
   }
-  // The notch at F's e-th ridge where the point is (p from faceOf at level
-  // lv), united with d; and where the point is not in it, how far off its
-  // row's ends and its edge are at least (see ridgeRow).
-  function notchAir(F, e, lv, p, L, f, base, d, ray) {
-    const E = F.edges[e], G = E.G, S = p.S, Y = p.Yi + p.Yf;
-    // (As zone, in the shader's order: the whole numbers first.)
-    const sd = E.sg * Math.sign(E.dl), Z = sd * (p.u * E.dl - E.al * p.Yi - S * E.be), z = sd * (p.fu * E.dl - E.al * p.Yf);
-    const edgeAt = (t) => (Z - E.Wt[lv][t] * Math.abs(E.dl) + z) / (Math.abs(E.dl) * E.gl);
-    // (Past the widest a notch can be, only how far past it the point is; and
-    // within it no more than how far back from it, so that the distance runs
-    // on unbroken across it.)
-    const widest = edgeAt(16);
-    if (widest > 0) return Math.min(d, widest);
-    const w = rowOf(F.er[e], lv, p.y);
-    let cap = Math.min(Y - w.y0, w.y1 - Y, -widest);
-    // (One level finer, only its own part: the city's row is the city's.)
-    if (!w.t || (lv && w.t === w.tc)) return Math.min(d, Math.max(cap, 0));
-    // (Its edge: W in from the ridge, along it. Past it, only how far past it
-    // the point is; on the ridge's side, the box and how far back from its
-    // edge: so the distance runs on unbroken across it, as across a
-    // rectangle's.)
-    const edge = edgeAt(w.t);
-    if (edge > 0) return Math.min(d, Math.max(Math.min(cap, edge), 0));
-    cap = Math.min(cap, -edge);
-    const pG = faceOf(G.index, S, base), cut = cutAt(F.index, lv, S, w.y0, w.y1, w.t, w.tc === w.t ? 0 : w.tc, w.cy0, w.cy1);
-    // (From past the ridge (a unit past G's face) to its edge, within the row.)
-    d = Math.min(d, cutAir(lv, () => {
+  // The air of a notch of face F (p from faceOf at level lv), from its box
+  // (see notchBox): from past the ridge (a unit past the other face, x.g) to
+  // its edge (x.sv), within its row, cut as its box says (see cutBack),
+  // within its heights and, one level finer, the cell or a cell past each
+  // side in CELL.open (see heights; base: the cell's corner, as faceOf's).
+  function notchAir(F, x, lv, p, L, f, base, ray) {
+    const S = p.S, pG = faceOf(x.g, S, base), cut = x.ter ? { up: F.n[1] > 0, yin: x.yin, yb: x.yb, back: x.back } : { dn: x.dn };
+    return cutAir(lv, () => {
       P.airPiece();
-      P.airPlane(edge, ...E.gn);
-      rows(p, w.y0, w.y1);
+      P.airPlane(x.sv, ...F.edges[x.e].gn);
+      rows(p, x.y0, x.y1);
       cutBack(F, p, cut);
       depthOut(F.index, S, p.ni, p.nf);
-      depthOut(G.index, S, pG.ni, pG.nf);
+      depthOut(x.g, S, pG.ni, pG.nf);
       heights(lv, L, f, base, F.lo4, F.hi4);
       return P.S.d;
-    }, ray));
-    return Math.min(d, Math.max(cap, 0));
+    }, ray);
   }
 
   // Face k's cuts where the point is, at level lv, united with d: its
@@ -2743,10 +2749,16 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       fl = tc;
     }
     const Y = p.Yi + p.Yf;
-    const cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
+    let cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
     // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
     if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, base, r.u0, r.u1, r.y0, r.y1, cutAt(k, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), ray));
-    for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, d, ray);
+    // (Each ridge's notch, as the shader's: its box decided (and how far off
+    // its edges the point is, with the pocket's), then its air.)
+    for (const e of [0, 1]) {
+      notchBox(k, e, lv, p.y, p.u, p.fu, p.Yi, p.Yf);
+      cap = Math.min(cap, RS.Cap);
+      if (RS.S.on) d = Math.min(d, notchAir(F, RS.S, lv, p, L, f, base, ray));
+    }
     return Math.min(d, Math.max(cap, 0));
   }
 
