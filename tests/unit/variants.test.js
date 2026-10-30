@@ -255,9 +255,9 @@ test('a link sets how we fly, apart from the world', async () => {
   assert.equal(makeSettings({ flight: { ease: 0 } }).flight.ease, 0);
   assert.throws(() => makeSettings(fromLink('?flight.speed=1e999').settings), /flight\.speed is a number more than 0, not Infinity/);
   // (How frames are drawn, too: view.history, a word.)
-  assert.deepEqual(fromLink('?arcology&vs.view.history=range').vs.settings, { view: { history: 'range' } });
-  assert.deepEqual(makeSettings(fromLink('?view.history=range').settings).view, { history: 'range' });
-  assert.equal(makeSettings(undefined).view.history, 'depth');
+  assert.deepEqual(fromLink('?arcology&vs.view.history=depth').vs.settings, { view: { history: 'depth' } });
+  assert.deepEqual(makeSettings(fromLink('?view.history=depth').settings).view, { history: 'depth' });
+  assert.equal(makeSettings(undefined).view.history, 'range');
   assert.throws(() => makeSettings({ view: { history: 'fog' } }), /view\.history is depth or range, not fog/);
   assert.throws(() => makeSettings({ view: { nope: 1 } }), /there is no view\.nope/);
   assert.deepEqual(fromLink('?arcology&building.edge=cornice').changes, { building: { edge: 'cornice' } });

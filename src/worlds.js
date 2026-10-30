@@ -40,12 +40,12 @@ export async function makeWorld(name, changes) {
 
 // What a link's query names: ?variant&part.of.it=value&... (each value as
 // JSON: town.density=[10,30,60]; or a word alone, as text:
-// view.history=range): its world's name (or none), and the
+// view.history=depth): its world's name (or none), and the
 // changes, as define takes them. Passed over: a number alone (as makes a
 // link new), and what is added to links as they are passed on (utm_..., and
 // the like). A link with changes names its world (the parts differ).
 // Settings, how we fly through it and how its frames are drawn (flight.ease=2:
-// see FLIGHT in flight.js; view.history=range: see VIEW in view.js), are
+// see FLIGHT in flight.js; view.history=depth: see VIEW in view.js), are
 // apart from the world's changes (settings), and need no world named:
 // they are the same for every one, and go with us to the next world (see
 // nextWorld in main.js). (So no world has a part of that name: the tests

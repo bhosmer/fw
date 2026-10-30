@@ -524,7 +524,7 @@ check('a link sets how we fly, and two ways of flying are compared', async () =>
 // first world's way, then, flipped, the other's, each handed to the renderer
 // as the frame's; one program for both.
 check('a link sets how frames are drawn, and V flips it', async () => {
-  await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=range#${PLACES.court}`, setup('alhambra', false, 'halls'));
+  await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=depth#${PLACES.court}`, setup('alhambra', false, 'halls'));
   const r = await page.eval(`(() => {
     fw.renderer.timed = () => [];
     let drawn = [];
@@ -541,11 +541,11 @@ check('a link sets how frames are drawn, and V flips it', async () => {
     return { a, b, back: drawn.at(-1), programs, label: document.querySelector('.world').textContent };
   })()`);
   assert(!page.errors.length, page.errors.join('\n'));
-  assert(r.a === 'depth' && r.b === 'range' && r.back === 'depth' && r.programs === 1, `view.history drawn: ${JSON.stringify(r)}`);
+  assert(r.a === 'range' && r.b === 'depth' && r.back === 'range' && r.programs === 1, `view.history drawn: ${JSON.stringify(r)}`);
   // (And it does something: the gathering program has it, and moving frames
   // drawn the two ways differ.)
   const moving = async (flip) => {
-    await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=range#${PLACES.court}`, setup('alhambra', false, 'halls'));
+    await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=depth#${PLACES.court}`, setup('alhambra', false, 'halls'));
     await page.eval(PAGE_HELPERS);
     return page.eval(`(() => {
       if (${flip}) fw.flip();
@@ -558,8 +558,8 @@ check('a link sets how frames are drawn, and V flips it', async () => {
       return { h, has: fw.renderer.frame.taau.u.uRange != null };
     })()`);
   };
-  const [depth, range] = [await moving(false), await moving(true)];
-  assert(depth.has, 'the gathering program has no uRange');
+  const [range, depth] = [await moving(false), await moving(true)];
+  assert(range.has, 'the gathering program has no uRange');
   assert(depth.h !== range.h, 'moving frames drawn with view.history range and depth are the same');
   await page.goto(`${base}index.html?${++loads}&halls&view.history=fog`, setup('alhambra', false, 'halls'));
   const error = await page.eval(`document.getElementById('help').textContent`);

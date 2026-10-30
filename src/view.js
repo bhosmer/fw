@@ -9,14 +9,15 @@ import { SLACK } from './shaders.js';
 import { SCHEMES } from './schemes.js';
 import { define, frozen } from './util.js';
 
-// How frames are drawn, as a link may set it (?view.history=range: see
+// How frames are drawn, as a link may set it (?view.history=depth: see
 // fromLink in worlds.js), at its defaults:
 //   history  which of the frame before's pixels moving temporal
 //            antialiasing keeps (see TAAU_FRAG in frame.js): depth, those
 //            that saw about this pixel's own distance; range, those that saw
 //            a distance among the samples around it, or the sky where one of
-//            them did (steadier far detail in motion, ledger B25)
-export const VIEW = frozen({ history: 'depth' });
+//            them did (steadier far detail in motion, ledger B25; Basil
+//            chose it, 2026-10-30: depth is how frames were drawn before)
+export const VIEW = frozen({ history: 'range' });
 // Settings for the view, from VIEW with changes, checked.
 export function viewSettings(set) {
   const s = define(VIEW, set, 'view.');
