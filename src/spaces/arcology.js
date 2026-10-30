@@ -2169,7 +2169,12 @@ export function makeArcology(set) {
     //   level finer, a pocket in a terrace is cut behind its wall (back
     //   units, horizontally) between its floor and top. (H on the grid of the
     //   finer rows, rounded down: so that no finer pocket's row ends just
-    //   short of, or on, its floor; see the in-band test in cutOf.)
+    //   short of, or on, its floor; see the in-band test in cutOf.) Its
+    //   floor's (or ceiling's) height is kept as the wall's inner height, a
+    //   whole number, and how far above or below that it is (yb): held as one
+    //   number in single precision, the shader's compiler folded the point's
+    //   height into it and lost the rest, and the floor came out in steps
+    //   (ledger B41).
     // - cutOf: the back of a cut of level lv t twelfths deep over rows y0 to
     //   y1, on a city cut fl deep whose rows are cy0 to cy1 (level units): a
     //   terrace at the city's level; one level finer, behind the city
@@ -2183,14 +2188,14 @@ export function makeArcology(set) {
     //   sheet.) In the shader's globals gC*; in JavaScript RS.C*.
     const cut = [
       "// The back of a cut (see cutOf's note): a terrace (gCter: its wall's",
-      '// inner height gCyin, its floor or ceiling gCyb, behind its wall by gCback)',
-      '// or behind the face (gCdn); and how deep it fades from (gCfz).',
+      '// inner height gCyin, its floor or ceiling gCyb from that, behind its wall',
+      '// by gCback) or behind the face (gCdn); and how deep it fades from (gCfz).',
       ...(js ? [] : ['bool gCter;', 'int gCyin, gCdn;', 'float gCyb, gCback, gCfz;']),
       fn('void', 'terraceOf', ['int k', 'int S', 'int y0', 'int y1', 'int t']),
       ...ins([
         decl('float', 'H = float(terraceH(k, t)) * float(S) / 12.0'),
         decl('bool', 'up = FNH[k].x > 0.0'),
-        `${g('Cter')} = true; ${g('Cyin')} = up ? y1 : y0; ${g('Cyb')} = up ? float(y1) - H : float(y0) + H; ${g('Cback')} = 0.0;${faded(' gCfz = 0.0;')}`,
+        `${g('Cter')} = true; ${g('Cyin')} = up ? y1 : y0; ${g('Cyb')} = up ? -H : H; ${g('Cback')} = 0.0;${faded(' gCfz = 0.0;')}`,
       ]),
       '}',
       fn('void', 'cutOf', ['int k', 'int lv', 'int S', 'int y0', 'int y1', 'int t', 'int fl', 'int cy0', 'int cy1']),
@@ -2199,7 +2204,7 @@ export function makeArcology(set) {
         'if (fl > 0) {',
         ...ins([
           'terraceOf(k, S, cy0, cy1, fl);',
-          `if (FNH[k].x > 0.0 ? float(y1) >= ${g('Cyb')} : float(y0) <= ${g('Cyb')}) { ${g('Cback')} = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y;${faded(' gCfz = gCback;')} return; }`,
+          `if (FNH[k].x > 0.0 ? float(y1 - ${g('Cyin')}) >= ${g('Cyb')} : float(y0 - ${g('Cyin')}) <= ${g('Cyb')}) { ${g('Cback')} = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y;${faded(' gCfz = gCback;')} return; }`,
         ]),
         '}',
         decl('int', 'x = t - fl'),
@@ -2381,7 +2386,7 @@ export function makeArcology(set) {
               ...ins([
                 decl('vec2', 'nh = FNH[k]'),
                 decl('bool', 'up = nh.x > 0.0'),
-                `airPlane(up ? x.yb - float(pYi) - pYf : float(pYi) + pYf - x.yb, ${js ? '...(up ? [-0, -1, -0] : [0, 1, 0])' : 'up ? -EY : EY'});`,
+                `airPlane(up ? float(x.yin - pYi) + x.yb - pYf : float(pYi - x.yin) + pYf - x.yb, ${js ? '...(up ? [-0, -1, -0] : [0, 1, 0])' : 'up ? -EY : EY'});`,
                 ...(js ? ['const wn = normalize([FN[k][0], 0.0, FN[k][2]]);'] : []),
                 `airPlane((float(FPLANE[k].z * S - pni) + nh.x * (float(pYi - x.yin) + pYf) - x.back * nh.y - pnf) / nh.y${js ? '' : ' + fr * x.fz'}, ${js ? arg3('wn', '-') : '-normalize(vec3(FN[k].x, 0.0, FN[k].z))'});`,
               ]),

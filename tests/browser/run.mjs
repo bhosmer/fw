@@ -185,6 +185,44 @@ check('four levels deep against a town wall, the shader keeps the JavaScript\'s 
   assert(r.d < 2e-3 && r.reach < 2e-3 && r.inAir === r.rays, `the shader and the JavaScript differ by ${JSON.stringify(r)} (in the camera's cells)`);
 });
 
+// Over a terrace's floor at level 0 (Basil's place, ledger B41) and under a
+// terrace's ceiling, both a level finer than the city, the shader's distance
+// at the terrace's level is the JavaScript's straight up from the floor (and
+// down from the ceiling), from a ten-thousandth of a unit to a hundredth: the
+// floor's height is kept as a whole number and the rest, so that the
+// compiler cannot fold the point's height into it and lose the rest (which
+// came out in steps of 2^-14 units, and drew rings in the occlusion).
+check('over a terrace\'s floor and under its ceiling, the shader keeps the JavaScript\'s precision', async () => {
+  const places = {
+    floor: ['eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6MCwiZnJhYyI6WzAuMTg3ODc0MTgxMDAxOTk5OCwwLjAzNzA1NzAzOTE0ODQ1OTQ0LDAuMDg5NjA2MjM5ODYwMDEzNjldLCJkaWdpdHMiOltbLTIsWzEyLDEzLDEyXV0sWy0xLFszLDIsOF1dLFswLFsxOCwxNCw1XV1dLCJ5YXciOjkuNzc4MjcxMDg5MzcyOCwicGl0Y2giOi0wLjY4OTU1NTQzMzk2MzQ3NTV9', -1],
+    ceiling: ['eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6MCwiZnJhYyI6WzAuOTAxMTQxMzI2NDUzMjcwNiwwLjk4MDA1MDMxODI0Mzk2ODQsMC4wNTExMjE5MjY5NTczNjQzOTRdLCJkaWdpdHMiOltbLTEsWzksMTYsMTldXSxbMCxbNCwxMSwxMV1dXSwieWF3IjowLjMsInBpdGNoIjowLjl9', 1],
+  };
+  for (const [name, [hash, up]] of Object.entries(places)) {
+    await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra', false, 'arcology'));
+    const r = await page.eval(`(() => {
+      const recs = fw.pos.levels(-1, fw.pos.F), j = recs.findIndex((q) => q.level === -1), rec = recs[j];
+      const dir = [0, ${up}, 0], ray = { dir };
+      fw.flight.airAt(rec, [0, 0, 0], ray);
+      const plane = ray.reach / rec.sig, hs = [1e-4, 2e-4, 3e-4, 5e-4, 7e-4, 1e-3, 1.5e-3, 2e-3, 3e-3, 5e-3, 7e-3, 1e-2];
+      const points = hs.map((h) => [0, ${up} * (plane - h / rec.sig), 0]);
+      const out = { level: rec.level, F: fw.pos.F, plane, ny: ray.ny, js: 0, d: 0 };
+      fw.renderer.probe(recs, points).forEach((g, k) => {
+        const a = fw.flight.airAt(rec, points[k]);
+        out.js = Math.max(out.js, Math.abs(a + hs[k]));
+        const diff = Math.abs(g[j] - a) / rec.sig;
+        if (diff > out.d) (out.d = diff), (out.at = hs[k]);
+      });
+      return out;
+    })()`);
+    assert(!page.errors.length, page.errors.join('\n'));
+    // (The place is still the one: the camera in level -1's air at level 0,
+    // the floor (ceiling) a few hundredths of a unit straight below (above),
+    // facing it, and nearer than anything else at every height asked.)
+    assert(r.level === -1 && r.F === 0 && r.plane > 0.01 && r.plane < 0.1 && r.ny === -up && r.js < 1e-9, `${name}: the place: ${JSON.stringify(r)}`);
+    assert(r.d < 1e-6, `${name}: the shader and the JavaScript differ by ${JSON.stringify(r)} (in units of level -1)`);
+  }
+});
+
 // In the arcology's skin, where the buildings' relief is (fw.check flies
 // from the start and seldom gets there): at points in and around the skin
 // cells, the camera put there, every level asked about; and about rays, there
