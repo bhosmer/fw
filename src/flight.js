@@ -76,6 +76,13 @@ export class Flight {
     this.pos = new Position(this.R, space.ancestorDigit, space.start, space.slants ?? []);
     this.here = []; // the levels around us, as sense() last found them
     this.sensed = []; // per level: the clearance it alone gives us
+    // Every level around us (see around), as sense() last found them, each
+    // with its air distance here (rec, air): what the view is drawn from.
+    // The flight senses wherever it moves us (step, retrace, begin), so these
+    // are of where we are; a write to pos from outside must sense after it.
+    this.airs = [];
+    // Whether a sense is due before we move on (see setSpace and sense).
+    this.due = false;
     this.sky = -1e30; // how high we are above the ground, or what stands highest on it (level-F cells)
     this.clearance = 0;
     this.scale = 0.25; // smoothed clearance, level-F cells
@@ -92,14 +99,17 @@ export class Flight {
     // it are the way forward again until we strike out somewhere new.
     this.trail = [];
     this.travelled = 0;
-    this.lastMove = [0, 0, 0]; // what the last step moved us by, in level-F cells
+    // What the last step moved us by (delta), in cells of the level it was
+    // made at (F: the sense after it may have changed ours).
+    this.lastMove = { delta: [0, 0, 0], F: this.pos.F };
   }
   // Be in space from now on (another of the same lattice: a variant of the
   // world we are in), where we are, as we were: nothing is sensed again until
-  // we move, so that a flip between two at rest changes the world alone.
-  // (Where we are, but in its own frame: a cell where the other's default
-  // would have put it is where this one's default puts it, as its own link
-  // would have it.)
+  // we move, so that a flip between two at rest changes the world alone. Only
+  // the levels around us are asked again, in space, for the view; the sense
+  // is due before the next move. (Where we are, but in its own frame: a cell
+  // where the other's default would have put it is where this one's default
+  // puts it, as its own link would have it.)
   setSpace(space) {
     if (space.R !== this.R) throw new Error('flight: a space of another lattice');
     const was = this.pos.defaultDigit;
@@ -110,6 +120,8 @@ export class Flight {
     this.space = space;
     this.pos.defaultDigit = space.ancestorDigit;
     this.pos.slants = space.slants ?? [];
+    this.airs = this.around().map((rec) => ({ rec, air: this.airAt(rec) }));
+    this.due = true;
   }
 
   // Turn by dyaw and dpitch (radians: right and up).
@@ -254,13 +266,22 @@ export class Flight {
     return pos.levels(Math.max(Math.min(pos.F - UP - FAR, this.room ?? Infinity), pos.F - DEEPEST), pos.F + DOWN);
   }
 
-  // Find our clearance, and move the working level to suit it.
+  // Find our clearance, and move the working level to suit it; and what each
+  // level around us says of its air here, for the view (airs). Each level is
+  // asked once at each working level tried.
   sense() {
     const { pos, R } = this;
+    // (What each level has said of its air here, at this pass's F.)
+    let asked, stable = false;
+    const ask = (r) => {
+      if (!asked.has(r.level)) asked.set(r.level, this.airAt(r));
+      return asked.get(r.level);
+    };
     for (let i = 0; i < 8; i++) {
+      asked = new Map();
       const lo = pos.F - UP - FAR;
-      this.here = this.around().filter((r) => r.level >= pos.F - UP || ((r.level >= lo || r.level === this.room) && this.airAt(r) < 0));
-      this.sensed = this.here.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig }));
+      this.here = this.around().filter((r) => r.level >= pos.F - UP || ((r.level >= lo || r.level === this.room) && ask(r) < 0));
+      this.sensed = this.here.map((r) => ({ level: r.level, air: ask(r), sig: r.sig }));
       // (Over the sky plane, nothing is nearer than what stands highest under
       // it: clearance goes by that, not by the plane.)
       this.sky = this.skyHeight(this.space.skyClear ?? 0);
@@ -269,7 +290,7 @@ export class Flight {
       if (!(this.sky > 0) && !this.sensed.some((s) => s.air < 0)) {
         const far = this.search(lo);
         this.here.unshift(...far);
-        this.sensed.unshift(...far.map((r) => ({ level: r.level, air: this.airAt(r), sig: r.sig })));
+        this.sensed.unshift(...far.map((r) => ({ level: r.level, air: ask(r), sig: r.sig })));
       }
       // (Finer levels' air can be here too, but it is the most room any
       // level gives us that is the space we are in.)
@@ -286,11 +307,23 @@ export class Flight {
       } else if (this.clearance > COARSEN_ABOVE) {
         pos.coarsen();
         k = 1 / R;
-      } else break;
+      } else {
+        stable = true;
+        break;
+      }
       this.scale *= k;
       this.pace *= k;
       this.fog *= k;
+      this.opened *= k;
     }
+    // (Every level around us as we now are: at the working level we ended
+    // at, and with the room just found. Where the last pass left it changed,
+    // what was asked there is of another working level.)
+    if (!stable) asked = new Map();
+    this.airs = this.around().map((rec) => ({ rec, air: ask(rec) }));
+    // (Not yet at the working level that suits where we are, as after a
+    // jump of many levels: more of it is due before we move.)
+    this.due = !stable;
     // Visibility goes by the space we are in, not by how close we are to its
     // walls: it is a multiple of the cell whose air we are floating in.
     // (Of the spaces that can be drawn: failing any, as far as those go.)
@@ -325,6 +358,7 @@ export class Flight {
       this.sense();
     }
     this.scale = Math.max(this.clearance, 1e-3);
+    this.opened = 0;
     this.fog = this.fogTarget;
   }
 
@@ -344,10 +378,10 @@ export class Flight {
   // displacement (from the mouse), both in clearances. Returns how far we
   // went, in level-F cells.
   step(dt, wish, nudge = [0, 0, 0]) {
-    this.lastMove = [0, 0, 0];
+    this.lastMove = { delta: [0, 0, 0], F: this.pos.F };
     // Standing still with nothing left to settle: there is nothing to do.
     if (wish.every((x) => x === 0) && nudge.every((x) => x === 0) && this.settled()) return 0;
-    this.sense();
+    if (this.due) this.sense();
     this.settle(dt);
     const aim = wish.map((x, a) => x * SPEED * dt + nudge[a]);
     const size = Math.hypot(...aim);
@@ -369,12 +403,14 @@ export class Flight {
     if (len <= 0) return 0;
     const delta = aim.map((x) => (x * len) / size);
     this.pos.move(delta);
-    this.lastMove = delta;
+    this.lastMove = { delta, F: this.pos.F };
     const { trail } = this;
     trail.length = this.travelled;
     trail.push({ delta, F: this.pos.F, dt, yaw: this.yaw, pitch: this.pitch });
     if (trail.length > TRAIL_MAX) trail.splice(0, TRAIL_MAX / 10);
     this.travelled = trail.length;
+    // (Sensed where we now are: so the view, and the next step, go by here.)
+    this.sense();
     return len;
   }
 
@@ -386,11 +422,12 @@ export class Flight {
     let budget = dt * 2.5 * boost;
     let len = 0;
     let facing = null;
+    if (this.due) this.sense();
     while (budget > 0 && (way < 0 ? this.travelled > 0 : this.travelled < trail.length)) {
       const m = trail[way < 0 ? this.travelled - 1 : this.travelled];
-      this.sense();
       const k = Math.pow(R, pos.F - m.F);
       pos.move(m.delta.map((x) => way * x * k));
+      this.sense();
       this.travelled += way;
       len += Math.hypot(...m.delta) * k;
       facing = m;
@@ -403,7 +440,6 @@ export class Flight {
       this.yaw += turn * ease;
       this.pitch += (facing.pitch - this.pitch) * ease;
     }
-    this.sense();
     this.settle(dt);
     return len;
   }

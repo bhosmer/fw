@@ -104,7 +104,7 @@ test('flying level just over the city goes as fast as its buildings are clear', 
   // was about a cell a second.)
   let moved = 0;
   flyFrom([12, ROW_ID % R + ROWS, 12], [12, 0, 0], [0.5, 0.5, 0.5], 600, (f, i) => {
-    if (i >= 300) moved += Math.hypot(...f.lastMove) * Math.pow(R, -1 - f.pos.F);
+    if (i >= 300) moved += Math.hypot(...f.lastMove.delta) * Math.pow(R, -1 - f.lastMove.F);
   });
   assert.ok(moved > 10, `${moved} cells in 5 s`);
 });

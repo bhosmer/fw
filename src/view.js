@@ -27,15 +27,15 @@ export function camera(flight) {
 }
 
 // The levels to draw, seen out to maxT, at most n of them, each with how far
-// away its nearest air is (near), from where we are now (which may be a step
-// on from where the flight last sensed); and all the levels around us, drawn
-// or not. A level with no air in sight is solid as far as this frame is
-// concerned.
+// away its nearest air is (near); and all the levels around us, drawn or
+// not, each with its air distance here (rec, air). As the flight last sensed
+// them, where we are (see Flight.airs). A level with no air in sight is
+// solid as far as this frame is concerned.
 export function visible(flight, maxT, n) {
   const { pos } = flight;
-  const all = flight.around();
-  let recs = all.filter((r) => r.level >= pos.F - UP);
-  for (const r of recs) r.near = Math.max(0, (flight.airAt(r) - SLACK) / r.sig);
+  const all = flight.airs;
+  // (Each its own record, near and all: the flight's are left as they are.)
+  let recs = all.filter(({ rec }) => rec.level >= pos.F - UP).map(({ rec, air }) => ({ ...rec, near: Math.max(0, (air - SLACK) / rec.sig) }));
   recs = recs.filter((r) => r.near < maxT);
   if (recs.length > n) recs = mostVisible(flight, recs, n);
   return { recs, all };
@@ -59,12 +59,13 @@ function mostVisible(flight, recs, n) {
 }
 
 // The air of a level too coarse to draw, as the shader is to see it: the
-// plane of its nearest surface. all: the levels around us (see visible).
+// plane of its nearest surface. all: the levels around us, each with its
+// air here (see visible).
 export function outerAir(flight, all) {
   let best = null;
-  for (const r of all) {
+  for (const { rec: r, air } of all) {
     if (r.level >= flight.pos.F - UP) break;
-    const dist = -flight.airAt(r) / r.sig;
+    const dist = -air / r.sig;
     if (dist > 0 && (!best || dist > best.dist)) best = { r, dist };
   }
   if (!best) return null;

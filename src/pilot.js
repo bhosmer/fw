@@ -281,21 +281,25 @@ export class Pilot {
     this.on = false;
   }
 
-  // Bring the target to level F's units, then account for having moved by
-  // delta (level-F cells).
-  moved(delta, F) {
-    if (F !== this.F) {
-      const k = Math.pow(this.R, F - this.F);
-      if (this.target) this.target = this.target.map((x) => x * k);
-      if (this.plan) this.plan = this.plan.map((p) => p.map((x) => x * k)); // (clearance and all)
-      this.along *= k;
-      this.made *= k;
-      this.spread *= k;
-      if (this.v) this.v *= k;
-      this.F = F;
-    }
+  // Account for a move (delta, in cells of level move.F: see
+  // Flight.lastMove), and then for working at level F.
+  moved({ delta, F: at }, F) {
+    this.toLevel(at);
     if (this.target) this.target = this.target.map((x, a) => x - delta[a]);
     if (this.plan) this.plan = this.plan.map(([x, y, z, c]) => [x - delta[0], y - delta[1], z - delta[2], c]);
+    this.toLevel(F);
+  }
+  // Bring the target, and all else measured in level-F cells, to level F's.
+  toLevel(F) {
+    if (F === this.F) return;
+    const k = Math.pow(this.R, F - this.F);
+    if (this.target) this.target = this.target.map((x) => x * k);
+    if (this.plan) this.plan = this.plan.map((p) => p.map((x) => x * k)); // (clearance and all)
+    this.along *= k;
+    this.made *= k;
+    this.spread *= k;
+    if (this.v) this.v *= k;
+    this.F = F;
   }
 
   // A new look (from Renderer.seen): a grid of distances in level-lookF cells,

@@ -40,7 +40,10 @@ test('flying never ends a step in solid, nor goes more than half the way open', 
     flight.begin(true);
     const levels = new Set();
     wander(flight, n, (f, len) => {
-      assert.ok(len <= 0.5 * f.opened * (1 + 1e-9) || !(f.clearance > 0), `stepped ${len} of ${f.opened} open`);
+      // (The step in cells of the level it was made at; how far the way was
+      // open, of the level we work at since: see Flight.lastMove.)
+      const open = f.opened * Math.pow(R, f.lastMove.F - f.pos.F);
+      assert.ok(len <= 0.5 * open * (1 + 1e-9) || !(f.clearance > 0), `stepped ${len} of ${open} open`);
       f.sense();
       assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}, ${f.pos.frac}`);
       levels.add(f.pos.F);
@@ -274,4 +277,26 @@ test('turning stops at the furthest up or down, and the camera looking level is 
   assert.equal(flight.pitch, -PITCH_MAX);
   flight.pitch = 0;
   assert.deepEqual(camera(flight), flight.basis());
+});
+
+// Sensed after every move: what the view is drawn from is of where we are
+// (every level around us, as around() has them, each with its air here);
+// sensing again where we are changes nothing; and the last move says which
+// level's cells it was in, whatever level we work at since.
+test('the flight is sensed where it is, after every move', () => {
+  const state = (f) => JSON.stringify([f.pos.F, f.pos.frac, f.clearance, f.scale, f.pace, f.fog, f.fogTarget, f.opened, f.sky, f.room, f.sensed, f.airs]);
+  let moves = 0, refined = 0;
+  wander(new Flight(halls), 1500, (f, len) => {
+    const asked = f.around().map((rec) => ({ rec, air: f.airAt(rec) }));
+    assert.equal(JSON.stringify(f.airs), JSON.stringify(asked), 'the airs are not of where we are');
+    const was = state(f);
+    f.sense();
+    assert.equal(state(f), was, 'sensing again where we are changed something');
+    if (len > 0) {
+      moves++;
+      if (f.lastMove.F !== f.pos.F) refined++;
+      assert.ok(Math.abs(Math.hypot(...f.lastMove.delta) - len) <= 1e-12 * len, 'the last move is not the step taken');
+    }
+  });
+  assert.ok(moves > 1000 && refined > 0, `${moves} moves, ${refined} of them followed by a change of level`);
 });

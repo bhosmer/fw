@@ -14,7 +14,7 @@ Each world answers, for a point at a level, its distance to that level's air, an
 
 ## Flying
 
-- `src/flight.js`: sensing (what is around us at every scale) and motion (how far the way ahead is open, each step, the trail), and which way we face.
+- `src/flight.js`: sensing (what is around us at every scale, after every move: what the view is drawn from) and motion (how far the way ahead is open, each step, the trail), and which way we face.
 - `src/arrival.js`: where a visit starts (somewhere new in a world).
 - `src/place.js`: a place in a link (the URL's hash): read and checked whole, written, and gone to.
 - `src/position.js`: where we are, as digits at every level; each level's record (`levels`).

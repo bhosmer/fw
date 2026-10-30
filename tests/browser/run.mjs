@@ -483,6 +483,38 @@ check('two worlds compared flip, and nothing else changes', async () => {
   assert(h.sky > -1e29, 'B, flipped to, has no sky: it stands on the other\'s ground');
 });
 
+// A flip at rest, drawn as the app draws (not by a snapshot, which senses
+// afresh): from what the world flipped to says of each level here, the
+// flight not having moved (see Flight.setSpace).
+check('a flip at rest is drawn from the world flipped to', async () => {
+  // (The halls, fewer of them solid in B: the levels here say other things.)
+  await load('court', 'alhambra', false, 'halls&vs.solid=0.3');
+  const r = await page.eval(`(async () => {
+    const { SLACK } = await import('./src/shaders.js');
+    fw.renderer.timed = () => [];
+    let drawn = null;
+    const draw = fw.renderer.draw.bind(fw.renderer);
+    fw.renderer.draw = (recs, view) => ((drawn = { recs, view }), draw(recs, view));
+    let t = 2 ** 20;
+    for (let i = 0; i < 60; i++) fw.tick((t += 1000 / 60));
+    const near = (r) => Math.max(0, (fw.flight.airAt(r) - SLACK) / r.sig);
+    const was = JSON.stringify([fw.pos.F, fw.pos.frac]);
+    const before = new Map(fw.flight.airs.map(({ rec, air }) => [rec.level, air]));
+    fw.flip();
+    drawn = null;
+    fw.tick((t += 1000 / 60));
+    if (!drawn) return { drawn: false };
+    return {
+      drawn: true, shown: fw.shown, still: JSON.stringify([fw.pos.F, fw.pos.frac]) === was,
+      own: drawn.recs.every((r) => r.near === near(r)) && fw.flight.airs.every(({ rec, air }) => air === fw.flight.airAt(rec)),
+      differ: fw.flight.airs.filter(({ rec, air }) => air !== before.get(rec.level)).length,
+    };
+  })()`);
+  assert(r.drawn && r.shown === 'B' && r.still, `a flip at rest: ${JSON.stringify(r)}`);
+  assert(r.own, 'a flip at rest is drawn with levels as the world flipped from has them');
+  assert(r.differ > 0, 'the two worlds say the same of every level here: the check proves nothing');
+});
+
 // Every program sets, as it draws, every uniform it has (as the program
 // itself says: see finish in gl.js), samplers aside (set once, when it is
 // made): drawn as the app draws, the older way, and probed, in each world.
