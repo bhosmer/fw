@@ -2,7 +2,7 @@ import arcology, { CITY, _V2 } from '../../src/spaces/arcology.js';
 import { Flight } from '../../src/flight.js';
 
 // Rays the city's pockets take that the solids without relief stop (see
-// cityPockets): found among n from points close by each such solid, toward
+// the pockets' block in cellAir): found among n from points close by each such solid, toward
 // points inside it. As [x, dir]: x in lattice units of the city's level over
 // the middle city cell's corner.
 export function clippedRays(rnd, n) {

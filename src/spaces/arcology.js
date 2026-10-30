@@ -822,7 +822,7 @@ export function makeArcology(set) {
   const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   // (For the checks in .claude/verify.)
   // (For the checks: how many rays the solids without relief have stopped
-  // in the city's pockets: see cityPockets.)
+  // in the city's pockets: see the pockets' block in cellAir.)
   const SEEN = { clipped: 0 };
   const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PL, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
   const VOLUME = (() => {
@@ -2708,7 +2708,14 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // openings) run on across (open), whether as three pieces (cross), and
   // which of them is being asked about (axis: see runsOn). Read by the code
   // written below, made into functions, as by the rest.
-  const CELL = { b: [0, 0, 0], open: 0, cross: false, axis: -1 };
+  // (And, as the shader's gCarve and the rest, the pockets asked after once
+  // the cell is done: which level's (carve: 0 the city's, 1 the next's, -1
+  // none), of which faces, from which corner (base), and the cell's own
+  // bound (e). (At the city's level, how far off the other faces are is
+  // cityFaces' own, RS.Far.)
+  const CELL = { b: [0, 0, 0], open: 0, cross: false, axis: -1, carve: -1, faces: 0, base: [0, 0, 0], e: 0 };
+  // (No entry in the table: relief's answer outside it.)
+  const NO_ENTRY = [0, 0, 0, 0];
 
   // The cell's small pieces in JavaScript (see cellPieces), made into
   // functions; the table read as the shader's texelFetch reads its texture.
@@ -2749,40 +2756,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
   )(P, CELL, R, Math.SQRT1_2, hashCell, fdiv, townShape, TOWN_LOT, TOWN_PLAN_AT, TOWN_PICK, TOWN_H, TOWN_SALT, TOWN_MARGIN, TOWN_SHAPES, OPEN_AT, TOWN_CORNER_AT);
 
-  // The pockets one level finer of the faces with a bit in faces (see
-  // carve). (No bare test one level finer: its pockets are only in skin
-  // cells, which nothing bare touches, and run on only where the cells
-  // agree.)
-  const pockets = (L, f, faces, d, ray) => carve(1, L, f, CELL.b.map((x) => x * R), faces, d, ray);
-
-  // The city's own pockets near the point (o its cell's corner from the
-  // middle cell's): of each face it is near, from a cell past it to BAND_IN
-  // in (see cityFaces); elsewhere, at least that far off. United with d, the rest of the cell's
-  // air, as cell has them in the shader; and for a ray, the pockets' reach
-  // stopped at the solids without relief.
-  function cityPockets(L, f, o, d, ray) {
-    const base = o.map((x, a) => x - ORIGIN[a]);
-    const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
-    const r0 = ray ? ray.reach : -1, n0 = ray && [ray.nx, ray.ny, ray.nz];
-    // (The faces it is near, as the shader's: then their pockets, by carve.)
-    const faces = cityFaces(L, f, o), far = RS.Far;
-    const a = carve(0, L, f, base, faces, NONE, ray);
-    // (The pockets, and how far off the rest are, stop at the solids without
-    // relief: inside one they are no air; near one, a ray they take on
-    // strikes it. Asked only where it could matter, as in the shader.)
-    const c = Math.min(far, a), pockets = !!ray && ray.reach > r0;
-    let bi = -1e9;
-    if ((c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR))) {
-      if (pockets) (P.S.x = ray.reach), ([P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz]);
-      bi = bareIn(L, f, base, pockets);
-    }
-    if (ray && bi >= 0) (ray.reach = r0), ([ray.nx, ray.ny, ray.nz] = n0);
-    else if (pockets && bi > -BARE_NEAR) {
-      if (P.S.x < ray.reach) SEEN.clipped++;
-      (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
-    }
-    return Math.max(c, bi);
-  }
 
   function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
     const kind = m & 3;
@@ -2811,42 +2784,98 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       return d > 0 ? Math.min(d, Math.max(-g, 0)) : d;
     }
     const e = Math.min(R - L[0] - f[0], L[0] + f[0], R - L[1] - f[1], L[1] + f[1], R - L[2] - f[2], L[2] + f[2]);
+    if (ray) P.aim(ray);
     CELL.open = (wrun >>> OPEN_AT) & 63;
     CELL.cross = !!((wrun >>> CROSS_AT) & 1);
-    const town = kind === PLAIN && (m >>> TOWN_AT) & 1;
-    if (ray) P.aim(ray);
-    const a = openings(L, f, [m, clip, wins, wrun], ray);
+    let a = wins ? openings(L, f, [m, clip, wins, wrun], ray) : NONE;
     CELL.open = (m >>> OPEN_AT) & 63;
     CELL.cross = !!((clip >>> CROSS_AT) & 1);
-    const t = town ? townAir(L, f, m, ray) : NONE;
-    return Math.min(a, t, kind === SKIN ? pockets(L, f, (m >>> FACE_AT) & 63, NONE, ray) : NONE, Math.max(e, 0));
+    if (kind === PLAIN) {
+      if ((m >>> TOWN_AT) & 1) a = Math.min(a, townAir(L, f, m, ray));
+      return Math.min(a, Math.max(e, 0));
+    }
+    // (Its pockets, with its openings: asked after in cellAir.)
+    CELL.carve = 1;
+    CELL.faces = (m >>> FACE_AT) & 63;
+    CELL.base = CELL.b.map((x) => x * R);
+    CELL.e = e;
+    return a;
   }
 
-  // (ray: see hallsAir. Every cell answers it.)
+  // A cell of any level, in the shader's order (see cell in the shader):
+  // the city's cells, the sky over them; one level finer, the cells the
+  // table has an entry for (the relief: the halls only in its deep ones)
+  // and those it has none for (the ground away from the building, else the
+  // halls); the halls everywhere else;
+  // then the pockets asked after once (see CELL), stopped, at the city's
+  // level, at the solids without relief. (ray: see hallsAir; every cell
+  // answers it, aimed where the shader starts reach and nrm afresh. The
+  // point along the slants, set where the city's and the relief's pieces
+  // ask after it: see setPoint.)
   function cellAir(L, f, id, seed, dg, level, up, ray) {
-    const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
-    if (ray) ray.known = false;
-    if (level < CITY) return solid(NONE);
-    if (level === CITY + 1 && up) {
-      const m = relief(id, up);
-      if (m[0]) {
-        // (The halls only in deep cells, as the shader has them.)
-        const d = (m[0] & 3) === DEEP ? hallsAir(L, f, id, seed, dg, level, spaceRoom, ray) : NONE;
-        setPoint(L, f, dg);
-        return reliefCell(L, f, id, seed, m, d, ray);
-      }
-      if (groundCell(ownOf(id), up)) return solid(groundAir(L, f));
+    if (level < CITY) {
+      if (ray) P.aim(ray);
+      return NONE;
     }
-    if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
-    if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, level, spaceRoom, ray);
-    // (The city's: its plaza's air and its well's, and for a ray the further
-    // of the pieces the point is in; then its pockets.)
-    setPoint(L, f, dg);
-    if (ray) P.aim(ray);
-    const w = id[1] === ROW_ID ? well(L, f, id, seed) : NONE, p = plaza(L, f, id);
-    P.through(ray, p, () => plaza(L, f, id));
-    P.through(ray, w, () => well(L, f, id, seed));
-    return Math.min(p, w, cityPockets(L, f, fromMiddle(id), Math.min(p, w), ray));
+    CELL.carve = -1;
+    let d = NONE;
+    if (level === CITY && id[1] >= ROW_ID && id[1] < ROW_ID + ROWS) {
+      // (The city's: its plaza's air and its well's, and for a ray the
+      // further of the pieces the point is in; its pockets after.)
+      setPoint(L, f, dg);
+      if (ray) P.aim(ray);
+      const w = id[1] === ROW_ID ? well(L, f, id, seed) : NONE, p = plaza(L, f, id);
+      P.through(ray, p, () => plaza(L, f, id));
+      P.through(ray, w, () => well(L, f, id, seed));
+      const o = fromMiddle(id);
+      CELL.carve = 0;
+      CELL.faces = cityFaces(L, f, o);
+      CELL.base = o.map((x, a) => x - ORIGIN[a]);
+      d = Math.min(p, w);
+    } else {
+      // Over the city there is only sky: all a cell up there can say is how
+      // far down it is.
+      if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) {
+        if (ray) P.aim(ray);
+        return L[1] + R * (id[1] - ROW_ID - ROWS) + f[1];
+      }
+      // (The halls asked after once, as the shader has them: not in the skin
+      // and plain cells, which have none.)
+      const m = level === CITY + 1 && up ? relief(id, up) : NO_ENTRY, kind = m[0] & 3;
+      if (ray) P.aim(ray);
+      if (level === CITY + 1 && !m[0] && up && groundCell(ownOf(id), up)) d = groundAir(L, f);
+      else if (!m[0] || kind === DEEP) d = hallsAir(L, f, id, seed, dg, level, spaceRoom, ray);
+      if (m[0]) {
+        setPoint(L, f, dg);
+        d = reliefCell(L, f, id, seed, m, d, ray);
+      }
+    }
+    // (The buildings' relief, asked after in one place, as the shader's.)
+    if (CELL.carve >= 0) {
+      const r0 = ray ? ray.reach : -1, n0 = CELL.carve === 0 && ray && [ray.nx, ray.ny, ray.nz];
+      const a = carve(CELL.carve, L, f, CELL.base, CELL.faces, NONE, ray);
+      if (CELL.carve === 0) {
+        // (The city's pockets, and how far off the rest are, stop at the
+        // solids without relief: inside one they are no air; near one, a ray
+        // they take on strikes it. Asked only where it could matter.)
+        const c = Math.min(RS.Far, a), pockets = !!ray && ray.reach > r0;
+        const q = [0, 1, 2].map((k) => CELL.base[k] + L[k] + f[k]);
+        let bi = -1e9;
+        if ((c < d && bareNear(q, Math.max(-c, 0))) || (pockets && bareNear(q, BARE_NEAR))) {
+          if (pockets) (P.S.x = ray.reach), ([P.S.nx, P.S.ny, P.S.nz] = [ray.nx, ray.ny, ray.nz]);
+          bi = bareIn(L, f, CELL.base, pockets);
+        }
+        d = Math.min(d, Math.max(c, bi));
+        if (ray && bi >= 0) (ray.reach = r0), ([ray.nx, ray.ny, ray.nz] = n0);
+        else if (pockets && bi > -BARE_NEAR) {
+          if (P.S.x < ray.reach) SEEN.clipped++;
+          (ray.reach = P.S.x), (ray.nx = P.S.nx), (ray.ny = P.S.ny), (ray.nz = P.S.nz);
+        }
+      }
+      // (With the cell's openings, in d: see reliefCell.)
+      else d = Math.min(d, Math.min(a, Math.max(CELL.e, 0)));
+    }
+    return d;
   }
 
   // Where a first visit starts, in the middle city cell (lattice units): on
