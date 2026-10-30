@@ -418,3 +418,26 @@ test('the ridges\' rows looked up are the rows as made', () => {
     }
   assert.ok(compared > 5000, `${compared} heights`);
 });
+
+// At the city's level, the relief's height planes are worked out from 4y
+// along the FOUR slant (see heights): its whole part and the rest as
+// Position.levels carries them. They are the very numbers the true height
+// gives, so the shader's form and the plain one agree exactly.
+test("the relief's heights at the city's level: the slant's form is the true height's", () => {
+  const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 }), rnd = rand(11);
+  const FOUR = flight.pos.slants.findIndex((m) => m[0] === 0 && m[1] === 4 && m[2] === 0);
+  assert.ok(FOUR >= 0, 'no FOUR slant');
+  let n = 0;
+  for (let i = 0; i < 20000; i++) {
+    const F = -2 - (i % 6);
+    Object.assign(flight.pos, { F, frac: [rnd(), 0.3 + rnd() * 0.4, rnd()], digits: new Map() });
+    for (const r of flight.pos.levels(F, 0)) {
+      const b = Math.floor(rnd() * 40) - 20, lo4 = Math.floor(rnd() * 400) - 200, hi4 = lo4 + 4;
+      const lo = (lo4 - (r.Ls[FOUR] + 4 * b) - r.fs[FOUR]) * 0.25, hi = (r.Ls[FOUR] + 4 * b - hi4 + r.fs[FOUR]) * 0.25;
+      assert.ok(Object.is(lo, lo4 / 4 - b - r.L[1] - r.f[1]) && Object.is(hi, r.L[1] - (hi4 / 4 - b) + r.f[1]), `at ${JSON.stringify({ F, frac: flight.pos.frac, level: r.level })}`);
+      assert.equal(r.Ls[FOUR] + r.fs[FOUR], 4 * (r.L[1] + r.f[1]));
+      n++;
+    }
+  }
+  assert.ok(n > 100000, `${n} asked`);
+});

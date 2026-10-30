@@ -317,12 +317,18 @@ export const reask = (js, d, ask) =>
 // its parameters' types; a declaration (changing: one that changes after);
 // a counted loop; a number, as a float (in JavaScript exactly, -0 too);
 // a vector of floats as a function's argument (in JavaScript, three
-// arguments: so only in a call) and one of whole numbers (an array); lines
+// arguments: so only in a call) and one of whole numbers (ivec3, ivec2:
+// an array); lines
 // for the shader alone (fade: its fading with distance; the JavaScript's
 // world is as it is, see pieces.js); lines indented; where a ray's piece of
 // air ends, kept if further (keep: the reach and normal inout in GLSL, the
-// ray's object in JavaScript); a piece's distance (D), no piece (NOTHING), and the
-// ray's state (RAY: whether there is one; X: how far it goes in the piece).
+// ray's object in JavaScript); an axis's normal and a vector as a call's
+// arguments (axis, arg3: in JavaScript, three, each signed as GLSL's -EX
+// is, -0 too); the point along slant k, its whole part into n and the rest
+// (slant: in GLSL slantAt, setting n as it gives the rest; in JavaScript
+// the slants as setPoint sets them, SL, the whole part a statement of its
+// own); a piece's distance (D), no piece (NOTHING), and the ray's state
+// (RAY: whether there is one; X: how far it goes in the piece).
 export function writer(js) {
   return {
     fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
@@ -331,8 +337,12 @@ export function writer(js) {
     num: (x) => (js ? (Object.is(x, -0) ? '-0' : String(x)) : glf(x)),
     vec3Arg: (xs) => (js ? xs.join(', ') : `vec3(${xs.join(', ')})`),
     ivec3: (xs) => (js ? `[${xs.join(', ')}]` : `ivec3(${xs.join(', ')})`),
+    ivec2: (xs) => (js ? `[${xs.join(', ')}]` : `ivec2(${xs.join(', ')})`),
     fade: (...lines) => (js ? [] : lines),
+    axis: (a, sign = '') => (js ? [0, 1, 2].map((b) => `${sign}${b === a ? 1 : 0}`).join(', ') : `${sign}${AXES[a]}`),
+    arg3: (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`),
     indent: (lines, by = '  ') => lines.map((l) => by + l),
+    slant: (k, n) => (js ? { whole: [`${n} = SL.Ls[${k}];`], rest: `SL.Fs[${k}]` } : { whole: [], rest: `slantAt(${k}, ${n})` }),
     keep: js ? 'if (S.x > ray.reach) (ray.reach = S.x), (ray.nx = S.nx), (ray.ny = S.ny), (ray.nz = S.nz);' : 'if (gX > reach) { reach = gX; nrm = gN; }',
     D: js ? 'S.d' : 'gD',
     NOTHING: js ? 'NONE' : '1e9',

@@ -455,18 +455,12 @@ export function makeArcology(set) {
     r.at = (y) => solve3([r.F.n, r.G.n, [0, 1, 0]], [r.F.K, r.G.K, y]);
   }
   // Depths are a quarter cell's whole number (the city's) and a twelfth's
-  // (one level finer's): a face's depth plane at (ci, fi), in whole numbers of
-  // its measure (n . X) at each level (rounded in, so never deeper).
-  const NDQ = 5;
-  // (floor(p |n| / 12) for p twelfths, exactly: the largest m with (12 m)^2 <= p^2 nn.)
-  const depthN = (nn, p) => {
-    let m = Math.floor(Math.sqrt(p * p * nn) / 12);
-    while (144 * (m + 1) * (m + 1) <= p * p * nn) m++;
-    while (m > 0 && 144 * m * m > p * p * nn) m--;
-    return m;
-  };
-  for (const F of FACES) F.dn = [1, R].map((S) => Array.from({ length: NDQ * NDQ }, (_, i) => depthN(F.nn, (3 * Math.floor(i / NDQ) + (i % NDQ)) * S)));
-  if (Math.max(...FACES.map((F) => (3 * (NDQ - 1) + NDQ - 1) ** 2 * R * R * F.nn)) >= 2 ** 31) throw new Error(`arcology: a face too fine for the relief's whole numbers (depths): another slope (see slopes in hexahedron.js)`);
+  // (one level finer's): a face's depth plane x twelfths deep is worked out
+  // in whole numbers of its measure (n . X), rounded in, so never deeper (see
+  // depthN). (Its whole numbers stay under 2^31 for the deepest cut the
+  // tables hold, 16 twelfths, one level finer: q = (16 R)^2 n . n, and its
+  // correction asks 144 (dn + 1)^2, about q + 24 root q + 144.)
+  if (FACES.some((F) => { const q = (16 * R) ** 2 * F.nn; return q + 24 * Math.sqrt(q) + 144 >= 2 ** 31; })) throw new Error(`arcology: a face too fine for the relief's whole numbers (depths): another slope (see slopes in hexahedron.js)`);
   const quarters = (x) => Math.round(x * 4), twelfths = (x) => Math.round(x * 12);
   // The notches one level finer keep clear of the cells that the solids
   // without relief (pillars, the column) touch (they are cut in skin cells only,
@@ -638,7 +632,6 @@ export function makeArcology(set) {
   // face's measure, differ by less than MARGIN: see relief-v4.md.)
   if (3 * quarters(LEVELS[0].depths.at(-1)) + twelfths(LEVELS[1].depths.at(-1) / R) > 16) throw new Error('arcology: cuts deeper than the tables');
   if (!(MARGIN > Math.max(...FACES.map((F) => 1 / F.nl)))) throw new Error('arcology: a face too coarse for the relief\'s measure (MARGIN): another slope (see slopes in hexahedron.js)');
-  if (FACES.some((F) => [1, 2, 3].some((t) => !(F.dn[1][Math.floor(t / 3) * NDQ + (t % 3)] > 0)))) throw new Error('arcology: a cut too shallow for its face');
   // (A notch's edge's normal is its value's gradient: checked numerically.)
   for (const F of FACES)
     for (const E of F.edges) {
@@ -1071,6 +1064,13 @@ export function makeArcology(set) {
       // the finer's in their own units, as the builder rounds them.)
       DEPTH12: LEVELS.flatMap((l, lv) => [...l.depths.map((d) => (lv ? twelfths(d / R) : 3 * quarters(d))), ...Array(ND - l.depths.length).fill(0)]),
       FQY: FACES.map((F) => [F.q2[0], F.q2[1], F.lo4, F.hi4]),
+      FPLANE: FACES.map((F) => [F.plane.k, F.plane.sign, F.K, F.alpha]),
+      FNY: FACES.map((F) => F.yk),
+      FNN: FACES.map((F) => F.nn),
+      FN: FACES.map((F) => F.n.map((x) => x / F.nl)),
+      FHT: FACES.map((F) => [F.h.k, F.h.sign, F.t.k, F.t.sign]),
+      FT: FACES.map((F) => F.tv),
+      FSL: FACES.map((F) => [F.ms.k, F.ms.sign, F.gm, F.p]),
       FCAPS: caps,
       FCR: at,
       FEDGE: FACES.flatMap((F) => F.edges.map((E) => [E.dl, E.al, E.be, E.sg * E.W])),
@@ -1111,7 +1111,7 @@ export function makeArcology(set) {
     // q. Otherwise the text is both's: in JavaScript float, abs, min and max
     // are as GLSL has them, points are arrays, and whole numbers are as
     // twin.unsigned makes them.)
-    const { fn, decl, loop, num, vec3Arg, ivec3, D, NOTHING, RAY, X } = twin.writer(js);
+    const { fn, decl, loop, num, vec3Arg, ivec3, D, NOTHING, RAY, X, slant } = twin.writer(js);
     const middle = [
       '// Where the middle city cell is from this one, in lattice units.',
       fn('ivec3', 'fromMiddle', ['ivec3 id']),
@@ -1147,7 +1147,8 @@ export function makeArcology(set) {
         }
         const m = p.m, i = p.dir - 3;
         const k = `${p.K} - ${p.scale} * (${m[0]} * o.x + ${m[1]} * o.y + ${m[2]} * o.z)`;
-        return [js ? `n = SL.Ls[${i}];\n  fr = SL.Fs[${i}];` : `fr = slantAt(${i}, n);`, plane(p, `${p.scale} * n - (${k})`, 'fr')];
+        const { whole, rest } = slant(i, 'n');
+        return [...whole, `fr = ${rest};`, plane(p, `${p.scale} * n - (${k})`, 'fr')];
       });
       return [fn('float', `solid${j}`, ['ivec3 L', 'vec3 f', 'ivec3 o']), ...[decl('int', 'n', true), decl('float', 'fr', true), 'solidPiece();', ...lines, 'return solidDone();'].map((l) => '  ' + l), '}'].join('\n');
     });
@@ -1239,11 +1240,11 @@ export function makeArcology(set) {
     // it is: see pieces.js). Otherwise the text is both's: in JavaScript
     // float, int, uint, ceil, min and max are as GLSL has them, vectors are
     // arrays, and whole numbers are as twin.unsigned makes them.)
-    const { fn, decl, loop, D, RAY, fade, indent: ins, keep: keepX } = twin.writer(js);
+    const { fn, decl, loop, D, RAY, fade, indent: ins, keep: keepX, arg3: arg, slant } = twin.writer(js);
+    const su = slant('ht.z', 'u'), sw = slant('ht.x', 'w');
     const [CELLB, OPEN, CROSS, AXIS, IN, OUT] = js ? ['CELL.b', 'CELL.open', 'CELL.cross', 'CELL.axis', 'S.in', 'S.out'] : ['gCellB', 'gCarveOpen', 'gCarveCross', 'gAxis', 'gIn', 'gOut'];
     const ZERO = js ? '[0, 0, 0]' : 'vec3(0.0)', IN_N = js ? '[S.inx, S.iny, S.inz]' : 'gInN';
     const xyz = (v) => (js ? v : `${v}.xyz`), neg = (v) => (js ? `[-${v}[0], -${v}[1], -${v}[2]]` : `-${v}`);
-    const arg = (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`);
     const dot = (v, w) => (js ? `(${[0, 1, 2].map((a) => `${v}[${a}] * ${w === 'gDir' ? `S.d${'xyz'[a]}` : `${w}[${a}]`}`).join(' + ')})` : `dot(${v}.xyz, ${w})`);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (The ray's reach and normal kept, where it goes further.)
@@ -1271,8 +1272,9 @@ export function makeArcology(set) {
         js ? 'const base = [CELL.b[0] * R, CELL.b[1] * R, CELL.b[2] * R];' : 'ivec3 base = gCellB * R;',
         decl('ivec4', 'ht = WHT[j]'),
         ...(js
-          ? ['let u = SL.Ls[ht.z], w = SL.Ls[ht.x];', 'const fu = float(ht.w) * SL.Fs[ht.z], fw = float(ht.y) * SL.Fs[ht.x];']
-          : ['int u, w;', 'float fu = float(ht.w) * slantAt(ht.z, u), fw = float(ht.y) * slantAt(ht.x, w);']),
+          ? ['let u, w;', ...su.whole, ...sw.whole]
+          : ['int u, w;']),
+        decl('float', `fu = float(ht.w) * ${su.rest}, fw = float(ht.y) * ${sw.rest}`),
         'u = ht.w * u + WT[j].x * base.x + WT[j].z * base.z;',
         'w = ht.y * w + WH[j].x * base.x + WH[j].z * base.z;',
         decl('int', `y = base.y + L.y - ${GROUND * R}`),
@@ -1552,9 +1554,8 @@ export function makeArcology(set) {
     // with distance, the shader's alone. Otherwise the text is both's: in
     // JavaScript float, min and max are as GLSL has them, vectors are
     // arrays, and whole numbers are as twin.unsigned makes them.)
-    const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep } = twin.writer(js);
+    const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep, axis: E } = twin.writer(js);
     const CB = js ? 'CELL.b' : 'gCellB';
-    const E = (a, sign = '') => (js ? [0, 1, 2].map((b) => (b === a ? `${sign}1` : '0')).join(', ') : `${sign}${['EX', 'EY', 'EZ'][a]}`);
     // (Box k of lot r, if it has one, then what to do with it, given its
     // corners.)
     const shape = (then) => (js ? `{ const b = townShape(h, h2, r, dens, k); if (b) ${then('[b[0], b[1], b[2]]', '[b[3], b[4], b[5]]')} }` : `if (townShape(h, h2, r, dens, k, lo, hi)) ${then('lo', 'hi')}`);
@@ -1740,7 +1741,7 @@ export function makeArcology(set) {
     //   measure and units) comes within W(t) of face k's e-th ridge at either
     //   height.
     // - terraceH: a terrace's height for t twelfths, in twelfths, rounded
-    //   down, exactly (FTH; see terrace).
+    //   down, exactly (FTH; see terraceOf).
     // - bandOf: a city terrace of face k, t twelfths deep over rows a to b
     //   (h12): its band [lo, hi] and the height its wall stands at (anchor).
     //   On a face all terraces' ramps have one slope, so one is no deeper
@@ -1865,8 +1866,147 @@ export function makeArcology(set) {
       ]),
       '}',
     ];
-    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB'])) : lines.join('\n'));
-    return { rect: text(rect), decide: text(decide) };
+    // Where the point is on a face, and the backs of cuts (6d-4).
+    // (Where the languages differ, beyond the above: the point along a
+    // slant (slantAt, or SL: GLSL's out parameter as a statement), an axis's
+    // normal and a vector as a call's arguments, and the fade with distance
+    // (gCfz), the shader's alone.)
+    const { fade, axis, arg3, slant, ivec2 } = twin.writer(js);
+    // (n the whole part of slant k, target factor times the rest.)
+    const along = (target, factor, k, n) => {
+      const { whole, rest } = slant(k, n);
+      return [...whole, `${target} = ${factor} * ${rest};`];
+    };
+    // - faceAt: where the point is on face k at level scale S (base: its
+    //   cell's corner from the building's origin, in this level's units):
+    //   along it (u, fu), its true height (y, fy: whole units and the rest,
+    //   at least 0; and Y, the same times p, as a whole number and the rest:
+    //   Yi, Yf), and how deep (n . X, as a whole number and the rest: ni,
+    //   nf). In the shader's globals gP*; in JavaScript RS.P*.
+    // - depthN: a face's depth plane x deep, in whole numbers of its measure
+    //   (n . X), rounded in, so never deeper.
+    // - depthOut: a unit past face k (from faceAt's ni, nf): where a cut's air
+    //   ends outward.
+    const face = [
+      '// Where the point is on face k (see faceAt in the JS).',
+      ...(js ? [] : ['int gPu, gPy, gPYi, gPni;', 'float gPfu, gPfy, gPYf, gPnf;']),
+      fn('void', 'faceAt', ['int k', 'int S', 'ivec3 base']),
+      ...ins([
+        decl('ivec4', 'ht = FHT[k], sl = FSL[k], pl = FPLANE[k]'),
+        js ? 'let u, sn, nn;' : 'int u, sn, nn;',
+        ...along(g('Pfu'), 'float(ht.w)', 'ht.z', 'u'),
+        `${g('Pu')} = ht.w * u + FT[k].x * base.x + FT[k].z * base.z;`,
+        decl('ivec3', 'ms = SLANT[sl.x], mn = SLANT[pl.x]'),
+        ...slant('sl.x', 'sn').whole,
+        decl('float', `sf = float(sl.y) * ${slant('sl.x', 'sn').rest}`),
+        `${g('PYi')} = sl.z * (sl.y * sn + sl.y * (ms.x * base.x + ms.y * base.y + ms.z * base.z)) + FNY[k] * pl.z * S;`,
+        `${g('PYf')} = float(sl.z) * sf;`,
+        `${g('Py')} = fdiv(${g('PYi')} + int(floor(${g('PYf')})), sl.w);`,
+        `${g('Pfy')} = (float(${g('PYi')} - ${g('Py')} * sl.w) + ${g('PYf')}) / float(sl.w);`,
+        ...along(g('Pnf'), 'float(pl.y)', 'pl.x', 'nn'),
+        `${g('Pni')} = pl.y * (nn + mn.x * base.x + mn.y * base.y + mn.z * base.z);`,
+      ]),
+      '}',
+      '',
+      "// A face's depth plane x deep (quarters, twelfths) at level scale S, in whole",
+      '// numbers of n . X (see F.dn).',
+      fn('int', 'depthN', ['int k', 'int S', 'ivec2 x']),
+      ...ins([
+        '// (floor(p |n| / 12) for p twelfths, exactly: see depthN in the JS.)',
+        decl('int', 'p = (3 * x.x + x.y) * S, q = p * p * FNN[k]'),
+        decl('int', 'dn = int(floor(sqrt(float(q)) / 12.0))', true),
+        'if (144 * (dn + 1) * (dn + 1) <= q) dn++;',
+        'if (dn > 0 && 144 * dn * dn > q) dn--;',
+        'return dn;',
+      ]),
+      '}',
+      '// Its out-plane: about a unit past the face (ceil |n| in n . X).',
+      fn('void', 'depthOut', ['int k', 'int S', 'int ni', 'float nf']),
+      ...ins([
+        decl('float', 'nl = FNS[k].x'),
+        `airPlane((float(ni - FPLANE[k].z * S - int(ceil(nl))) + nf) / nl, ${arg3('FN[k]')});`,
+      ]),
+      '}',
+    ];
+    // - heights: the true heights lo4 to hi4 (4 y at the city's level; one
+    //   level finer, in its units), and one level finer the cell or a cell
+    //   past each side in CELL.open (see runsOn). At the city's level from 4y
+    //   along the FOUR slant, its whole part first: the true height's own
+    //   numbers (see the test 'the relief's heights at the city's level').
+    const heights = [
+      fn('void', 'heights', ['int lv', 'ivec3 L', 'vec3 f', 'ivec3 base', 'int lo4', 'int hi4']),
+      ...ins([
+        'if (lv == 1) {',
+        ...ins(twin.planes(js, 'air', [
+          { span: ['L.y', 'f.y', `max(${idiv('lo4 * R', '4')} - base.y, openLo(1))`, `min(${idiv('hi4 * R', '4')} - base.y, openHi(1))`, 1] },
+          { span: ['L.x', 'f.x', 'openLo(0)', 'openHi(0)', 0] },
+          { span: ['L.z', 'f.z', 'openLo(2)', 'openHi(2)', 2] },
+        ])),
+        '} else {',
+        ...ins([
+          js ? 'let n4;' : 'int n4;',
+          ...slant('FOUR', 'n4').whole,
+          decl('float', `f4 = ${slant('FOUR', 'n4').rest}`),
+          'n4 += 4 * base.y;',
+          `airPlane((float(lo4 - n4) - f4) * 0.25, ${axis(1, '-')});`,
+          `airPlane((float(n4 - hi4) + f4) * 0.25, ${axis(1)});`,
+        ]),
+        '}',
+      ]),
+      '}',
+    ];
+    // - terraceOf: a city cut t twelfths deep over rows y0 to y1 (level
+    //   units, scale S) is a terrace (.claude/design/terraces.md): the solid
+    //   between the slope and a vertical wall H tall, the wall standing where
+    //   the slope is at the storey's inner height: the upper's faces lean
+    //   back, so it is at the top of the rows (a floor at yb, open above);
+    //   the lower's lean out, so it is at the bottom (a ceiling at yb). One
+    //   level finer, a pocket in a terrace is cut behind its wall (back
+    //   units, horizontally) between its floor and top. (H on the grid of the
+    //   finer rows, rounded down: so that no finer pocket's row ends just
+    //   short of, or on, its floor; see the in-band test in cutOf.)
+    // - cutOf: the back of a cut of level lv t twelfths deep over rows y0 to
+    //   y1, on a city cut fl deep whose rows are cy0 to cy1 (level units): a
+    //   terrace at the city's level; one level finer, behind the city
+    //   terrace's wall where its rows reach into the terrace's band, or to its
+    //   floor (behind the wall by as much as makes it t - fl twelfths deeper,
+    //   along the face's normal), else behind the face (depthN). (Where the
+    //   rows reach the band or the floor, a finer pocket is cut only above the
+    //   floor, behind the wall, and one that only reaches the floor is not cut
+    //   at all; else, cut into the slope below the floor, its air would meet
+    //   the terrace's in a plane, with nothing between them but that plane: a
+    //   sheet.) In the shader's globals gC*; in JavaScript RS.C*.
+    const cut = [
+      '// The back of a cut (see cutOf in the JS): a terrace (gCter: its wall\'s',
+      '// inner height gCyin, its floor or ceiling gCyb, behind its wall by gCback)',
+      '// or behind the face (gCdn); and how deep it fades from (gCfz).',
+      ...(js ? [] : ['bool gCter;', 'int gCyin, gCdn;', 'float gCyb, gCback, gCfz;']),
+      fn('void', 'terraceOf', ['int k', 'int S', 'int y0', 'int y1', 'int t']),
+      ...ins([
+        decl('float', 'H = float(terraceH(k, t)) * float(S) / 12.0'),
+        decl('bool', 'up = FNH[k].x > 0.0'),
+        `${g('Cter')} = true; ${g('Cyin')} = up ? y1 : y0; ${g('Cyb')} = up ? float(y1) - H : float(y0) + H; ${g('Cback')} = 0.0;${js ? '' : ' gCfz = 0.0;'}`,
+      ]),
+      '}',
+      fn('void', 'cutOf', ['int k', 'int lv', 'int S', 'int y0', 'int y1', 'int t', 'int fl', 'int cy0', 'int cy1']),
+      ...ins([
+        'if (lv == 0) { terraceOf(k, S, y0, y1, t); return; }',
+        'if (fl > 0) {',
+        ...ins([
+          'terraceOf(k, S, cy0, cy1, fl);',
+          `if (FNH[k].x > 0.0 ? float(y1) >= ${g('Cyb')} : float(y0) <= ${g('Cyb')}) { ${g('Cback')} = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y;${js ? '' : ' gCfz = gCback;'} return; }`,
+        ]),
+        '}',
+        decl('int', 'x = t - fl'),
+        `${g('Cter')} = false;`,
+        `${g('Cdn')} = depthN(k, S, ${ivec2([idiv('x', '3'), `x - 3 * (${idiv('x', '3')})`])});`,
+        ...fade('gCfz = float(gCdn) / FNS[k].x;'),
+      ]),
+      '}',
+    ];
+    const text = (lines, names = ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
+    const onFace = ['ht', 'sl', 'pl', 'ms', 'mn', 'base', 'x', 'L', 'f'];
+    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace) };
   }
   const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false);
 
@@ -1909,15 +2049,15 @@ const int NF = ${FACES.length};
 // slants (index, sign); its quanta along (q2, a level each) and lo, hi (4 y);
 // t; its length; its rows' m's slant (index, sign), gm and p (see faceAt);
 // |n| and gm |m|; and the heights it may be cut between (cells).
-const ivec4 FPLANE[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.plane.k}, ${F.plane.sign}, ${F.K}, ${F.alpha})`).join(', ')});
-const int FNY[NF] = int[NF](${FACES.map((F) => F.yk).join(', ')});
-const int FNN[NF] = int[NF](${FACES.map((F) => F.nn).join(', ')});
-const vec3 FN[NF] = vec3[NF](${FACES.map((F) => `vec3(${F.n.map((x) => glf(x / F.nl)).join(', ')})`).join(', ')});
-const ivec4 FHT[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.h.k}, ${F.h.sign}, ${F.t.k}, ${F.t.sign})`).join(', ')});
+${table('ivec4', 'FPLANE', 'NF', vrow('ivec4'), RELIEF_ROWS)}
+${table('int', 'FNY', 'NF', String, RELIEF_ROWS)}
+${table('int', 'FNN', 'NF', String, RELIEF_ROWS)}
+${table('vec3', 'FN', 'NF', (r) => `vec3(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
+${table('ivec4', 'FHT', 'NF', vrow('ivec4'), RELIEF_ROWS)}
 ${table('ivec4', 'FQY', 'NF', vrow('ivec4'), RELIEF_ROWS)}
-const ivec3 FT[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.tv))});
+${table('ivec3', 'FT', 'NF', vrow('ivec3'), RELIEF_ROWS)}
 const float FLEN[NF] = float[NF](${FACES.map((F) => glf(F.len)).join(', ')});
-const ivec4 FSL[NF] = ivec4[NF](${FACES.map((F) => `ivec4(${F.ms.k}, ${F.ms.sign}, ${F.gm}, ${F.p})`).join(', ')});
+${table('ivec4', 'FSL', 'NF', vrow('ivec4'), RELIEF_ROWS)}
 // Each face's normal's upright part and the length of its level part (raw: see terrace in the JS).
 ${table('vec2', 'FNH', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
 ${table('vec2', 'FNS', 'NF', (r) => `vec2(${r.map(glf).join(', ')})`, RELIEF_ROWS)}
@@ -2032,39 +2172,7 @@ bool bareNear(vec3 q, float r) {
 }
 ${RELIEF_GLSL.decide}
 
-// Where the point is on face k (see faceAt in the JS).
-int gPu, gPy, gPYi, gPni;
-float gPfu, gPfy, gPYf, gPnf;
-void faceAt(int k, int S, ivec3 base) {
-  ivec4 ht = FHT[k], sl = FSL[k], pl = FPLANE[k];
-  int u, sn, nn;
-  gPfu = float(ht.w) * slantAt(ht.z, u);
-  gPu = ht.w * u + FT[k].x * base.x + FT[k].z * base.z;
-  ivec3 ms = SLANT[sl.x], mn = SLANT[pl.x];
-  float sf = float(sl.y) * slantAt(sl.x, sn);
-  gPYi = sl.z * (sl.y * sn + sl.y * (ms.x * base.x + ms.y * base.y + ms.z * base.z)) + FNY[k] * pl.z * S;
-  gPYf = float(sl.z) * sf;
-  gPy = fdiv(gPYi + int(floor(gPYf)), sl.w);
-  gPfy = (float(gPYi - gPy * sl.w) + gPYf) / float(sl.w);
-  gPnf = float(pl.y) * slantAt(pl.x, nn);
-  gPni = pl.y * (nn + mn.x * base.x + mn.y * base.y + mn.z * base.z);
-}
-
-// A face's depth plane x deep (quarters, twelfths) at level scale S, in whole
-// numbers of n . X (see F.dn).
-int depthN(int k, int S, ivec2 x) {
-  // (floor(p |n| / 12) for p twelfths, exactly: see depthN in the JS.)
-  int p = (3 * x.x + x.y) * S, q = p * p * FNN[k];
-  int dn = int(floor(sqrt(float(q)) / 12.0));
-  if (144 * (dn + 1) * (dn + 1) <= q) dn++;
-  if (dn > 0 && 144 * dn * dn > q) dn--;
-  return dn;
-}
-// Its out-plane: about a unit past the face (ceil |n| in n . X).
-void depthOut(int k, int S, int ni, float nf) {
-  float nl = FNS[k].x;
-  airPlane((float(ni - FPLANE[k].z * S - int(ceil(nl))) + nf) / nl, FN[k]);
-}
+${RELIEF_GLSL.face}
 
 // The true heights lo..hi (in 4 y at the city's level; in units one level
 // finer, and within the cell, or a cell past each side in gCarveOpen; as
@@ -2075,19 +2183,7 @@ uint gCarveOpen;
 bool gCarveCross;
 int gAxis;
 ${OPEN_GLSL.cell}
-void heights(int lv, ivec3 L, vec3 f, ivec3 base, int lo4, int hi4) {
-  if (lv == 1) {
-    airSpan(L.y, f.y, max(lo4 * R / 4 - base.y, openLo(1)), min(hi4 * R / 4 - base.y, openHi(1)), EY);
-    airSpan(L.x, f.x, openLo(0), openHi(0), EX);
-    airSpan(L.z, f.z, openLo(2), openHi(2), EZ);
-  } else {
-    int n4;
-    float f4 = slantAt(FOUR, n4);
-    n4 += 4 * base.y;
-    airPlane((float(lo4 - n4) - f4) * 0.25, -EY);
-    airPlane((float(n4 - hi4) + f4) * 0.25, EY);
-  }
-}
+${RELIEF_GLSL.heights}
 
 int lowBit(uint m) { return int(round(log2(float(m & (~m + 1u))))); } // (findLSB, for small m)
 // A box facePocket asks after, with the others in one loop (one copy of
@@ -2098,28 +2194,7 @@ int lowBit(uint m) { return int(round(log2(float(m & (~m + 1u))))); } // (findLS
 // for the pocket, its own); fz: how deep it fades from (see below). Kept in
 // separate variables, not arrays: indexed arrays make the compile crawl.
 struct Box { bool on; int A, sa, B, sb, y0, y1, dn, g; float fz; int e; float sv; bool ter; int yin; float yb, back; };
-// The back of a cut (see cutOf in the JS): a terrace (gCter: its wall's
-// inner height gCyin, its floor or ceiling gCyb, behind its wall by gCback)
-// or behind the face (gCdn); and how deep it fades from (gCfz).
-bool gCter;
-int gCyin, gCdn;
-float gCyb, gCback, gCfz;
-void terraceOf(int k, int S, int y0, int y1, int t) {
-  float H = float(terraceH(k, t)) * float(S) / 12.0;
-  bool up = FNH[k].x > 0.0;
-  gCter = true; gCyin = up ? y1 : y0; gCyb = up ? float(y1) - H : float(y0) + H; gCback = 0.0; gCfz = 0.0;
-}
-void cutOf(int k, int lv, int S, int y0, int y1, int t, int fl, int cy0, int cy1) {
-  if (lv == 0) { terraceOf(k, S, y0, y1, t); return; }
-  if (fl > 0) {
-    terraceOf(k, S, cy0, cy1, fl);
-    if (FNH[k].x > 0.0 ? float(y1) >= gCyb : float(y0) <= gCyb) { gCback = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y; gCfz = gCback; return; }
-  }
-  int x = t - fl;
-  gCter = false;
-  gCdn = depthN(k, S, ivec2(x / 3, x - 3 * (x / 3)));
-  gCfz = float(gCdn) / FNS[k].x;
-}
+${RELIEF_GLSL.cut}
 // Face k's notch at its e-th ridge, at level lv, for the point (see faceAt):
 // the box, if the point is on the ridge's side of its edge (gS); and how far
 // off its row's ends, or past its edge, the point is (gCap: so the distance
@@ -2526,15 +2601,22 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // The relief's whole-number decisions in JavaScript (see reliefPieces),
   // made into functions, and what the shader keeps in globals (gU0, gRY0 and
   // the rest), RS.
-  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0 };
+  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0 };
   const RELIEF_JS = reliefPieces(true);
-  const { rectangle, ridgeRow: ridgeRowAt, terraceH, rectDepth } = new Function(
-    'P', 'RS', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
-    `'use strict';\nconst { beyond, h01 } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\nreturn { rectangle, ridgeRow, terraceH, rectDepth };\n//# sourceURL=reliefPieces.gen.js`,
-  )(P, RS, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
+  const { rectangle, ridgeRow: ridgeRowAt, rectDepth, faceAt, depthN, depthOut, heights, cutOf } = new Function(
+    'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
+    `'use strict';\nconst { beyond, h01, airPlane, airSpan } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf };\n//# sourceURL=reliefPieces.gen.js`,
+  )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
+  // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
+  // a whole number of its measure deep: else one would not be cut at all.)
+  if (FACES.some((F, k) => [1, 2, 3].some((t) => !(depthN(k, R, [Math.floor(t / 3), t % 3]) > 0)))) throw new Error('arcology: a cut too shallow for its face');
   // (A rectangle, and a ridge's row, as the hand-written relief takes them.)
   const rectOf = (lv, k, u, fu, y, fy, tile) => (rectangle(lv, k, u, fu, y, fy, tile), { u0: RS.U0, u1: RS.U1, y0: RS.Y0, y1: RS.Y1, depth: RS.Depth });
   const rowOf = (r, lv, y) => (ridgeRowAt(r, lv, y), { y0: RS.RY0, y1: RS.RY1, t: RS.RT, tc: RS.RTC, cy0: RS.RCY0, cy1: RS.RCY1 });
+  // (Where the point is on face k, and the back of a cut, likewise: see
+  // faceAt and cutOf.)
+  const faceOf = (k, S, base) => (faceAt(k, S, base), { u: RS.Pu, fu: RS.Pfu, y: RS.Py, fy: RS.Pfy, Yi: RS.PYi, Yf: RS.PYf, ni: RS.Pni, nf: RS.Pnf, S });
+  const cutAt = (k, lv, S, y0, y1, t, fl, cy0, cy1) => (cutOf(k, lv, S, y0, y1, t, fl, cy0, cy1), RS.Cter ? { up: FACES[k].n[1] > 0, yin: RS.Cyin, yb: RS.Cyb, back: RS.Cback } : { dn: RS.Cdn });
 
   // The town in JavaScript (see townPieces), made into functions.
   const TOWN_JS = townPieces(true);
@@ -2562,41 +2644,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
 
 
 
-  // Where the point is on face F at level lv (base its cell's corner from the
-  // building's origin, in this level's units): along (u, fu), its true height
-  // (y, fy, whole units and the rest, at least 0; and
-  // Y, the same times p, as a whole number and the rest), and how deep (n . X,
-  // as a whole number and the rest).
-  function faceAt(F, lv, base) {
-    const S = lv ? R : 1;
-    const u = F.t.sign * SL.Ls[F.t.k] + F.tv[0] * base[0] + F.tv[2] * base[2], fu = F.t.sign * SL.Fs[F.t.k];
-    const ms = SLANTS[F.ms.k], mn = SLANTS[F.plane.k];
-    const Yi = F.gm * (F.ms.sign * SL.Ls[F.ms.k] + F.ms.sign * (ms[0] * base[0] + ms[1] * base[1] + ms[2] * base[2])) + F.yk * F.K * S;
-    const Yf = F.gm * F.ms.sign * SL.Fs[F.ms.k];
-    const y = fdiv(Yi + Math.floor(Yf), F.p), fy = (Yi - y * F.p + Yf) / F.p;
-    const ni = F.plane.sign * (SL.Ls[F.plane.k] + mn[0] * base[0] + mn[1] * base[1] + mn[2] * base[2]), nf = F.plane.sign * SL.Fs[F.plane.k];
-    return { u, fu, y, fy, Yi, Yf, ni, nf, S };
-  }
-
-  // A city cut t twelfths deep over rows y0 to y1 (level units, scale S) is
-  // a terrace (.claude/design/terraces.md): the solid between the slope and a
-  // vertical wall H tall, the wall standing where the slope is at the
-  // storey's inner height: the upper's faces lean back, so it is at the top
-  // of the rows (a floor at yb, open above); the lower's lean out, so it is at
-  // the bottom (a ceiling at yb). One level finer, a pocket in a terrace is
-  // cut behind its wall (back units, horizontally) between its floor and top.
-  // (H on the grid of the finer rows, rounded down: so that no finer
-  // pocket's row ends just short of, or on, its floor; see inBand.)
-  function terrace(F, S, y0, y1, t) {
-    const H = (terraceH(F.index, t) * S) / 12, up = F.n[1] > 0;
-    return { up, yin: up ? y1 : y0, yb: up ? y1 - H : y0 + H, back: 0 };
-  }
-  // (Whether rows y0 to y1 reach into terrace w's band, or to its floor:
-  // then a finer pocket is cut only above the floor, behind the wall, and one
-  // that only reaches the floor is not cut at all; else, cut into the slope
-  // below the floor, its air would meet the terrace's in a plane, with
-  // nothing between them but that plane: a sheet.)
-  const inBand = (w, y0, y1) => (w.up ? y1 >= w.yb : y0 <= w.yb);
   // The planes of a cut's back: behind the face (dn, in n . X), or a terrace's
   // wall and its floor or ceiling. (As pieces: see pieces.js; with the
   // shader's normals.)
@@ -2608,18 +2655,10 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     P.airPlane(cut.up ? cut.yb - p.Yi - p.Yf : p.Yi + p.Yf - cut.yb, 0, cut.up ? -1 : 1, 0);
     P.airPlane((F.K * p.S - p.ni + ny * (p.Yi - cut.yin + p.Yf) - cut.back * nh - p.nf) / nh, -F.n[0] / nh, 0, -F.n[2] / nh);
   }
-  // A unit past face F (p from faceAt): where a cut's air ends outward.
-  const pastFace = (F, p) => P.airPlane((p.ni - F.K * p.S - Math.ceil(F.nl) + p.nf) / F.nl, F.n[0] / F.nl, F.n[1] / F.nl, F.n[2] / F.nl);
   // Rows y0 to y1 (true heights).
   function rows(p, y0, y1) {
     P.airPlane(y0 - p.Yi - p.Yf, 0, -1, 0);
     P.airPlane(p.Yi - y1 + p.Yf, 0, 1, 0);
-  }
-  // The true heights lo to hi, and one level finer, the cell or a cell past
-  // each side in CELL.open (see runsOn).
-  function within(lv, L, f, lo, hi) {
-    P.airSpan(L[1], f[1], lv === 1 ? Math.max(lo, openLo(1)) : lo, lv === 1 ? Math.min(hi, openHi(1)) : hi, 1);
-    if (lv === 1) P.airSpan(L[0], f[0], openLo(0), openHi(0), 0), P.airSpan(L[2], f[2], openLo(2), openHi(2), 2);
   }
   // One of a cut's pieces (box: its planes, as distance) united over the pieces
   // it is (see eachPiece), and for a ray, how far it goes in them.
@@ -2629,11 +2668,11 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     return d;
   });
 
-  // The air of a pocket of face F (p from faceAt) over [u0, u1] x [y0, y1],
-  // cut as cut says (see cutBack), to a unit past the face, within true
-  // heights lo to hi (level units) and, one level finer, within the cell or
-  // a cell past each side in CELL.open (see runsOn).
-  function pocketAir(F, lv, p, L, f, u0, u1, y0, y1, cut, lo, hi, ray) {
+  // The air of a pocket of face F (p from faceOf) over [u0, u1] x [y0, y1],
+  // cut as cut says (see cutBack), to a unit past the face, within its
+  // heights and, one level finer, within the cell or a cell past each side
+  // in CELL.open (see heights; base: the cell's corner, as faceOf's).
+  function pocketAir(F, lv, p, L, f, base, u0, u1, y0, y1, cut, ray) {
     const [tx, ty, tz] = F.tv.map((x) => x / F.len);
     return cutAir(lv, () => {
       P.airPiece();
@@ -2641,30 +2680,15 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       P.airPlane((p.u - u1 + p.fu) / F.len, tx, ty, tz);
       rows(p, y0, y1);
       cutBack(F, p, cut);
-      pastFace(F, p);
-      within(lv, L, f, lo, hi);
+      depthOut(F.index, p.S, p.ni, p.nf);
+      heights(lv, L, f, base, F.lo4, F.hi4);
       return P.S.d;
     }, ray);
   }
-  // The back of a cut of level lv t twelfths deep over rows y0 to y1, on a
-  // city cut fl deep whose rows are cy0 to cy1 (level units): a terrace at the
-  // city's level; one level finer, behind the city terrace's wall where it
-  // reaches into its band, else behind the face.
-  function cutOf(F, lv, S, y0, y1, t, fl, cy0, cy1) {
-    const dnOf = (x) => F.dn[lv][Math.min(NDQ - 1, Math.floor(x / 3)) * NDQ + x - 3 * Math.min(NDQ - 1, Math.floor(x / 3))];
-    if (lv === 0) return terrace(F, S, y0, y1, t);
-    if (fl > 0) {
-      const w = terrace(F, S, cy0, cy1, fl);
-      // (Behind the wall by as much as makes it t - fl twelfths deeper, along the face's normal.)
-      if (inBand(w, y0, y1)) return { ...w, back: (((t - fl) / 12) * S * F.nl) / Math.hypot(F.n[0], F.n[2]) };
-    }
-    return { dn: dnOf(t - fl) };
-  }
-
-  // The notch at F's e-th ridge where the point is (p from faceAt at level
-  // lv; lo, hi its true heights), united with d; and where the point is not in
-  // it, how far off its row's ends and its edge are at least (see ridgeRow).
-  function notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray) {
+  // The notch at F's e-th ridge where the point is (p from faceOf at level
+  // lv), united with d; and where the point is not in it, how far off its
+  // row's ends and its edge are at least (see ridgeRow).
+  function notchAir(F, e, lv, p, L, f, base, d, ray) {
     const E = F.edges[e], G = E.G, S = p.S, Y = p.Yi + p.Yf;
     // (As zone, in the shader's order: the whole numbers first.)
     const sd = E.sg * Math.sign(E.dl), Z = sd * (p.u * E.dl - E.al * p.Yi - S * E.be), z = sd * (p.fu * E.dl - E.al * p.Yf);
@@ -2685,16 +2709,16 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     const edge = edgeAt(w.t);
     if (edge > 0) return Math.min(d, Math.max(Math.min(cap, edge), 0));
     cap = Math.min(cap, -edge);
-    const pG = faceAt(G, lv, base), cut = cutOf(F, lv, S, w.y0, w.y1, w.t, w.tc === w.t ? 0 : w.tc, w.cy0, w.cy1);
+    const pG = faceOf(G.index, S, base), cut = cutAt(F.index, lv, S, w.y0, w.y1, w.t, w.tc === w.t ? 0 : w.tc, w.cy0, w.cy1);
     // (From past the ridge (a unit past G's face) to its edge, within the row.)
     d = Math.min(d, cutAir(lv, () => {
       P.airPiece();
       P.airPlane(edge, ...E.gn);
       rows(p, w.y0, w.y1);
       cutBack(F, p, cut);
-      pastFace(F, p);
-      pastFace(G, pG);
-      within(lv, L, f, lo, hi);
+      depthOut(F.index, S, p.ni, p.nf);
+      depthOut(G.index, S, pG.ni, pG.nf);
+      heights(lv, L, f, base, F.lo4, F.hi4);
       return P.S.d;
     }, ray));
     return Math.min(d, Math.max(cap, 0));
@@ -2704,7 +2728,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // rectangle's pocket and its ridges' notches; and where it is in none, how
   // far off their edges are at least.
   function facePocket(lv, k, L, f, base, d, ray) {
-    const F = FACES[k], p = faceAt(F, lv, base), S = p.S;
+    const F = FACES[k], S = lv ? R : 1, p = faceOf(k, S, base);
     // The city's rectangle (from one level finer: the point's place in the city's measure), and its depth.
     const uc = lv ? fdiv(p.u + (p.fu < 0 ? -1 : 0), R) : p.u, fuc = lv ? (p.u - R * uc + p.fu) / R : p.fu;
     const yc = lv ? fdiv(p.y, R) : p.y, fyc = lv ? (p.y - R * yc + p.fy) / R : p.fy;
@@ -2718,11 +2742,11 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
       t = rectDepth(k, 1, r.u0, r.u1, r.y0, r.y1, q.depth, tc, c.y0, c.y1);
       fl = tc;
     }
-    const lo = (F.lo4 * S) / 4 - base[1], hi = (F.hi4 * S) / 4 - base[1], Y = p.Yi + p.Yf;
+    const Y = p.Yi + p.Yf;
     const cap = Math.min(Math.min(p.u - r.u0 + p.fu, r.u1 - p.u - p.fu) / F.len, Y - r.y0, r.y1 - Y);
     // (No bare test one level finer: its pockets are only in skin cells, which nothing bare touches, and run on only where the cells agree.)
-    if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, r.u0, r.u1, r.y0, r.y1, cutOf(F, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), lo, hi, ray));
-    for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, lo, hi, d, ray);
+    if (t > fl) d = Math.min(d, pocketAir(F, lv, p, L, f, base, r.u0, r.u1, r.y0, r.y1, cutAt(k, lv, S, r.y0, r.y1, t, fl, R * c.y0, R * c.y1), ray));
+    for (const e of [0, 1]) d = notchAir(F, e, lv, p, L, f, base, d, ray);
     return Math.min(d, Math.max(cap, 0));
   }
 
