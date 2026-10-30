@@ -25,7 +25,8 @@ const only = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1]
 
 // The views: proposed, for Basil to confirm (brief E4). Each is a world and a
 // place; the arcology's are fixed positions, so that both trees are measured
-// from the same place whatever stands there.
+// from the same place whatever stands there. (The world is kept as the one
+// last visited, for a tree from before the arcology was the only one.)
 import { VIEWS } from './views.mjs';
 
 function tree(rev) {

@@ -1,7 +1,9 @@
 // How long a first visit waits for the view shader to be built from nothing:
-// node bench/cold.mjs [world ...] (default halls and arcology; a variant by
-// its link, arcology&halls.solid=0.5). FW_ROOT picks the tree (default this
-// one); RUNS how many times each (default 1).
+// node bench/cold.mjs [world ...] (default the arcology; a variant by its
+// link, arcology&halls.solid=0.5). FW_ROOT picks the tree (default this one:
+// a world's name is also kept as the world last visited, for a tree from
+// before the arcology was the only one); RUNS how many times each (default
+// 1).
 //
 // The browser's own shader caches go with its profile, a new one each run;
 // but macOS keeps the compiled Metal pipelines too, for every program
@@ -15,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = process.env.FW_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), '..');
-const worlds = process.argv.slice(2).length ? process.argv.slice(2) : ['halls', 'arcology'];
+const worlds = process.argv.slice(2).length ? process.argv.slice(2) : ['arcology'];
 const MAIN = 'void main() {\n  vec2 uv = ';
 
 for (const world of worlds) {
@@ -31,7 +33,7 @@ for (const world of worlds) {
     const server = await serve(dir), chrome = await launch(), page = await chrome.page();
     // (A variant by its link: arcology&halls.solid=0.5.)
     const variant = /[&/=]/.test(world);
-    await page.goto(`${server.url}index.html?1${variant ? '&' + world : ''}`, `window.requestAnimationFrame = () => 0; localStorage.setItem('fw.world', ${JSON.stringify(variant ? 'halls' : world)});`);
+    await page.goto(`${server.url}index.html?1${variant ? '&' + world : ''}`, `window.requestAnimationFrame = () => 0;${variant ? '' : ` localStorage.setItem('fw.world', ${JSON.stringify(world)});`}`);
     // (The page is there once its programs are linked; the GPU's pipelines
     // are built at the first draw: both, from when the page was asked for.)
     const r = await page.eval(`(() => { const ms = []; let since = 0; for (let i = 0; i < 2; i++) { const t0 = performance.now(); fw.snap(800, 733, true); ms.push(Math.round(performance.now() - t0)); since ||= Math.round(performance.now()); } return [...ms, since]; })()`);

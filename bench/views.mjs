@@ -11,6 +11,7 @@ export const VIEWS = {
   building: { world: 'arcology', hash: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjUsMC43LDAuM10sImRpZ2l0cyI6W1stMixbMTIsMTIsMTRdXV0sInlhdyI6MCwicGl0Y2giOjAuMTJ9' },
   // Close in front of the Hexahedron's lower, its pockets filling the view (the browser tests' "relief").
   skin: { world: 'arcology', hash: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6LTIsImZyYWMiOlswLjQ1LDAuNiwwLjk3XSwiZGlnaXRzIjpbXSwieWF3IjowLCJwaXRjaCI6MC4xNX0=' },
-  // In the halls: a small room, a great hall through its doorway (the tests' "doorway").
-  halls: { world: 'halls', hash: 'eyJ3b3JsZCI6ImhhbGxzIiwiRiI6NSwiZnJhYyI6WzAuMTM4NDEyMzMxMzYzNzIzOCwwLjIxNDk5MDAyMjQwMTc0MTk4LDAuMTA2Nzk2NzA2MTM0MDM5MjRdLCJkaWdpdHMiOltbLTEsWzcsMTgsMTZdXSxbMCxbMTYsMTcsNV1dLFsxLFsxNSw2LDIxXV0sWzIsWzIwLDcsMl1dLFszLFsyMSw3LDEzXV0sWzQsWzAsMTAsMF1dLFs1LFswLDE2LDBdXV0sInlhdyI6MTMuOTYyNTg5NzIyMjkyMzM2LCJwaXRjaCI6LTAuMzM0NzMzNzg5OTMwOTczMTR9' },
+  // Inside the building, in its halls: a small room, a great hall through its
+  // doorway (the browser tests' "doorway").
+  doorway: { world: 'arcology', hash: 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6MiwiZnJhYyI6WzAuMTQ3MTIwMjkzMjI5ODE4MzQsMC4wNzE3MTk3MTE2NDY0Mzc2NCwwLjkxODY1OTYzNDg4ODE3MjFdLCJkaWdpdHMiOltbLTIsWzEyLDEzLDEyXV0sWy0xLFs3LDAsMTddXSxbMCxbMywzLDZdXSxbMSxbMTEsMCwwXV0sWzIsWzMsMTAsMTBdXV0sInlhdyI6Mi44NTYxOTQ0OTAxOTIzNDUsInBpdGNoIjowLjF9' },
 };
