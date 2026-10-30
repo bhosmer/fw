@@ -50,8 +50,6 @@ try {
 } catch (err) {
   cannot(err);
 }
-// (The world shown: the first, or, flipped, the other: side 0 or 1.)
-let space = world.space, side = 0, flippedAt = -Infinity;
 // (A variant is the link's: what is remembered is the world it is of.)
 try {
   localStorage.setItem(WORLD_KEY, world.base);
@@ -63,13 +61,31 @@ const labels = [
   [world.name, ...changed.filter((x) => !x.startsWith('vs.'))].join(' '),
   other ? [link.vs.name, ...changed.filter((x) => !x.startsWith('vs.')), ...changed.filter((x) => x.startsWith('vs.')).map((x) => x.slice(3))].join(' ') : '',
 ];
-const worldLabel = () => (other ? `${side ? 'B' : 'A'}: ${labels[side]}` : labels[0]);
-const R = space.R;
+const worldLabel = () => (other ? `${showing.side ? 'B' : 'A'}: ${labels[showing.side]}` : labels[0]);
+const R = world.space.R;
 
 const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
 
 const canvas = document.getElementById('view');
 const hud = document.getElementById('hud');
+
+// How the view is shown (see makeView in view.js).
+const showing = {
+  get w() { return canvas.width; },
+  get h() { return canvas.height; },
+  lodH: 1,
+  upscale: 1,
+  snapping: false,
+  debug: 0,
+  reference: false, // draw with the old ray stepping, to compare
+  scheme: loadScheme(),
+  side: 0,
+};
+// When the scheme last changed, the worlds compared were last flipped, and
+// the link's place was found unreadable (and why): the legend names each for
+// a moment after (see legend). (The world is also named for the first 4 s,
+// whether or not there was a flip.)
+const said = { scheme: 0, world: -Infinity, unread: { at: -Infinity, why: null } };
 // Whether the legend is hidden is remembered (H shows and hides it).
 const HELP_KEY = 'fw.help';
 try {
@@ -84,13 +100,13 @@ function toggleHelp() {
 
 let renderer;
 try {
-  renderer = new Renderer(canvas, space, UP + DOWN + 1, N_VIEW);
+  renderer = new Renderer(canvas, world.space, UP + DOWN + 1, N_VIEW);
   if (other) renderer.addSpace(other.space);
   await renderer.ready();
 } catch (err) {
   cannot(err);
 }
-const flight = new Flight(space);
+const flight = new Flight(world.space);
 // (Facing, until a link or a first visit says which way: a little to the
 // side and down. A first visit that finds no room keeps it: see elsewhere.)
 flight.turn(0.6, -0.05);
@@ -99,17 +115,9 @@ const pos = flight.pos;
 const pilot = new Pilot(R);
 pilot.planner = new Planner(flight);
 
-let debug = 0;
-let reference = false; // draw with the old ray stepping, to compare
-let scheme = loadScheme(); // index into SCHEMES
-let schemeShown = 0; // when the scheme last changed, to name it for a moment
-
-// How the view is to be shown, as it now is (see makeView in view.js).
-const showing = () => ({ w: canvas.width, h: canvas.height, lodH, upscale, snapping, debug, reference, scheme, side });
-
 // Draw the view as it now is; what was drawn.
 function draw() {
-  const made = makeView(flight, showing());
+  const made = makeView(flight, showing);
   renderer.draw(made.recs, made.view);
   return made;
 }
@@ -133,7 +141,7 @@ function look(now, drawn) {
   if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, whereNow());
   if (renderer.looking || now - lookedAt < 250) return;
   const stride = Math.max(4, Math.round(canvas.width / 100));
-  const { recs, view } = drawn || makeView(flight, showing());
+  const { recs, view } = drawn || makeView(flight, showing);
   if (renderer.look(recs, view, stride)) {
     lookAt = { basis: camera(flight), F: pos.F, res: [canvas.width, canvas.height], stride };
     lookedAt = now;
@@ -148,11 +156,10 @@ function look(now, drawn) {
 // (lodH, their number down it), so that fewer pixels only sample the same
 // geometry less densely, and coming to rest changes no geometry.
 const MIN_UPSCALE = 0.35;
-let upscale = 1, lodH = 1;
 function resize() {
-  lodH = Math.max(1, Math.round(canvas.clientHeight * PIXEL_RATIO));
+  const h = Math.max(1, Math.round(canvas.clientHeight * PIXEL_RATIO));
+  showing.lodH = h;
   const w = Math.max(1, Math.round(canvas.clientWidth * PIXEL_RATIO));
-  const h = lodH;
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
@@ -168,7 +175,7 @@ function scaleLabel(F) {
 // Where we are and which way we face live in the URL, so a place can be
 // bookmarked or sent to someone (see place.js).
 function saveLocation() {
-  const at = writePlace(placeOf(flight, world.base, side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
+  const at = writePlace(placeOf(flight, world.base, showing.side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
   // (Where the page is framed, this may not be allowed: then it is not kept.)
   try {
     history.replaceState(null, '', at);
@@ -177,12 +184,11 @@ function saveLocation() {
 // Go to the place in the link, if it has one we can be at: whether it did.
 // (A place in another world than this one is no place here; nor is one that
 // cannot be read, which is passed over whole, and why said for a moment.)
-let unread = null, unreadAt = -Infinity;
 function loadLocation() {
   const { place, why } = readPlace(location.hash, R);
-  if (!place && location.hash.length > 1) (unread = why), (unreadAt = performance.now());
+  if (!place && location.hash.length > 1) said.unread = { at: performance.now(), why };
   if (!place || place.world !== world.base) return false;
-  applyPlace(flight, place, (shown) => (shown === 'B') !== (side === 1) && flip());
+  applyPlace(flight, place, (shown) => (shown === 'B') !== (showing.side === 1) && flip());
   return true;
 }
 
@@ -205,13 +211,13 @@ function nextWorld() {
 // on, starts afresh; what it was about to see was of the other.)
 function flip() {
   if (!other) return;
-  side = 1 - side;
-  space = (side ? other : world).space;
+  showing.side = 1 - showing.side;
+  const space = (showing.side ? other : world).space;
   renderer.setSpace(space);
   flight.setSpace(space);
   lookAt = null;
   if (pilot.on) pilot.start(pos.F);
-  flippedAt = performance.now();
+  said.world = performance.now();
   showScheme();
 }
 
@@ -229,14 +235,14 @@ function toggleTour() {
   controls.drop();
 }
 function nextScheme(by) {
-  scheme = (scheme + by + SCHEMES.length) % SCHEMES.length;
+  showing.scheme = (showing.scheme + by + SCHEMES.length) % SCHEMES.length;
   renderer.reset();
-  saveScheme(scheme);
-  schemeShown = performance.now();
+  saveScheme(showing.scheme);
+  said.scheme = performance.now();
   showScheme();
 }
 function showScheme() {
-  for (const el of document.querySelectorAll('.scheme')) el.textContent = SCHEMES[scheme].name;
+  for (const el of document.querySelectorAll('.scheme')) el.textContent = SCHEMES[showing.scheme].name;
   for (const el of document.querySelectorAll('.world')) el.textContent = worldLabel();
   for (const el of document.querySelectorAll('.vs')) el.hidden = !other;
 }
@@ -282,10 +288,10 @@ let shown = '', settled = 0;
 // Returns what was drawn, if anything (see draw).
 function present() {
   resize();
-  let key = viewKey(flight, showing());
-  if (key === shown && upscale < 1) {
-    upscale = 1;
-    key = viewKey(flight, showing());
+  let key = viewKey(flight, showing);
+  if (key === shown && showing.upscale < 1) {
+    showing.upscale = 1;
+    key = viewKey(flight, showing);
     shown = key;
     settled = 0;
   }
@@ -298,9 +304,6 @@ function present() {
   levelsDrawn = drawn.recs.length;
   return drawn;
 }
-// (Snapshots draw one frame as it is, without antialiasing over time.)
-let snapping = false;
-
 let last = performance.now();
 let slow = 0, quick = 0, fps = 0, levelsDrawn = 0, unsaved = 0;
 const pacing = new Pacing(last);
@@ -352,12 +355,12 @@ function tick(now) {
     else quick = 0;
     // (Not for debug views or references, which are drawn at full
     // resolution, to be exact: see Renderer.drawFrame.)
-    if (debug || reference) slow = quick = 0;
+    if (showing.debug || showing.reference) slow = quick = 0;
     if (slow >= 3) {
-      upscale = Math.max(MIN_UPSCALE, upscale * 0.8);
+      showing.upscale = Math.max(MIN_UPSCALE, showing.upscale * 0.8);
       slow = quick = 0;
     } else if (quick >= 90) {
-      upscale = Math.min(1, upscale * 1.1);
+      showing.upscale = Math.min(1, showing.upscale * 1.1);
       quick = 0;
     }
   }
@@ -367,8 +370,19 @@ function tick(now) {
     saveLocation();
     unsaved = 0;
   }
-  const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 || now - flippedAt < 2000 ? `   world: ${worldLabel()}` : other ? `   ${side ? 'B' : 'A'}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}${now - unreadAt < 4000 ? `   the link's place: ${unread}` : ''}`;
+  hud.textContent = legend(now);
+}
+// What the legend (the HUD) says at time now: where we are, how fast it
+// draws, and for a moment what has just changed.
+function legend(now) {
+  const notes = [`level ${pos.F > 0 ? '+' : ''}${pos.F}`, `scale ${scaleLabel(pos.F)}`, `${fps.toFixed(0)} fps`];
+  if (showing.reference) notes.push('old stepping');
+  if (now - said.scheme < 2000) notes.push(`scheme: ${SCHEMES[showing.scheme].name}`);
+  if (now < 4000 || now - said.world < 2000) notes.push(`world: ${worldLabel()}`);
+  else if (other) notes.push(showing.side ? 'B' : 'A');
+  if (pilot.on) notes.push(`touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})`);
+  if (now - said.unread.at < 4000) notes.push(`the link's place: ${said.unread.why}`);
+  return notes.join('   ');
 }
 // Where two worlds are compared, the one not shown drawn once before the
 // first frame: the GPU builds a program's pipeline when first drawing with
@@ -391,7 +405,7 @@ window.fw = {
   flight,
   controls,
   get space() {
-    return space;
+    return flight.space;
   },
   renderer,
   flip,
@@ -400,30 +414,30 @@ window.fw = {
   tick,
   // (Which world compared is shown: 'A' or 'B'; null if none is compared.)
   get shown() {
-    return other ? (side ? 'B' : 'A') : null;
+    return other ? (showing.side ? 'B' : 'A') : null;
   },
   saveLocation,
   set debug(v) {
-    debug = v;
+    showing.debug = v;
   },
   set reference(v) {
-    reference = !!v;
+    showing.reference = !!v;
   },
   // How the two ways of stepping rays differ over the current view: the share
   // of pixels whose distance to what they hit differs by more than tol (as a
   // fraction of that distance).
   compare(w = 480, h = 360, tol = 0.02) {
-    const was = [debug, reference];
-    debug = 4;
+    const was = [showing.debug, showing.reference];
+    showing.debug = 4;
     const depth = (ref) => {
-      reference = ref;
+      showing.reference = ref;
       const px = this.snap(w, h);
       const out = new Float64Array(w * h);
       for (let i = 0; i < w * h; i++) out[i] = ((px[i * 4] * 65536 + px[i * 4 + 1] * 256 + px[i * 4 + 2]) / 16777215) * 96 - 64;
       return out;
     };
     const a = depth(true), b = depth(false); // old, new
-    [debug, reference] = was;
+    [showing.debug, showing.reference] = was;
     let off = 0, newNearer = 0;
     const where = [];
     for (let i = 0; i < w * h; i++) {
@@ -438,7 +452,7 @@ window.fw = {
   },
   get state() {
     const { sky, clearance, scale, pace, opened, fog, sensed } = flight;
-    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale: showing.upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = flight.basis();
@@ -454,7 +468,7 @@ window.fw = {
     for (let i = 0; i < seconds * 60; i++) {
       if (i % 15 === 0) {
         const stride = Math.max(4, Math.round(canvas.width / 100));
-        const { recs, view } = makeView(flight, showing());
+        const { recs, view } = makeView(flight, showing);
         renderer.look(recs, view, stride);
         // (A fence's state only changes between tasks. However long the GPU
         // takes, give it up to three seconds.)
@@ -487,11 +501,11 @@ window.fw = {
   snap(w = 480, h = 360, live = false) {
     canvas.width = w;
     canvas.height = h;
-    lodH = h;
+    showing.lodH = h;
     flight.sense();
-    snapping = !live;
+    showing.snapping = !live;
     draw();
-    snapping = false;
+    showing.snapping = false;
     const px = new Uint8Array(w * h * 4);
     renderer.gl.readPixels(0, 0, w, h, renderer.gl.RGBA, renderer.gl.UNSIGNED_BYTE, px);
     shown = '';
@@ -503,15 +517,15 @@ window.fw = {
   checkRays: (...a) => checkRays(window.fw, ...a),
   compareRays: (...a) => compareRays(window.fw, ...a),
   // (Testing upscaling: the fraction of pixels drawn, as the frame time would set it.)
-  set upscale(v) { upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
-  get upscale() { return upscale; },
+  set upscale(v) { showing.upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
+  get upscale() { return showing.upscale; },
   rewind(seconds) {
     for (let i = 0; i < Math.abs(seconds) * 60; i++) flight.retrace(1 / 60, seconds > 0 ? -1 : 1, controls.boost());
     return this.state;
   },
   // GPU milliseconds per frame for the current view, at one pixel per CSS pixel.
   async bench(n = 4) {
-    upscale = 1;
+    showing.upscale = 1;
     resize();
     flight.sense();
     const ms = await renderer.time(() => {

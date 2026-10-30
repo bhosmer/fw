@@ -823,7 +823,7 @@ check('a link changed only in its digits is drawn', async () => {
     let n = 0;
     const draw = fw.renderer.draw.bind(fw.renderer);
     fw.renderer.draw = (...a) => (n++, draw(...a));
-    let t = performance.now() + 5000;
+    let t = 2 ** 20; // (a fixed clock, so that every run flies the same: see drawlog.mjs)
     const ticks = (k) => { const n0 = n; for (let i = 0; i < k; i++) fw.tick((t += 1000 / 60)); return n - n0; };
     ticks(60);
     const atRest = ticks(5);
@@ -850,7 +850,7 @@ check('N at rest is drawn somewhere new every time', async () => {
     let n = 0;
     const draw = fw.renderer.draw.bind(fw.renderer);
     fw.renderer.draw = (...a) => (n++, draw(...a));
-    let t = performance.now() + 5000;
+    let t = 2 ** 20; // (a fixed clock, so that every run flies the same: see drawlog.mjs)
     const ticks = (k) => { const n0 = n; for (let i = 0; i < k; i++) fw.tick((t += 1000 / 60)); return n - n0; };
     ticks(60);
     const drew = [];
