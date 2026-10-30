@@ -442,3 +442,19 @@ test("the relief's heights at the city's level: the slant's form is the true hei
   }
   assert.ok(n > 100000, `${n} asked`);
 });
+
+// Every opening the halls make up out of the row under the plaza is carried
+// on up through it by a light well: none ends in the plaza's floor (a pit
+// whose air would run on through it: ledger B2). Over the plaza's cells by
+// the building, where the halls may have rooms.
+test('every opening up from under the plaza is carried on up by a light well', () => {
+  const seed = levelSeed(CITY), MID = 12 + 24 * 12, seen = [];
+  for (let x = -3; x <= 3; x++)
+    for (let z = -3; z <= 3; z++) {
+      const above = [MID + x, ROW_ID, MID + z], below = [MID + x, ROW_ID - 1, MID + z];
+      if (!arcology.openings(below, seed, CITY).some((o) => o.e[1] === 1)) continue;
+      seen.push([x, z]);
+      assert.ok(_V2.wellOf(above, seed), `the opening up out of [${below}] ends in the plaza's floor (city cell [${x}, ${z}] across from the middle)`);
+    }
+  assert.ok(seen.length >= 2, `only ${seen.length} openings up from under the plaza: the test reaches none`);
+});
