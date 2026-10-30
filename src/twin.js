@@ -327,12 +327,24 @@ export const reask = (js, d, ask) =>
 // is, -0 too); the point along slant k, its whole part into n and the rest
 // (slant: in GLSL slantAt, setting n as it gives the rest; in JavaScript
 // the slants as setPoint sets them, SL, the whole part a statement of its
-// own); a struct, declared and made (struct: in JavaScript an object); a
+// own); vectors added and taken away (vadd, vsub); a struct, declared and
+// made (struct: in JavaScript an object); a
 // piece's distance (D), no piece (NOTHING), and the ray's state
 // (RAY: whether there is one; X: how far it goes in the piece).
 // (state: the name the JavaScript knows the pieces' state by, S unless
 // that is taken.)
 export function writer(js, state = 'S') {
+  // (An expression as one term: in parentheses if it adds or takes away at
+  // its top level.)
+  const term = (e) => {
+    let depth = 0;
+    for (let i = 1; i < e.length; i++) {
+      if (e[i] === '(' || e[i] === '[') depth++;
+      else if (e[i] === ')' || e[i] === ']') depth--;
+      else if (depth === 0 && (e[i] === '+' || e[i] === '-') && e[i - 1] === ' ') return `(${e})`;
+    }
+    return e;
+  };
   return {
     fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
     decl: (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`,
@@ -341,6 +353,10 @@ export function writer(js, state = 'S') {
     vec3Arg: (xs) => (js ? xs.join(', ') : `vec3(${xs.join(', ')})`),
     ivec3: (xs) => (js ? `[${xs.join(', ')}]` : `ivec3(${xs.join(', ')})`),
     ivec2: (xs) => (js ? `[${xs.join(', ')}]` : `ivec2(${xs.join(', ')})`),
+    // (Vectors added and taken away: in JavaScript by AS_GLSL_VEC's add3,
+    // sub3; in GLSL the right one in parentheses where it is a sum.)
+    vadd: (a, b) => (js ? `add3(${a}, ${b})` : `${a} + ${term(b)}`),
+    vsub: (a, b) => (js ? `sub3(${a}, ${b})` : `${a} - ${term(b)}`),
     fade: (...lines) => (js ? [] : lines),
     axis: (a, sign = '') => (js ? [0, 1, 2].map((b) => `${sign}${b === a ? 1 : 0}`).join(', ') : `${sign}${AXES[a]}`),
     arg3: (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`),
@@ -370,6 +386,13 @@ export function writer(js, state = 'S') {
 // (In the JavaScript they write, float, abs, int, uint and ceil are as GLSL
 // has them.)
 export const AS_GLSL = 'const float = (x) => x, abs = Math.abs, int = (x) => x | 0, uint = (x) => x >>> 0, ceil = Math.ceil;';
+// (And GLSL's vectors' functions, as the JavaScript they write asks them:
+// ivec3, uvec4 made from numbers (one, or each); add3, sub3 (see vadd,
+// vsub); any, lessThan, greaterThanEqual, part by part. The rule: a shim
+// only for a GLSL builtin called as a function, and exact on arrays and
+// numbers; operators, swizzles and conversions go through the writer.)
+export const AS_GLSL_VEC =
+  "const num = (x) => { if (typeof x !== 'number') throw new Error('a vector from ' + typeof x + ', not numbers'); return x; }, ivec3 = (x, y = x, z = x) => [num(x), num(y), num(z)], uvec4 = (x, y = x, z = x, w = x) => [num(x), num(y), num(z), num(w)], add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], any = (b) => b.some((x) => x), lessThan = (a, b) => a.map((x, i) => x < b[i]), greaterThanEqual = (a, b) => a.map((x, i) => x >= b[i]);";
 // Their text in JavaScript, where vectors are arrays: each component of
 // the names given, and of any element of a table (L.x, SLO[k].y, GUP[k].w),
 // as an element (L[0], SLO[k][1], GUP[k][3]).

@@ -1551,6 +1551,8 @@ export function makeArcology(set) {
   // a cell (townAir). (The JavaScript's, made into functions below; the
   // cell's corner, CELL.b, as relief sets it; a ray aimed already, by
   // reliefCell, as the shader's comes with its reach and normal started.)
+  // (The table's cell's corner, as each language keeps it: see relief.)
+  const cellB = (js) => (js ? 'CELL.b' : 'gCellB');
   function townPieces(js) {
     // (Where the languages differ: what twin.writer writes; a vector (the
     // point, an axis's normal, a box's lot: a vec3, or an array); a box of
@@ -1561,7 +1563,7 @@ export function makeArcology(set) {
     // JavaScript float, min and max are as GLSL has them, vectors are
     // arrays, and whole numbers are as twin.unsigned makes them.)
     const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep, axis: E } = twin.writer(js);
-    const CB = js ? 'CELL.b' : 'gCellB';
+    const CB = cellB(js);
     // (Box k of lot r, if it has one, then what to do with it, given its
     // corners.)
     const shape = (then) => (js ? `{ const b = townShape(h, h2, r, dens, k); if (b) ${then('[b[0], b[1], b[2]]', '[b[3], b[4], b[5]]')} }` : `if (townShape(h, h2, r, dens, k, lo, hi)) ${then('lo', 'hi')}`);
@@ -2229,7 +2231,73 @@ export function makeArcology(set) {
     const onFace = ['ht', 'sl', 'pl', 'ms', 'mn', 'base', 'x', 'L', 'f'];
     return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']), carve: text(carve) };
   }
-  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false);
+  // The cell's small pieces, in either language (js: true, or GLSL),
+  // written once (6d-6a): what the table says of a cell (relief), the light
+  // well under the plaza (well; in JavaScript also wellOf, for the checks:
+  // whether there is one, its hash and half width, from the same gate), and
+  // whether a point is near a solid without relief (bareNear). (Where the
+  // languages differ: what twin.writer writes (vadd, vsub among it); the
+  // cell's corner (gCellB, CELL.b: see cellB); the cell's place in its city
+  // cell (own: see ownGlsl, ownOf); a city cell's id from its corner; a city
+  // cell's id against BUILT_CELLS' (a vector's equality); built's rule
+  // (spaceRoom: the JavaScript's halls take it); and the bare boxes' bounds,
+  // part by part in JavaScript. Otherwise the text is both's: in JavaScript
+  // GLSL's vectors' functions as AS_GLSL_VEC has them (ivec3, uvec4, any,
+  // lessThan, greaterThanEqual), the table read as texelFetch reads it (see
+  // the module below: none out of its bounds, as WebGL2 gives), and whole
+  // numbers as twin.unsigned makes them.)
+  function cellPieces(js) {
+    const { fn, decl, vadd, vsub } = twin.writer(js);
+    const CB = cellB(js);
+    const relief = [
+      '// What the table says of the level-(CITY + 1) cell id, in a city cell',
+      `// (whose id is up): nothing, if it is not in the table. ${CB} is set to the`,
+      "// cell's corner from the building's origin, in cells.",
+      ...(js ? [] : ['ivec3 gCellB;']),
+      fn('uvec4', 'relief', ['ivec3 id', 'ivec3 up']),
+      `  if (up.y < ${ROW_ID} || up.y >= ${ROW_ID + ROWS}) return uvec4(0u);`,
+      '  ' + decl('ivec3', `own = ${js ? 'ownOf(id)' : ownGlsl('id')}`),
+      '  ' + decl('ivec3', `v = ${vsub(vadd('fromMiddle(up)', 'own'), 'VOL_LO')}`),
+      '  if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, VOL_SIZE))) return uvec4(0u);',
+      `  ${CB} = ${vsub(vadd('v', 'VOL_LO'), 'ORIGIN')};`,
+      '  return texelFetch(uVolume, v, 0);',
+      '}',
+    ];
+    // (Whether the cell has a well, none being nothing: the gate.)
+    const gate = (nothing) => [
+      '  ' + decl('ivec3', `below = wrapId(${vsub('id', 'ivec3(0, 1, 0)')})`),
+      `  if (!(${['below', 'id'].map((c) => (js ? `built(${c}, seed, ${CITY}, spaceRoom)` : `built(${c}, seed, ${CITY})`)).join(' || ')})) return ${nothing};`,
+      '  ' + decl('ivec3', `o = ${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'}`),
+      `  for (${js ? 'let' : 'int'} k = 0; k < NBUILT; k++) if (${js ? 'BUILT_CELLS[k][0] == o[0] && BUILT_CELLS[k][1] == o[2]' : 'BUILT_CELLS[k] == o.xz'}) return ${nothing};`,
+    ];
+    const slab = `hashCell(below, seed ^ ${hexu(HALLS.salt.slab)})`;
+    const well = [
+      '// The light well, if any, that the hall below opens up through the plaza:',
+      "// the halls' own opening through its ceiling (their slabHole, at the city's",
+      '// level), carried on up to the plaza.',
+      fn('float', 'well', ['ivec3 L', 'vec3 f', 'ivec3 id', 'uint seed']),
+      ...gate('1e9'),
+      `  return slabHole(L, f, -M, G + 1, ${slab}, ${CITY});`,
+      '}',
+      ...(js ? ['// (Whether it has one: its hash and half width, or null.)', 'function wellOf(id, seed) {', ...gate('null'), `  const h = ${slab}, w = slabHalf(h, ${CITY});`, '  return w === null ? null : { h, w };', '}'] : []),
+    ];
+    const bareNear = [
+      '// How far inside the solids without relief (pillars, the column) the point q',
+      "// is (cells from the building's origin; outside, less than 0): the city's",
+      '// pockets stop at their faces.',
+      "// (Only within r of one's bounds: elsewhere, less than -r at least.)",
+      fn('bool', 'bareNear', ['vec3 q', 'float r']),
+      `  for (${js ? 'let' : 'int'} i = 0; i < NBARE; i++) {`,
+      js ? '    const o = [0, 1, 2].map((a) => max(float(BARE_LO[i][a]) - q[a], q[a] - float(BARE_HI[i][a])));' : '    vec3 o = max(vec3(BARE_LO[i]) - q, q - vec3(BARE_HI[i]));',
+      '    if (max(max(o.x, o.y), o.z) < r) return true;',
+      '  }',
+      '  return false;',
+      '}',
+    ];
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['up', 'o'])) : lines.join('\n'));
+    return { relief: text(relief), well: text(well), bareNear: text(bareNear) };
+  }
+  const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), RELIEF_GLSL = reliefPieces(false), CELL_GLSL = cellPieces(false);
 
   const glsl = /* glsl */ `
 const int G = ${G};
@@ -2361,18 +2429,7 @@ ${table('int', 'WFIRST', SOLIDS.length, String)}
 ${CITY_GLSL.middle}
 ${CITY_GLSL.room}
 
-// What the table says of the level-(CITY + 1) cell id, in a city cell
-// (whose id is up): nothing, if it is not in the table. gCellB is set to the
-// cell's corner from the building's origin, in cells.
-ivec3 gCellB;
-uvec4 relief(ivec3 id, ivec3 up) {
-  if (up.y < ${ROW_ID} || up.y >= ${ROW_ID + ROWS}) return uvec4(0u);
-  ivec3 own = ${ownGlsl('id')};
-  ivec3 v = fromMiddle(up) + own - VOL_LO;
-  if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, VOL_SIZE))) return uvec4(0u);
-  gCellB = v + VOL_LO - ORIGIN;
-  return texelFetch(uVolume, v, 0);
-}
+${CELL_GLSL.relief}
 
 int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); } // floor, b > 0
 
@@ -2380,17 +2437,7 @@ ${CITY_GLSL.ground}
 
 ${RELIEF_GLSL.rect}
 
-// How far inside the solids without relief (pillars, the column) the point q
-// is (cells from the building's origin; outside, less than 0): the city's
-// pockets stop at their faces.
-// (Only within r of one's bounds: elsewhere, less than -r at least.)
-bool bareNear(vec3 q, float r) {
-  for (int i = 0; i < NBARE; i++) {
-    vec3 o = max(vec3(BARE_LO[i]) - q, q - vec3(BARE_HI[i]));
-    if (max(max(o.x, o.y), o.z) < r) return true;
-  }
-  return false;
-}
+${CELL_GLSL.bareNear}
 ${RELIEF_GLSL.decide}
 
 ${RELIEF_GLSL.face}
@@ -2520,16 +2567,7 @@ float reliefCell(ivec3 L, vec3 f, ivec3 id, uint seed, uvec4 m, float d, inout f
   return a - gO;
 }
 
-// The light well, if any, that the hall below opens up through the plaza:
-// the halls' own opening through its ceiling (their slabHole, at the city's
-// level), carried on up to the plaza.
-float well(ivec3 L, vec3 f, ivec3 id, uint seed) {
-  ivec3 below = wrapId(id - ivec3(0, 1, 0));
-  if (!(built(below, seed, ${CITY}) || built(id, seed, ${CITY}))) return 1e9;
-  ivec3 o = fromMiddle(id) / R;
-  for (int k = 0; k < NBUILT; k++) if (BUILT_CELLS[k] == o.xz) return 1e9;
-  return slabHole(L, f, -M, G + 1, hashCell(below, seed ^ ${hexu(HALLS.salt.slab)}), ${CITY});
-}
+${CELL_GLSL.well}
 
 ${CITY_GLSL.solids}
 
@@ -2646,23 +2684,20 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     }
   }
 
-  // See well in the shader: whether there is one (its hash, and its half
-  // width), and its air (a piece: for a ray too).
-  function wellOf(id, seed) {
-    const below = wrapId([id[0], id[1] - 1, id[2]]);
-    if (!(built(below, seed, CITY, spaceRoom) || built(id, seed, CITY, spaceRoom))) return null;
-    if (BUILT.has(`${id[0] - MID},${id[2] - MID}`)) return null;
-    const h = hashCell(below, seed ^ HALLS.salt.slab), w = slabHalf(h, CITY);
-    return w === null ? null : { h, w };
-  }
-  const wellAir = (L, f, { h }) => slabHole(L, f, -M, G + 1, h, CITY);
-
   // The cell of the table being asked about (see relief and reliefCell):
   // its corner from the building's origin (b); the sides its pockets (or its
   // openings) run on across (open), whether as three pieces (cross), and
   // which of them is being asked about (axis: see runsOn). Read by the code
   // written below, made into functions, as by the rest.
   const CELL = { b: [0, 0, 0], open: 0, cross: false, axis: -1 };
+
+  // The cell's small pieces in JavaScript (see cellPieces), made into
+  // functions; the table read as the shader's texelFetch reads its texture.
+  const CELL_JS = cellPieces(true);
+  const { relief, well, wellOf, bareNear } = new Function(
+    'CELL', 'R', 'M', 'G', 'fromMiddle', 'ownOf', 'wrapId', 'built', 'spaceRoom', 'hashCell', 'slabHole', 'slabHalf', 'NBUILT', 'BUILT_CELLS', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
+    `'use strict';\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst max = Math.max;\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.well}\n${CELL_JS.bareNear}\nreturn { relief, well, wellOf, bareNear };\n//# sourceURL=cellPieces.gen.js`,
+  )(CELL, R, M, G, fromMiddle, ownOf, wrapId, built, spaceRoom, hashCell, slabHole, slabHalf, BUILT_CELLS.length, BUILT_CELLS, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
 
   // (The lowest bit set in m: GLSL's lowBit.)
   const lowBit = (m) => 31 - Math.clz32(m & -m);
@@ -2694,14 +2729,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     'P', 'CELL', 'R', 'H2', 'hashCell', 'fdiv', 'townShape', 'TOWN_LOT', 'TOWN_PLAN_AT', 'TOWN_PICK', 'TOWN_H', 'TOWN_SALT', 'TOWN_MARGIN', 'TOWN_SHAPES', 'OPEN_AT', 'TOWN_CORNER_AT',
     `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
   )(P, CELL, R, Math.SQRT1_2, hashCell, fdiv, townShape, TOWN_LOT, TOWN_PLAN_AT, TOWN_PICK, TOWN_H, TOWN_SALT, TOWN_MARGIN, TOWN_SHAPES, OPEN_AT, TOWN_CORNER_AT);
-  function relief(id, up) {
-    if (!up || up[1] < ROW_ID || up[1] >= ROW_ID + ROWS) return [0, 0, 0, 0];
-    const o = fromMiddle(up), own = ownOf(id), v = [0, 1, 2].map((a) => o[a] + own[a] - VOLUME.lo[a]);
-    if (v.some((x, a) => x < 0 || x >= VOLUME.size[a])) return [0, 0, 0, 0];
-    CELL.b = v.map((x, a) => x + VOLUME.lo[a] - ORIGIN[a]);
-    const i = WORDS * (v[0] + VOLUME.size[0] * (v[1] + VOLUME.size[1] * v[2]));
-    return [VOLUME.data[i], VOLUME.data[i + 1], VOLUME.data[i + 2], VOLUME.data[i + 3]];
-  }
 
   // The pockets one level finer of the faces with a bit in faces (see
   // carve). (No bare test one level finer: its pockets are only in skin
@@ -2744,8 +2771,6 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     }
     return Math.max(c, bi);
   }
-  // See bareNear in the shader.
-  const bareNear = (q, r) => BARE_BOX.some(([lo, hi]) => Math.max(...[0, 1, 2].map((a) => Math.max(lo[a] - q[a], q[a] - hi[a]))) < r);
 
   function reliefCell(L, f, id, seed, [m, clip, wins, wrun], d, ray) {
     const kind = m & 3;
@@ -2790,7 +2815,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     const solid = (d) => (ray && ((ray.known = true), (ray.reach = -1)), d);
     if (ray) ray.known = false;
     if (level < CITY) return solid(NONE);
-    if (level === CITY + 1) {
+    if (level === CITY + 1 && up) {
       const m = relief(id, up);
       if (m[0]) {
         // (The halls only in deep cells, as the shader has them.)
@@ -2798,10 +2823,7 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
         setPoint(L, f, dg);
         return reliefCell(L, f, id, seed, m, d, ray);
       }
-    }
-    if (level === CITY + 1 && up) {
-      const own = ownOf(id);
-      if (groundCell(own, up)) return solid(groundAir(L, f));
+      if (groundCell(ownOf(id), up)) return solid(groundAir(L, f));
     }
     if (level === CITY && id[1] >= ROW_ID + ROWS && id[1] <= ROW_ID + ABOVE) return solid(L[1] + R * (id[1] - ROW_ID - ROWS) + f[1]);
     if (level !== CITY || id[1] < ROW_ID || id[1] >= ROW_ID + ROWS) return hallsAir(L, f, id, seed, dg, level, spaceRoom, ray);
@@ -2809,10 +2831,9 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
     // of the pieces the point is in; then its pockets.)
     setPoint(L, f, dg);
     if (ray) P.aim(ray);
-    const wl = id[1] === ROW_ID ? wellOf(id, seed) : null;
-    const w = wl ? wellAir(L, f, wl) : NONE, p = plaza(L, f, id);
+    const w = id[1] === ROW_ID ? well(L, f, id, seed) : NONE, p = plaza(L, f, id);
     P.through(ray, p, () => plaza(L, f, id));
-    if (wl) P.through(ray, w, () => wellAir(L, f, wl));
+    P.through(ray, w, () => well(L, f, id, seed));
     return Math.min(p, w, cityPockets(L, f, fromMiddle(id), Math.min(p, w), ray));
   }
 
