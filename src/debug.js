@@ -97,7 +97,10 @@ export function checkRays(ctx, n = 150, round = 15) {
 // (The comparing, for the levels recs at points round the camera along
 // dir, added into sum. Not on a surface, nor where nudging the point by
 // what single precision cannot tell changes the answer: there the two
-// may rightly choose differently.)
+// may rightly choose differently. A nudge of tol along each axis moves a
+// ray's end on a plane by tol root 3 at most, along its normal (reach times
+// slant); more than twice tol is a jump, not that: at tol itself a plane
+// square to an axis would be a tie, decided by rounding.)
 export function compareRays(ctx, recs, points, dir, sum) {
   const { pos, flight, renderer } = ctx, R = flight.R;
   renderer.probe(recs, points, dir).forEach((gpus, k) => recs.forEach((r, j) => {
@@ -113,7 +116,7 @@ export function compareRays(ctx, recs, points, dir, sum) {
       return q.reach;
     };
     const slant = Math.max(Math.abs(dir[0] * ray.nx + dir[1] * ray.ny + dir[2] * ray.nz), 1e-3);
-    if ([nudge(1), nudge(-1)].some((x) => Math.abs(x - ray.reach) * slant > tol)) return;
+    if ([nudge(1), nudge(-1)].some((x) => Math.abs(x - ray.reach) * slant > 2 * tol)) return;
     sum.compared++;
     if (ray.reach >= 0 !== gpu.reach >= 0) return void sum.apart++;
     if (ray.reach < 0) return;

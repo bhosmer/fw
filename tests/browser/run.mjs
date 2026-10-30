@@ -144,6 +144,47 @@ check('the shader and the JavaScript agree about rays', async () => {
   }
 });
 
+// Four levels finer than a town building's wall it stands close to (Basil's
+// place, ledger B40), the shader's distance and rays at the wall's level are
+// the JavaScript's to a small part of the camera's own cell: single
+// precision keeps the point's whole part apart from the rest (see
+// wholeNotApart in tests/unit/glsl.js), so that how near the wall is does not
+// come out in steps.
+check('four levels deep against a town wall, the shader keeps the JavaScript\'s precision', async () => {
+  const hash = 'eyJ3b3JsZCI6ImFyY29sb2d5IiwiRiI6MywiZnJhYyI6WzAuMTk1MjQ5MDYwNDU1Nzc4OSwwLjI4Mjc1MjQ5MDMzNTkyMDQsMC4yNDczNjcxMzg3MjM3MDU0XSwiZGlnaXRzIjpbWy0xLFs5LDE5LDNdXSxbMCxbMTUsMTEsN11dLFsxLFswLDE5LDE3XV0sWzIsWzAsMiwyMV1dLFszLFswLDksOF1dXSwieWF3IjotMi45NjU3NTk5OTk5OTk5ODYsInBpdGNoIjotMC4wNDA2NDAwMDAwMDAwMDUwNn0=';
+  await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra', false, 'arcology'));
+  const r = await page.eval(`(() => {
+    const recs = fw.pos.levels(-1, fw.pos.F), j = recs.findIndex((q) => q.level === -1), rec = recs[j], { fwd } = fw.flight.basis();
+    let seed = 5;
+    const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    // (Points round the camera, a few tenths of its cell off, and rays: the
+    // way it looks and others; differences in the camera's cells, a ray's
+    // less what single precision can tell where it lands: 1e-6 of its reach.)
+    const points = [[0, 0, 0]];
+    for (let k = 0; k < 15; k++) points.push([rnd() - 0.5, rnd() - 0.5, rnd() - 0.5].map((x) => x * 0.6));
+    const out = { level: rec.level, F: fw.pos.F, d: 0, reach: 0, rays: 0, inAir: 0, near: fw.flight.airAt(rec, [0, 0, 0]) };
+    fw.renderer.probe(recs, points).forEach((g, k) => (out.d = Math.max(out.d, Math.abs(g[j] - fw.flight.airAt(rec, points[k])) / rec.sig)));
+    for (const e of [fwd, ...Array.from({ length: 7 }, () => [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5])]) {
+      const dir = e.map((x) => x / Math.hypot(...e));
+      fw.renderer.probe(recs, points, dir).forEach((g, k) => {
+        const ray = { dir };
+        fw.flight.airAt(rec, points[k], ray);
+        if (!ray.known || ray.reach < 0) return;
+        out.rays++;
+        out.inAir += g[j].reach >= 0;
+        const diff = Math.max(0, Math.abs(g[j].reach - ray.reach) - 1e-6 * ray.reach) / rec.sig;
+        if (diff > out.reach) (out.reach = diff), (out.at = ray.reach / rec.sig);
+      });
+    }
+    return out;
+  })()`);
+  assert(!page.errors.length, page.errors.join('\n'));
+  // (The place is still the one: the wall within a ten-thousandth of a unit of
+  // level -1, the point in its air.)
+  assert(r.level === -1 && r.F === 3 && r.rays > 60 && r.near < 0 && r.near > -1e-4, `the place: ${JSON.stringify(r)}`);
+  assert(r.d < 2e-3 && r.reach < 2e-3 && r.inAir === r.rays, `the shader and the JavaScript differ by ${JSON.stringify(r)} (in the camera's cells)`);
+});
+
 // In the arcology's skin, where the buildings' relief is (fw.check flies
 // from the start and seldom gets there): at points in and around the skin
 // cells, the camera put there, every level asked about; and about rays, there

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { viewFrag } from '../../src/shaders.js';
-import { inlined } from './glsl.js';
+import { inlined, wholeNotApart } from './glsl.js';
 
 // The view shader is built from nothing on a first visit, freezing the
 // browser meanwhile (bench/cold.mjs times it). Each place that asks a world's
@@ -26,3 +26,11 @@ for (const [name, most] of Object.entries(BUDGET)) {
     assert.ok(tokens <= most.tokens, `${tokens} tokens written out (at most ${most.tokens})`);
   });
 }
+
+// Every program keeps a point's whole part apart from the rest (see
+// wholeNotApart): the worlds, and the arcology as it was.
+test('no program adds a point\'s whole part to the rest', async () => {
+  const halls = (await import('../../src/spaces/halls.js')).default, A = await import('../../src/spaces/arcology.js');
+  for (const space of [halls, A.default, A.makeArcology({ plaza: { fades: true }, town: { setback: { by: 0 } } }).arcology])
+    for (const exact of [true, false]) assert.deepEqual(wholeNotApart(viewFrag(12, space, exact)), [], `${space.name}${exact ? '' : ', the older way'}`);
+});

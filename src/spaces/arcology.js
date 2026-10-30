@@ -1212,10 +1212,10 @@ export function makeArcology(set) {
     // (Where the languages differ: what twin.writer writes, a loop's counter,
     // a city cell's id from its corner (divided by R, a vector or each part),
     // the solids' dispatch (a switch, or a list), which of the near cells the
-    // cell is (a scan, or a lookup), the point along a slant, and the point
-    // q. Otherwise the text is both's: in JavaScript float, abs, min and max
-    // are as GLSL has them, points are arrays, and whole numbers are as
-    // twin.unsigned makes them.)
+    // cell is (a scan, or a lookup), and the point along a slant. Otherwise
+    // the text is both's: in JavaScript float, abs, min and max are as GLSL
+    // has them, points are arrays, and whole numbers are as twin.unsigned
+    // makes them.)
     const { fn, decl, loop, num, vec3Arg, ivec3, vadd, vsub, D, NOTHING, RAY, X, slant, fade, faded } = twin.writer(js);
     const middle = [
       '// Where the middle city cell is from this one, in lattice units.',
@@ -1274,8 +1274,9 @@ export function makeArcology(set) {
     const near = js
       ? [decl('int', 'n = NEAR_AT.get(o.map((x) => x / R).join()) ?? -1')]
       : [decl('int', 'n = -1', true), `${loop('j', 0, 'NNEAR')} if (NEAR_CELLS[j] == o / R) n = j; }`];
-    // (How far the point is outside solid k's bounds along axis a.)
-    const off = (a) => `max(float(SLO[k].${a} - o.${a}) - q.${a}, q.${a} - float(SHI[k].${a} - o.${a}))`;
+    // (How far the point is outside solid k's bounds along axis a: the whole
+    // part apart, as everywhere.)
+    const off = (a) => `max(float(SLO[k].${a} - o.${a} - L.${a}) - f.${a}, float(L.${a} + o.${a} - SHI[k].${a}) + f.${a})`;
     const span = (x, f, lo, hi, a) => twin.planes(js, 'air', [{ span: [x, f, lo, hi, a] }])[0];
     // (Where the plaza does not fade, its own lines: see PLAZA. In the shader,
     // the plaza's air is asked unshrunk (gO and gA 0), its solids as the level
@@ -1341,7 +1342,6 @@ export function makeArcology(set) {
         ...openedFade('gO = fo; gA = fa;'),
         ...opened(`if (side >= 0) return box${openedFaded(' - gO')};`),
         decl('float', `d = ${NOTHING}`, true),
-        js ? 'const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 q = vec3(L) + f;',
         ...(UNFADED ? [] : [decl('ivec3', 'o = fromMiddle(id)')]),
         ...near,
         `if (n < 0) return box${openedFaded(' - gO')};`,
@@ -1389,7 +1389,7 @@ export function makeArcology(set) {
       `  return ${vsub(vadd('fromMiddle(up)', 'own'), 'VOL_LO')};`,
       '}',
     ];
-    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'v', 'id', 'own', 'up', 'VOL_LO', 'VOL_SIZE'])) : lines.join('\n'));
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'o', 'v', 'id', 'own', 'up', 'VOL_LO', 'VOL_SIZE'])) : lines.join('\n'));
     return { middle: text(middle), offBuilt: text(offBuilt), room: text(room), solids: text([...solids, solid]), farAxis: text(farAxis), plaza: text(plaza), table: text(table), ground: text(ground) };
   }
   // The openings, in either language (js: true, or GLSL), written once from
@@ -1730,37 +1730,41 @@ export function makeArcology(set) {
     // arrays, and whole numbers are as twin.unsigned makes them.)
     const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep, axis: E, num } = twin.writer(js);
     const CB = cellB(js);
+    // The point is its whole part L and the small rest f (units in the
+    // cell), kept apart: where a distance is to a whole number (a side, a
+    // lot's edge, a box's face), it is that number minus L, as a float, and
+    // f, so that it is as fine as f is however large L is, as Position.levels
+    // has it (ledger B40); a box's corners are given from L.
     // Set back from the band's edge (TOWN_EDGES; none, and nothing written,
     // where the town is not): for each face i, townAir works out once, for
-    // the cell, k_i (K in units from the cell's corner: n . p <= k_i on the
-    // band's side, p in units in the cell) and e_i (the point's distance
-    // outside the line `by` units in, its whole part worked out apart, so as
-    // exact as the face's own); boxSolid then drops a box unless its corner
-    // furthest in is past the line by a square `least` units a side (k_i - n .
-    // that corner at least T, all whole numbers), and cuts the rest at the
-    // line. A
-    // box's distance is still the most of its planes' (exact inside, a lower
-    // bound outside: it never overstates), and for a ray the planes are where
-    // it strikes.
+    // the cell, k_i (K in units from L: n . f <= k_i on the band's side) and
+    // e_i (the point's distance outside the line `by` units in); boxSolid
+    // then drops a box unless its corner furthest in is past the line by a
+    // square `least` units a side (k_i - n . that corner at least T, all
+    // whole numbers), and cuts the rest at the line. A box's distance is
+    // still the most of its planes' (exact inside, a lower bound outside: it
+    // never overstates), and for a ray the planes are where it strikes.
     // (n . (x, z) for whole numbers n, as whole numbers (c: as written), or
     // as floats (num).)
     const dotN = ([a, b], [x, z], c = String) => [[a, x], [b, z]].filter(([k]) => k).map(([k, v], j) => (j && k < 0 ? ` - ${c(-k)} * ${v}` : `${j ? ' + ' : ''}${c(k)} * ${v}`)).join('');
     const EDGE_ARGS = TOWN_EDGES.map((_, i) => `, e${i}, k${i}`).join('');
     const edgeAt = TOWN_EDGES.flatMap(({ n, K, inv }, i) => [
-      decl('int', `k${i} = R * (${K} - (${dotN(n, [`${CB}.x`, `${CB}.z`])}))`),
-      decl('float', `e${i} = (float(${dotN(n, ['L.x', 'L.z'])} - k${i}) + (${dotN(n, ['f.x', 'f.z'], num)})) * ${num(inv)} + ${num(def.town.setback.by)}`),
+      decl('int', `k${i} = R * (${K} - (${dotN(n, [`${CB}.x`, `${CB}.z`])})) - (${dotN(n, ['L.x', 'L.z'])})`),
+      decl('float', `e${i} = (float(-k${i}) + (${dotN(n, ['f.x', 'f.z'], num)})) * ${num(inv)} + ${num(def.town.setback.by)}`),
     ]);
     const edgeStands = TOWN_EDGES.map(({ n, T }, i) => `k${i} - (${dotN(n, [`int(${n[0] > 0 ? 'lo' : 'hi'}.x)`, `int(${n[1] > 0 ? 'lo' : 'hi'}.z)`])}) < ${T}`);
     // (Box k of lot r, if it has one, then what to do with it, given its
-    // corners.)
-    const shape = (then) => (js ? `{ const b = townShape(h, h2, r, dens, k); if (b) ${then('[b[0], b[1], b[2]]', '[b[3], b[4], b[5]]')} }` : `if (townShape(h, h2, r, dens, k, lo, hi)) ${then('lo', 'hi')}`);
+    // corners from L.)
+    const shape = (then) => (js ? `{ const b = townShape(h, h2, r, dens, k); if (b) ${then('[b[0] - L.x, b[1] - L.y, b[2] - L.z]', '[b[3] - L.x, b[4] - L.y, b[5] - L.z]')} }` : `if (townShape(h, h2, r, dens, k, lo, hi)) ${then('lo - vec3(L)', 'hi - vec3(L)')}`);
     const lotHash = (n, salt) => `hashCell(${iv([`${CB}.x * 16 + ${n} - l0`, `${CB}.z`, salt])}, TOWN_SALT)`;
     const box = [
-      '// A box of the town as a solid at p (its distance; for a ray, where it strikes).',
-      fn('float', 'boxSolid', ['vec3 lo', 'vec3 hi', 'vec3 p', ...TOWN_EDGES.flatMap((_, i) => [`float e${i}`, `int k${i}`])]),
+      '// A box of the town as a solid: its distance at the point, and for a ray',
+      '// where it strikes. Its corners lo and hi and the point f are all from the',
+      "// point's whole part L (so f is the point's own rest: see townAir).",
+      fn('float', 'boxSolid', ['vec3 lo', 'vec3 hi', 'vec3 f', ...TOWN_EDGES.flatMap((_, i) => [`float e${i}`, `int k${i}`])]),
       ...(TOWN_EDGES.length ? [`  if (${edgeStands.join(' || ')}) return 1e9;`] : []),
       '  solidPiece();',
-      ...['x', 'y', 'z'].map((c, a) => `  solidPlane(lo.${c} - p.${c}, ${E(a, '-')}); solidPlane(p.${c} - hi.${c}, ${E(a)});`),
+      ...['x', 'y', 'z'].map((c, a) => `  solidPlane(lo.${c} - f.${c}, ${E(a, '-')}); solidPlane(f.${c} - hi.${c}, ${E(a)});`),
       ...TOWN_EDGES.map(({ n, inv }, i) => `  solidPlane(e${i}, ${js ? `${num(n[0] * inv)}, 0, ${num(n[1] * inv)}` : `vec3(${num(n[0] * inv)}, 0.0, ${num(n[1] * inv)})`});`),
       '  return solidDone();',
       '}',
@@ -1777,7 +1781,6 @@ export function makeArcology(set) {
       '// a capped distance still says whether the point is in its air).',
       js ? 'function townAir(L, f, w, ray) {' : 'float townAir(ivec3 L, vec3 f, uint w, bool ray, inout float reach, inout vec3 nrm) {',
       ...ins([
-        js ? 'const p = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 p = vec3(L) + f;',
         ...edgeAt,
         decl('uint', 'open = (w >> uint(OPEN_AT)) & 63u, corner = (w >> uint(TOWN_CORNER_AT)) & 15u'),
         decl('bool', `r0 = ${RAY}`),
@@ -1792,18 +1795,18 @@ export function makeArcology(set) {
           `${RAY} = pass == 1;`,
           'airPiece();',
           ...fade('gA = fq * float(TOWN_H);'),
-          `airPlane(${js ? '-p.y' : 'fp * float(TOWN_H) - p.y'}, ${E(1, '-')});`,
+          `airPlane(${js ? '' : 'fp * float(TOWN_H) '}- float(L.y) - f.y, ${E(1, '-')});`,
           ...fade('gA = 0.0;'),
-          `airPlane(p.y - float(R), ${E(1)});`,
-          `airPlane(p.x - float(R) - ((open & 1u) != 0u ? TOWN_MARGIN : 0.0), ${E(0)});`,
-          `airPlane(-p.x - ((open & 2u) != 0u ? TOWN_MARGIN : 0.0), ${E(0, '-')});`,
-          `airPlane(p.z - float(R) - ((open & 16u) != 0u ? TOWN_MARGIN : 0.0), ${E(2)});`,
-          `airPlane(-p.z - ((open & 32u) != 0u ? TOWN_MARGIN : 0.0), ${E(2, '-')});`,
+          `airPlane(float(L.y - R) + f.y, ${E(1)});`,
+          `airPlane(float(L.x - R) + f.x - ((open & 1u) != 0u ? TOWN_MARGIN : 0.0), ${E(0)});`,
+          `airPlane(-float(L.x) - f.x - ((open & 2u) != 0u ? TOWN_MARGIN : 0.0), ${E(0, '-')});`,
+          `airPlane(float(L.z - R) + f.z - ((open & 16u) != 0u ? TOWN_MARGIN : 0.0), ${E(2)});`,
+          `airPlane(-float(L.z) - f.z - ((open & 32u) != 0u ? TOWN_MARGIN : 0.0), ${E(2, '-')});`,
           loop('c', 0, 4),
           ...ins([
             decl('float', 'sx = c < 2 ? 1.0 : -1.0, sz = (c & 1) == 0 ? 1.0 : -1.0'),
             'if ((open & (sx > 0.0 ? 1u : 2u)) != 0u && (open & (sz > 0.0 ? 16u : 32u)) != 0u && (corner & (1u << uint(c))) == 0u)',
-            `  airPlane((sx * (p.x - (sx > 0.0 ? float(R) : 0.0)) + sz * (p.z - (sz > 0.0 ? float(R) : 0.0))) * ${js ? 'H2' : '0.70710678'}, ${js ? 'sx * H2, 0, sz * H2' : 'vec3(sx, 0.0, sz) * 0.70710678'});`,
+            `  airPlane((sx * (float(sx > 0.0 ? L.x - R : L.x) + f.x) + sz * (float(sz > 0.0 ? L.z - R : L.z) + f.z)) * ${js ? 'H2' : '0.70710678'}, ${js ? 'sx * H2, 0, sz * H2' : 'vec3(sx, 0.0, sz) * 0.70710678'});`,
           ]),
           '}',
           decl('float', `box = ${D}`),
@@ -1814,14 +1817,14 @@ export function makeArcology(set) {
           'if (pass == 0) {',
           ...ins([
             "// (The point's own lot: the first holding it.)",
-            "// (A lot at the cell's far side holds the side too: p can be on it.)",
+            "// (A lot at the cell's far side holds the side too: the point can be on it.)",
             decl('int', 'n = l1 - 1', true),
-            `for (${js ? 'let' : 'int'} l = l0; l < l1; l++) if ((p.x < float(TOWN_LOT[l].z) || TOWN_LOT[l].z == R) && (p.z < float(TOWN_LOT[l].w) || TOWN_LOT[l].w == R)) { n = l; break; }`,
+            `for (${js ? 'let' : 'int'} l = l0; l < l1; l++) if ((float(L.x - TOWN_LOT[l].z) + f.x < 0.0 || TOWN_LOT[l].z == R) && (float(L.z - TOWN_LOT[l].w) + f.z < 0.0 || TOWN_LOT[l].w == R)) { n = l; break; }`,
             decl('ivec4', 'r = TOWN_LOT[n]'),
             decl('uint', `h = ${lotHash('n', '7')}, h2 = ${lotHash('n', '8')}`),
-            decl('float', 'd = min(min(p.x - float(r.x), float(r.z) - p.x), min(p.z - float(r.y), float(r.w) - p.z)) + TOWN_MARGIN', true),
+            decl('float', 'd = min(min(float(L.x - r.x) + f.x, float(r.z - L.x) - f.x), min(float(L.z - r.y) + f.z, float(r.w - L.z) - f.z)) + TOWN_MARGIN', true),
             `for (${js ? 'let' : 'int'} k = 0; k < TOWN_SHAPES; k++)`,
-            `  ${shape((lo, hi) => `d = min(d, boxSolid(${lo}, ${hi}, p${EDGE_ARGS}));`)}`,
+            `  ${shape((lo, hi) => `d = min(d, boxSolid(${lo}, ${hi}, f${EDGE_ARGS}));`)}`,
             't = max(box, -d);',
             'if (!ray || t > 0.0) break;',
           ]),
@@ -1831,12 +1834,12 @@ export function makeArcology(set) {
             ...ins([
               decl('ivec4', 'r = TOWN_LOT[l]'),
               js
-                ? 'const off = [max(float(r.x) - p.x, p.x - float(r.z)), max(0.0 - p.y, p.y - float(TOWN_H)), max(float(r.y) - p.z, p.z - float(r.w))];'
-                : 'vec3 off = max(vec3(float(r.x), 0.0, float(r.y)) - p, p - vec3(float(r.z), float(TOWN_H), float(r.w)));',
+                ? 'const off = [max(float(r.x - L.x) - f.x, float(L.x - r.z) + f.x), max(float(-L.y) - f.y, float(L.y - TOWN_H) + f.y), max(float(r.y - L.z) - f.z, float(L.z - r.w) + f.z)];'
+                : 'vec3 off = max(vec3(ivec3(r.x, 0, r.y) - L) - f, f - vec3(ivec3(r.z, TOWN_H, r.w) - L));',
               `if (max(max(off.x, off.y), off.z) >= ${X}) continue;`,
               decl('uint', `h = ${lotHash('l', '7')}, h2 = ${lotHash('l', '8')}`),
               `for (${js ? 'let' : 'int'} k = 0; k < TOWN_SHAPES; k++)`,
-              `  ${shape((lo, hi) => `boxSolid(${lo}, ${hi}, p${EDGE_ARGS});`)}`,
+              `  ${shape((lo, hi) => `boxSolid(${lo}, ${hi}, f${EDGE_ARGS});`)}`,
             ]),
             '}',
             keep,
@@ -1850,7 +1853,7 @@ export function makeArcology(set) {
       ]),
       '}',
     ];
-    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['p', 'lo', 'hi', 'off', 'r', 'CELL.b', 'L', 'f'])) : lines.join('\n'));
+    const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['lo', 'hi', 'off', 'r', 'CELL.b', 'L', 'f'])) : lines.join('\n'));
     return { box: text(box), air: text(air) };
   }
   // The relief, in either language (js: true, or GLSL), written once from
@@ -1878,7 +1881,7 @@ export function makeArcology(set) {
     // as GLSL has them, vectors are arrays, and whole numbers are as
     // twin.unsigned makes them.)
     // (S is the level's scale here, as in the shader: the pieces' state is PS.)
-    const { fn, decl, loop, ivec3: iv, indent: ins, struct, fade, faded, axis, arg3, slant, ivec2, vadd, vaddf, vsub, vec3Of, D, RAY, keep } = twin.writer(js, 'PS');
+    const { fn, decl, loop, ivec3: iv, indent: ins, struct, fade, faded, axis, arg3, slant, ivec2, vadd, vsub, D, RAY, keep } = twin.writer(js, 'PS');
     const g = (name) => (js ? `RS.${name}` : `g${name}`);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (A vector b set to the parts xs: as GLSL assigns one, part by part in
@@ -2436,10 +2439,9 @@ export function makeArcology(set) {
         decl('ivec3', `base = ${vsub('o', 'ORIGIN')}`),
         `${g('Far')} = 1e9;`,
         decl('uint', 'near = 0u', true),
-        decl('vec3', `q = ${vaddf(vec3Of(vadd('base', 'L')), 'f')}`),
         loop('k', 0, 'NF'),
         ...ins([
-          js ? 'const off = [0, 1, 2].map((a) => max(float(FLO[k][a]) - 2.0 - q[a], q[a] - float(FHI[k][a]) - 2.0));' : 'vec3 off = max(vec3(FLO[k]) - 2.0 - q, q - vec3(FHI[k]) - 2.0);',
+          js ? 'const off = [0, 1, 2].map((a) => max(float(FLO[k][a] - base[a] - L[a]) - 2.0 - f[a], float(base[a] + L[a] - FHI[k][a]) - 2.0 + f[a]));' : 'vec3 off = max(vec3(FLO[k] - base - L) - 2.0 - f, vec3(base + L - FHI[k]) - 2.0 + f);',
           decl('float', 'away = max(max(off.x, off.y), off.z)'),
           `if (away > 0.0) { ${g('Far')} = min(${g('Far')}, away); continue; }`,
           decl('ivec4', 'pl = FPLANE[k]'),
@@ -2459,7 +2461,7 @@ export function makeArcology(set) {
     ];
     const text = (lines, names = ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
     const onFace = ['ht', 'sl', 'pl', 'ms', 'mn', 'base', 'x', 'L', 'f'];
-    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']), carve: text(carve), cityFaces: text(cityFaces, ['off', 'q', 'base', 'm', 'pl']) };
+    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']), carve: text(carve), cityFaces: text(cityFaces, ['off', 'base', 'm', 'pl']) };
   }
   // The cell's small pieces, in either language (js: true, or GLSL),
   // written once (6d-6a, 6d-6d, 6d-6e):
@@ -2504,7 +2506,7 @@ export function makeArcology(set) {
   // town's; and the halls' hallsAir (hallsCell in GLSL), the relief's carve
   // and cityFaces, the city's plaza and ground, as made before it.)
   function cellPieces(js) {
-    const { fn, decl, num, vadd, vaddf, vsub, vec3Of, RAY, X, D, REACH, READ_REACH, aim, take, fade, faded, shaderOnly, axis, NOTHING } = twin.writer(js);
+    const { fn, decl, num, vadd, vsub, RAY, X, D, REACH, READ_REACH, aim, take, fade, faded, shaderOnly, axis, NOTHING } = twin.writer(js);
     // (Where the plaza does not fade, its own lines and terms: see PLAZA.)
     const [opened, openedFade, openedFaded] = [(...lines) => (UNFADED ? lines : []), (...lines) => (UNFADED ? fade(...lines) : []), (term) => (UNFADED ? faded(term) : '')];
     const CB = cellB(js);
@@ -2540,13 +2542,13 @@ export function makeArcology(set) {
       ...(js ? ['// (Whether it has one: its hash and half width, or null.)', 'function wellOf(id, seed) {', ...gate('null'), `  const h = ${slab}, w = slabHalf(h, ${CITY});`, '  return w === null ? null : { h, w };', '}'] : []),
     ];
     const bareNear = [
-      '// How far inside the solids without relief (pillars, the column) the point q',
-      "// is (cells from the building's origin; outside, less than 0): the city's",
-      '// pockets stop at their faces.',
-      "// (Only within r of one's bounds: elsewhere, less than -r at least.)",
-      fn('bool', 'bareNear', ['vec3 q', 'float r']),
+      '// Whether the point, its whole part W and the rest f (units from the',
+      "// building's origin), is within r of the bounds of a solid without relief",
+      "// (pillars, the column), where the city's pockets stop at its faces: only",
+      '// there need they ask how far inside one it is (bareIn).',
+      fn('bool', 'bareNear', ['ivec3 W', 'vec3 f', 'float r']),
       `  for (${js ? 'let' : 'int'} i = 0; i < NBARE; i++) {`,
-      js ? '    const o = [0, 1, 2].map((a) => max(float(BARE_LO[i][a]) - q[a], q[a] - float(BARE_HI[i][a])));' : '    vec3 o = max(vec3(BARE_LO[i]) - q, q - vec3(BARE_HI[i]));',
+      js ? '    const o = [0, 1, 2].map((a) => max(float(BARE_LO[i][a] - W[a]) - f[a], float(W[a] - BARE_HI[i][a]) + f[a]));' : '    vec3 o = max(vec3(BARE_LO[i] - W) - f, vec3(W - BARE_HI[i]) + f);',
       '    if (max(max(o.x, o.y), o.z) < r) return true;',
       '  }',
       '  return false;',
@@ -2695,13 +2697,13 @@ export function makeArcology(set) {
       '      // shrunk with distance) they are no air; near one, a ray they take on',
       '      // strikes it. Asked only where it could matter.)',
       '      ' + decl('float', `c = min(${FAR}, a), bi = -1e9`, true),
-      '      ' + decl('vec3', `q = ${vaddf(vec3Of(vadd(BASE, 'L')), 'f')}`),
+      '      ' + decl('ivec3', `W = ${vadd(BASE, 'L')}`),
       '      // (It changes d only where c < d and the point is within -c of a',
       '      // solid (inside one, if c >= 0); a ray, only within BARE_NEAR.)',
       '      // (Asked once: for a ray the pockets took on (pockets), where it strikes',
       '      // one too, from its reach.)',
       '      ' + decl('bool', `pockets = ${READ_REACH} > r0`),
-      `      if ((c < d && bareNear(q, max(-c, 0.0))) || (pockets && bareNear(q, ${num(BARE_NEAR)}))) {`,
+      `      if ((c < d && bareNear(W, f, max(-c, 0.0))) || (pockets && bareNear(W, f, ${num(BARE_NEAR)}))) {`,
       `        ${HAND}`,
       `        bi = bareIn(L, f, ${BASE}, pockets);`,
       '      }',

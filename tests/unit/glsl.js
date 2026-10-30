@@ -48,3 +48,14 @@ export function inlined(source) {
   const sizeOf = (n) => (size[n] ??= tokens(body[n]) + calls[n].reduce((s, [c, k]) => s + k * sizeOf(c), 0));
   return { copies, tokens: sizeOf('main') };
 }
+
+// Where a program forms a point as its whole part and the rest added
+// together (vec3(L) + f, or vec3(base + L) + f) before taking whole numbers
+// off it, as no distance may: in single precision the sum keeps only what
+// the whole part leaves room for (ledger B40). Each such place, as written.
+// (Only that one form, vec3(<...L...>) + f, is caught: a sum written
+// otherwise is not. The guard is the shader against the JavaScript four
+// levels deep, in tests/browser/run.mjs; this only keeps the form out.)
+export function wholeNotApart(source) {
+  return [...preprocess(source).matchAll(/vec3\([^()]*\bL\b[^()]*\)\s*\+\s*f\b/g)].map((m) => m[0]);
+}

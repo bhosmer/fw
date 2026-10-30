@@ -341,16 +341,14 @@ export function writer(js, state = 'S') {
     num: (x) => (js ? (Object.is(x, -0) ? '-0' : String(x)) : glf(x)),
     // A vector of floats as a function's argument (in JavaScript, three
     // arguments: so only in a call); one of whole numbers (an array in
-    // JavaScript); one of whole numbers as floats (in JavaScript, as it is).
+    // JavaScript).
     vec3Arg: (xs) => (js ? xs.join(', ') : `vec3(${xs.join(', ')})`),
     ivec3: (xs) => (js ? `[${xs.join(', ')}]` : `ivec3(${xs.join(', ')})`),
     ivec2: (xs) => (js ? `[${xs.join(', ')}]` : `ivec2(${xs.join(', ')})`),
-    vec3Of: (e) => (js ? e : `vec3(${e})`),
-    // Vectors added and taken away: in JavaScript by AS_GLSL_VEC's add3,
-    // sub3 (whole numbers) and addf3 (floats: vaddf); in GLSL the right one
-    // in parentheses where it is a sum.
+    // Vectors of whole numbers added and taken away: in JavaScript by
+    // AS_GLSL_VEC's add3 and sub3; in GLSL the right one in parentheses where
+    // it is a sum.
     vadd: (a, b) => (js ? `add3(${a}, ${b})` : `${a} + ${term(b)}`),
-    vaddf: (a, b) => (js ? `addf3(${a}, ${b})` : `${a} + ${term(b)}`),
     vsub: (a, b) => (js ? `sub3(${a}, ${b})` : `${a} - ${term(b)}`),
     // Lines and terms for the shader alone: its fading with distance (fade,
     // faded: the JavaScript's world is as it is, see pieces.js), and the
@@ -405,15 +403,13 @@ export function writer(js, state = 'S') {
 // has them.)
 export const AS_GLSL = 'const float = (x) => x, abs = Math.abs, int = (x) => x | 0, uint = (x) => x >>> 0, ceil = Math.ceil;';
 // (And GLSL's vectors' functions, as the JavaScript they write asks them:
-// ivec3, uvec4 made from numbers (one, or each); add3, sub3, addf3 (see
-// vadd, vsub, vaddf); any, lessThan, greaterThanEqual, part by part. The
-// rule: a shim only for a GLSL builtin called as a function, and exact on
-// arrays and numbers; operators, swizzles and conversions go through the
-// writer. A shim asked with whole numbers and with floats at once runs
-// slower for both (its call becomes polymorphic): so floats are added by
-// addf3, not add3.)
+// ivec3, uvec4 made from numbers (one, or each); add3, sub3 (see vadd,
+// vsub: whole numbers only, so that their calls stay of one kind and fast);
+// any, lessThan, greaterThanEqual, part by part. The rule: a shim only for a
+// GLSL builtin called as a function, and exact on arrays and numbers;
+// operators, swizzles and conversions go through the writer.)
 export const AS_GLSL_VEC =
-  "const num = (x) => { if (typeof x !== 'number') throw new Error('a vector from ' + typeof x + ', not numbers'); return x; }, ivec3 = (x, y = x, z = x) => [num(x), num(y), num(z)], uvec4 = (x, y = x, z = x, w = x) => [num(x), num(y), num(z), num(w)], add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], addf3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], any = (b) => b.some((x) => x), lessThan = (a, b) => a.map((x, i) => x < b[i]), greaterThanEqual = (a, b) => a.map((x, i) => x >= b[i]);";
+  "const num = (x) => { if (typeof x !== 'number') throw new Error('a vector from ' + typeof x + ', not numbers'); return x; }, ivec3 = (x, y = x, z = x) => [num(x), num(y), num(z)], uvec4 = (x, y = x, z = x, w = x) => [num(x), num(y), num(z), num(w)], add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], any = (b) => b.some((x) => x), lessThan = (a, b) => a.map((x, i) => x < b[i]), greaterThanEqual = (a, b) => a.map((x, i) => x >= b[i]);";
 // Their text in JavaScript, where vectors are arrays: each component of
 // the names given, and of any element of a table (L.x, SLO[k].y, GUP[k].w),
 // as an element (L[0], SLO[k][1], GUP[k][3]).

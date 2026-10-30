@@ -609,8 +609,7 @@ function pieces(js, levels, salt) {
       // and H / 2 - 1 from it up or down, H being at least HLO); and
       // whatever the neighbours hold, none of which comes within M of the
       // cell boundary unseen.
-      js ? 'const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 q = vec3(L) + f;',
-      decl('float', `unseen = ${most('min', ['abs(q.x - float(C)) + float(C - M - 1)', 'abs(q.z - float(C)) + float(C - M - 1)', `abs(q.y - float(M + ${half('H')})) + float(${half('HLO')} - 1)`, `${most('min', ['q.x', 'float(R) - q.x', 'q.y', 'float(R) - q.y', 'q.z', 'float(R) - q.z'])} + float(M)`])}`),
+      decl('float', `unseen = ${most('min', ['abs(float(L.x - C) + f.x) + float(C - M - 1)', 'abs(float(L.z - C) + f.z) + float(C - M - 1)', `abs(float(L.y - M - ${half('H')}) + f.y) + float(${half('HLO')} - 1)`, `${most('min', ['float(L.x) + f.x', 'float(R - L.x) - f.x', 'float(L.y) + f.y', 'float(R - L.y) - f.y', 'float(L.z) + f.z', 'float(R - L.z) - f.z'])} + float(M)`])}`),
       `return ${most('min', ['a', 'unseen'])};`,
     ].map((l) => '  ' + l),
     '}',
@@ -626,7 +625,7 @@ function pieces(js, levels, salt) {
       '}',
     );
 
-  return js ? twin.arrays(out.join('\n'), ['L', 'f', 'q']) : out.join('\n');
+  return js ? twin.arrays(out.join('\n'), ['L', 'f']) : out.join('\n');
 }
 
 // The halls, made from HALLS with what set changes (see define in util.js):
