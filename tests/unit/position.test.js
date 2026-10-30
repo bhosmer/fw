@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Position, DIAGONALS } from '../../src/position.js';
-import halls from '../../src/spaces/halls.js';
+import arcology from '../../src/spaces/arcology.js';
 import { rand } from './rand.js';
 
-const R = halls.R;
-const fresh = (frac) => new Position(R, (j) => halls.ancestorDigit(j), frac);
+const R = arcology.R;
+const fresh = (frac) => new Position(R, (j) => arcology.ancestorDigit(j), frac);
 
 // Where we are in our level-k cell, as a fraction of it, worked out the slow,
 // obvious way: fold the digits from F up to k + 1 into frac.

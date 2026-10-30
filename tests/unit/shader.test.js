@@ -12,7 +12,6 @@ import { inlined, wholeNotApart } from './glsl.js';
 // (And the arcology whose plaza fades, as it did: see PLAZA in
 // spaces/arcology.js.)
 const BUDGET = {
-  halls: { cell: 2, tokens: 40000 },
   arcology: { cell: 2, tokens: 200000 },
   'arcology&plaza.fades=true': { cell: 2, tokens: 200000, set: { plaza: { fades: true } } },
 };
@@ -28,9 +27,10 @@ for (const [name, most] of Object.entries(BUDGET)) {
 }
 
 // Every program keeps a point's whole part apart from the rest (see
-// wholeNotApart): the worlds, and the arcology as it was.
+// wholeNotApart): the arcology (and the halls it is built of, which its
+// program holds), and the arcology as it was.
 test('no program adds a point\'s whole part to the rest', async () => {
-  const halls = (await import('../../src/spaces/halls.js')).default, A = await import('../../src/spaces/arcology.js');
-  for (const space of [halls, A.default, A.makeArcology({ plaza: { fades: true }, town: { setback: { by: 0 } } }).arcology])
+  const A = await import('../../src/spaces/arcology.js');
+  for (const space of [A.default, A.makeArcology({ plaza: { fades: true }, town: { setback: { by: 0 } } }).arcology])
     for (const exact of [true, false]) assert.deepEqual(wholeNotApart(viewFrag(12, space, exact)), [], `${space.name}${exact ? '' : ', the older way'}`);
 });

@@ -5,11 +5,12 @@ import { camera } from '../../src/view.js';
 import { elsewhere } from '../../src/arrival.js';
 import { Pilot, awayFrom } from '../../src/pilot.js';
 import { Planner } from '../../src/planner.js';
-import halls from '../../src/spaces/halls.js';
+import arcology from '../../src/spaces/arcology.js';
+import { inside } from './inside.js';
 import { rand } from './rand.js';
 import * as P from '../../src/pieces.js';
 
-const R = halls.R;
+const R = arcology.R;
 
 // Fly a while, wandering: n steps of dt seconds, the heading drifting and now
 // and then turning, calling each(flight, len) after every step.
@@ -29,17 +30,19 @@ function wander(flight, n, each, seed = 1, dt = 1 / 60, boost = 1) {
 }
 
 test('a first visit begins somewhere with room to stand', () => {
-  const flight = new Flight(halls);
+  const flight = new Flight(arcology);
   flight.begin(true);
   assert.ok(flight.clearance > 0.05, `clearance ${flight.clearance}`);
   assert.ok(flight.fog > 0 && flight.scale > 0);
 });
 
 test('flying never ends a step in solid, nor goes more than half the way open', () => {
-  // (Also at ten frames a second with shift held, where steps are long.)
-  for (const [seed, dt, boost, n] of [[1, 1 / 60, 1, 1500], [2, 1 / 60, 1, 1500], [3, 0.1, 8, 600]]) {
-    const flight = new Flight(halls);
-    flight.begin(true);
+  // (Also at ten frames a second with shift held, where steps are long; and
+  // inside the building, among the halls' thin doors and windows.)
+  for (const [seed, dt, boost, n, within] of [[1, 1 / 60, 1, 1500], [2, 1 / 60, 1, 1500], [3, 0.1, 8, 600], [4, 1 / 60, 1, 1500, true], [5, 0.1, 8, 600, true]]) {
+    const flight = new Flight(arcology);
+    if (within) inside(flight, rand(seed));
+    else flight.begin(true);
     const levels = new Set();
     wander(flight, n, (f, len) => {
       // (The step in cells of the level it was made at; how far the way was
@@ -55,7 +58,7 @@ test('flying never ends a step in solid, nor goes more than half the way open', 
 });
 
 test('the working level follows how much room there is', () => {
-  const flight = new Flight(halls);
+  const flight = new Flight(arcology);
   flight.begin(true);
   wander(flight, 1000, (f) => {
     f.sense();
@@ -70,7 +73,7 @@ test('the working level follows how much room there is', () => {
 // clearance). At either curve.
 test('speeding up is eased; slowing down is not', () => {
   for (const curve of [0.5, 1]) {
-    const flight = new Flight(halls, { curve });
+    const flight = new Flight(arcology, { curve });
     flight.begin(true);
     let before = null, rose = 0;
     wander(flight, 1500, (f) => {
@@ -94,22 +97,22 @@ test('speeding up is eased; slowing down is not', () => {
 // far open: reach 0). And as it flies, the way seen no further than 16
 // clearances (flight.reach).
 test('the pace follows the square root of the way open, in clearances', () => {
-  const f = new Flight(halls, { reach: 0 });
+  const f = new Flight(arcology, { reach: 0 });
   f.begin(true);
   const c = f.scale;
   assert.ok(Math.abs(f.paced(c) / c - 1) < 1e-12 && Math.abs(f.paced(4 * c) / c - 2) < 1e-12 && Math.abs(f.paced(100 * c) / c - 10) < 1e-12);
-  const d = new Flight(halls);
+  const d = new Flight(arcology);
   d.begin(true);
   assert.ok(Math.abs(d.paced(4 * d.scale) / d.scale - 2) < 1e-12 && Math.abs(d.paced(100 * d.scale) / d.scale - 4) < 1e-12, 'the way seen no further than 16 clearances');
-  const g = new Flight(halls, { curve: 1, reach: 0 });
+  const g = new Flight(arcology, { curve: 1, reach: 0 });
   g.begin(true);
   for (const x of [0.3, 1, 7.7, 1e6]) assert.equal(g.paced(x * g.scale), x * g.scale);
-  assert.throws(() => new Flight(halls, { curve: 0 }), /flight\.curve is a power/);
-  assert.throws(() => new Flight(halls, { curve: 2 }), /flight\.curve is a power/);
+  assert.throws(() => new Flight(arcology, { curve: 0 }), /flight\.curve is a power/);
+  assert.throws(() => new Flight(arcology, { curve: 2 }), /flight\.curve is a power/);
 });
 
 test('rewinding comes back to where we started', () => {
-  const flight = new Flight(halls);
+  const flight = new Flight(arcology);
   flight.begin(true);
   const start = { F: flight.pos.F, frac: flight.pos.frac.slice() };
   wander(flight, 600, null, 6);
@@ -122,8 +125,8 @@ test('rewinding comes back to where we started', () => {
   for (let a = 0; a < 3; a++) assert.ok(Math.abs(flight.pos.frac[a] - start.frac[a]) < 1e-9, `${flight.pos.frac} not ${start.frac}`);
 });
 
-// The halls with nothing finer than level 0: there, a wall never opens.
-const bare = { ...halls, cellAir: (L, f, id, seed, dg, level, up) => (level <= 0 ? halls.cellAir(L, f, id, seed, dg, level, up) : 1) };
+// The arcology with nothing finer than level 0: there, a wall never opens.
+const bare = { ...arcology, cellAir: (L, f, id, seed, dg, level, up) => (level <= 0 ? arcology.cellAir(L, f, id, seed, dg, level, up) : 1) };
 
 // Fly straight ahead at speed until the room we are in is more than levels
 // up, calling each(flight) after every step; at most n steps.
@@ -136,18 +139,17 @@ function press(flight, levels, n, each) {
 }
 
 // Flying at a surface that never opens takes us ever finer, and the space we
-// are really in ever further up: further than sense() looks as a rule.
+// are really in ever further up: further than sense() looks as a rule. (From
+// inside the building, in its halls, where a wall is never far ahead.)
 test('held at a surface for ever, we still know where the air is', () => {
-  const flight = new Flight(bare);
-  flight.begin(true);
+  const flight = inside(new Flight(bare), rand(21));
   press(flight, 80, 1000, (f) => assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}`));
   // (Past where it used to be lost: UP + FAR = 72 levels up.)
   assert.ok(flight.pos.F - flight.room > 72, `the room was never more than ${flight.pos.F - flight.room} levels up`);
 });
 
 test('sent somewhere deep, we find the room we are in', () => {
-  const flight = new Flight(bare);
-  flight.begin(true);
+  const flight = inside(new Flight(bare), rand(21));
   press(flight, 80, 1000);
   const { F, frac } = flight.pos;
   const digits = new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()]));
@@ -161,7 +163,7 @@ test('sent somewhere deep, we find the room we are in', () => {
 // (Past about 223 levels down, a level-0 cell is more level-F cells than a
 // number holds, and the room we were in, at level 0, is too far up to ask.)
 test('however deep, where the sky is stays a number', () => {
-  const flight = new Flight(halls);
+  const flight = new Flight(arcology);
   flight.begin(true);
   for (let i = 0; i < 300; i++) flight.pos.refine();
   assert.ok(Number.isFinite(flight.skyHeight()) && Number.isFinite(flight.skyHeight(1)), `sky ${flight.skyHeight()}, ${flight.skyHeight(1)}`);
@@ -177,7 +179,7 @@ test('a first visit begins somewhere different each time, with room ahead', () =
   const rnd = rand(9);
   const places = new Set();
   for (let i = 0; i < 30; i++) {
-    const flight = new Flight(halls);
+    const flight = new Flight(arcology);
     elsewhere(flight, rnd);
     assert.ok(flight.clearance >= 0.08 && flight.sky < 0, `clearance ${flight.clearance}, sky ${flight.sky}`);
     // (Facing the most open of the four ways along the walls.)
@@ -271,15 +273,16 @@ test('a wall however thin is never flown through', () => {
 
 // However far the way ahead is found open, all of it is air: along rays every
 // which way from places on a wander, nothing solid comes before it.
-test('the way found open is air all the way', async () => {
-  const { default: arcology } = await import('../../src/spaces/arcology.js');
-  for (const space of [halls, arcology]) {
-  const flight = new Flight(space);
-  if (space === halls) flight.begin(true);
+// (From a first visit, out on the plaza; and from inside the building, in
+// its halls, for longer.)
+test('the way found open is air all the way', () => {
+  for (const within of [false, true]) {
+  const flight = new Flight(arcology);
+  if (within) inside(flight, rand(3));
   else elsewhere(flight, rand(3));
   const rnd = rand(51);
   let i = 0;
-  wander(flight, space === halls ? 1500 : 600, (f) => {
+  wander(flight, within ? 1500 : 600, (f) => {
     if (i++ % 5) return;
     f.sense();
     for (let k = 0; k < 4; k++) {
@@ -289,7 +292,7 @@ test('the way found open is air all the way', async () => {
         const t = (open * j) / 200;
         // (The clearance worked out here, not by Flight.clearanceAt: kept
         // apart from the code it checks.)
-        assert.ok(Math.max(f.sky + dir[1] * t, ...f.here.map((r) => -f.airAt(r, dir.map((x) => x * t)) / r.sig)) > -1e-9 * open, `${space.name}: solid at ${t} of ${open} open`);
+        assert.ok(Math.max(f.sky + dir[1] * t, ...f.here.map((r) => -f.airAt(r, dir.map((x) => x * t)) / r.sig)) > -1e-9 * open, `${within ? 'inside' : 'a first visit'}: solid at ${t} of ${open} open`);
       }
     }
   }, 1);
@@ -299,7 +302,7 @@ test('the way found open is air all the way', async () => {
 // Turning: up or down no further than PITCH_MAX, however far asked; and the
 // camera, looking level, is the way we face.
 test('turning stops at the furthest up or down, and the camera looking level is the facing', () => {
-  const flight = new Flight(halls);
+  const flight = new Flight(arcology);
   flight.turn(0.4, 3);
   assert.equal(flight.pitch, PITCH_MAX);
   assert.equal(flight.yaw, 0.4);
@@ -316,7 +319,7 @@ test('turning stops at the furthest up or down, and the camera looking level is 
 test('the flight is sensed where it is, after every move', () => {
   const state = (f) => JSON.stringify([f.pos.F, f.pos.frac, f.clearance, f.scale, f.pace, f.fog, f.fogTarget, f.opened, f.sky, f.room, f.sensed, f.airs]);
   let moves = 0, refined = 0;
-  wander(new Flight(halls), 1500, (f, len) => {
+  wander(new Flight(arcology), 1500, (f, len) => {
     const asked = f.around().map((rec) => ({ rec, air: f.airAt(rec) }));
     assert.equal(JSON.stringify(f.airs), JSON.stringify(asked), 'the airs are not of where we are');
     const was = state(f);
@@ -335,14 +338,14 @@ test('the flight is sensed where it is, after every move', () => {
 // first step out of a room is twice as long; an unknown setting is refused.
 test('a flight flies as its settings say', () => {
   const step = (settings) => {
-    const f = new Flight(halls, settings);
+    const f = new Flight(arcology, settings);
     f.begin(true);
     return f.step(1 / 600, [0, 0, -1]);
   };
   const one = step(undefined), two = step({ speed: 2 });
   assert.ok(one > 0 && Math.abs(two / one - 2) < 1e-12, `${one}, ${two}`);
-  assert.equal(new Flight(halls).settings, FLIGHT);
-  assert.throws(() => new Flight(halls, { sped: 2 }), /there is no flight\.sped/);
+  assert.equal(new Flight(arcology).settings, FLIGHT);
+  assert.throws(() => new Flight(arcology, { sped: 2 }), /there is no flight\.sped/);
 });
 
 // The tour's travel is carried, not paced (see Flight.step's carry): flown
@@ -355,9 +358,13 @@ test('a flight flies as its settings say', () => {
 // level, what is carried is taken to the new level's cells.
 test('the tour\'s travel is carried, not paced: the same at any flight.speed and flight.ease, as far as it asks, capped at half the way open', () => {
   const opened = (f) => f.opened * Math.pow(R, f.lastMove.F - f.pos.F); // (in the cells of the level the move was made at)
-  const tour = (settings) => {
-    const flight = new Flight(halls, settings);
-    elsewhere(flight, rand(3));
+  // (From a first visit, out on the plaza, where the tour goes by looking;
+  // and from inside the building, where it plans its way through the halls.)
+  const tour = (settings, within) => {
+    const flight = new Flight(arcology, settings);
+    // (Inside: a start, of those tried, where it has a way to plan.)
+    if (within) inside(flight, rand(4));
+    else elsewhere(flight, rand(3));
     const pilot = new Pilot(R);
     pilot.planner = new Planner(flight);
     const random = Math.random;
@@ -366,7 +373,7 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
     try {
       pilot.start(flight.pos.F);
       const out = [];
-      let went = 0, capped = 0;
+      let went = 0, capped = 0, planned = 0;
       for (let i = 0; i < 600; i++) {
         const v = pilot.fly(1 / 60, flight, 1, () => awayFrom(flight), false);
         const F = flight.pos.F, asked = (Math.hypot(...v) / 60) * Math.pow(R, flight.pos.F - F);
@@ -376,18 +383,22 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
         if (asked > 0.5 * opened(flight)) capped++;
         went += len / flight.scale;
         pilot.moved(flight.lastMove, flight.pos.F);
+        if (pilot.plan) planned++;
         out.push(JSON.stringify([flight.pos.F, flight.pos.frac, flight.yaw, flight.pitch]));
       }
-      return { out, went, capped };
+      return { out, went, capped, planned };
     } finally {
       Math.random = random;
     }
   };
-  const one = tour(undefined);
-  assert.ok(one.went > 1, `the tour went ${one.went} clearances in 10 s`);
-  for (const settings of [{ speed: 2 }, { speed: 0.5 }, { ease: 0 }, { ease: 3 }, { speed: 2, ease: 0.2 }]) assert.deepEqual(tour(settings).out, one.out, JSON.stringify(settings));
+  for (const within of [false, true]) {
+    const one = tour(undefined, within), where = within ? 'inside' : 'a first visit';
+    assert.ok(one.went > 1, `${where}: the tour went ${one.went} clearances in 10 s`);
+    assert.ok(!within || one.planned > 60, `inside: the tour followed a plan on ${one.planned} steps`);
+    for (const settings of [{ speed: 2 }, { speed: 0.5 }, { ease: 0 }, { ease: 3 }, { speed: 2, ease: 0.2 }]) assert.deepEqual(tour(settings, within).out, one.out, `${where}: ${JSON.stringify(settings)}`);
+  }
   // (A carry far too fast: exactly half the way open, and still in air.)
-  const f = new Flight(halls);
+  const f = new Flight(arcology);
   f.begin(true);
   for (let i = 0; i < 30; i++) {
     const { fwd } = f.basis();
@@ -397,7 +408,7 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
   // (The keys' wish with a carry: the wish's part goes twice as far at
   // flight.speed 2, the carried part the same.)
   const both = (speed) => {
-    const g = new Flight(halls, { speed });
+    const g = new Flight(arcology, { speed });
     g.begin(true);
     const pace = g.pace, { fwd, right } = g.basis(), carry = right.map((x) => x * 0.2 * g.scale);
     g.step(1 / 600, fwd, [0, 0, 0], carry);
@@ -409,7 +420,7 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
   // (Twelve levels too fine, as after a jump: the sense due at the start of
   // a step moves the level the rest of the way, and what is carried is
   // taken to the new level's cells.)
-  const jumped = new Flight(halls);
+  const jumped = new Flight(arcology);
   jumped.begin(true);
   for (let i = 0; i < 12; i++) jumped.pos.refine();
   jumped.sense();
@@ -425,7 +436,7 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
 // gets going at once.
 test('somewhere new, flying by hand gets going at once', () => {
   for (const seed of [4, 9, 12]) {
-    const f = new Flight(halls);
+    const f = new Flight(arcology);
     elsewhere(f, rand(seed));
     assert.equal(f.pace, f.paced(f.scale), `seed ${seed}: pace ${f.pace}, scale ${f.scale}`);
     const { fwd } = f.basis();
@@ -440,9 +451,10 @@ test('somewhere new, flying by hand gets going at once', () => {
 // refused. And flight.reach: the curve sees the way open no further than
 // that many clearances.
 test('flight.rise caps speeding up, alike at any frame rate, and leaves slowing alone; flight.reach caps the way the curve sees', () => {
-  const fly = (settings, hz, seconds = 6, each) => {
-    const f = new Flight(halls, settings);
-    f.begin(true);
+  const fly = (settings, hz, seconds = 6, each, within = false) => {
+    const f = new Flight(arcology, settings);
+    if (within) inside(f, rand(5));
+    else f.begin(true);
     for (let i = 0; i < seconds * hz; i++) {
       const was = f.pace * Math.pow(R, -f.pos.F);
       const { fwd } = f.basis();
@@ -465,18 +477,19 @@ test('flight.rise caps speeding up, alike at any frame rate, and leaves slowing 
   };
   const [p30, p60, p120] = [30, 60, 120].map(at);
   for (const p of [p30, p120]) assert.ok(Math.abs(Math.log(p.pace / p60.pace)) < 0.05, `the pace after 6 s: ${p30.pace}, ${p60.pace}, ${p120.pace}`);
-  // (Slowing: a cut to the curve, as without the cap.)
+  // (Slowing: a cut to the curve, as without the cap. Inside the building,
+  // where a wall comes up ahead.)
   let cuts = 0;
   fly({ rise: 1.5 }, 60, 10, (f, was) => {
     const pace = f.pace, target = Math.max(f.paced(f.opened), 0.05 * f.scale);
     assert.ok(pace <= target * (1 + 1e-9), `going at ${pace}, over the curve's ${target}`);
     if (pace * Math.pow(R, -f.pos.F) < was * 0.98) cuts++;
-  });
+  }, true);
   assert.ok(cuts > 0, 'never slowed');
-  for (const rise of [1, 0.5, -2, Infinity]) assert.throws(() => new Flight(halls, { rise }), /flight\.rise is 0 \(no limit\) or a factor more than 1/, String(rise));
+  for (const rise of [1, 0.5, -2, Infinity]) assert.throws(() => new Flight(arcology, { rise }), /flight\.rise is 0 \(no limit\) or a factor more than 1/, String(rise));
   // (reach: no further than that many clearances.)
-  const g = new Flight(halls, { reach: 8 });
+  const g = new Flight(arcology, { reach: 8 });
   g.begin(true);
   assert.ok(Math.abs(g.paced(100 * g.scale) / (Math.sqrt(8) * g.scale) - 1) < 1e-12 && Math.abs(g.paced(4 * g.scale) / (2 * g.scale) - 1) < 1e-12);
-  for (const reach of [0.5, -1, Infinity]) assert.throws(() => new Flight(halls, { reach }), /flight\.reach is 0 \(no limit\) or a number of clearances/, String(reach));
+  for (const reach of [0.5, -1, Infinity]) assert.throws(() => new Flight(arcology, { reach }), /flight\.reach is 0 \(no limit\) or a number of clearances/, String(reach));
 });

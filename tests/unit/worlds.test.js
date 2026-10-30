@@ -1,23 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WORLDS, makeWorld } from '../../src/worlds.js';
+import { makeWorld } from '../../src/worlds.js';
 import { Flight } from '../../src/flight.js';
 import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
+import { inside } from './inside.js';
 import { M } from '../../src/spaces/halls.js';
 
 // What every world must be, whatever its arrangement: asked of each in turn
 // as the flight asks it (every level around places it might be), so that a
 // new world, or a new arrangement of one, is held to them without new tests.
 
-// Places in a world: first visits, and where short flights from them lead.
-function places(space, seed, n = 8) {
+// Places in a world: first visits (out on the plaza), or (within) places
+// inside the building, in its halls; and where short flights from them lead.
+function places(space, seed, n = 8, within = false) {
   const rnd = rand(seed);
   const out = [];
   for (let i = 0; i < n; i++) {
     let flight = new Flight(space);
-    elsewhere(flight, rnd);
+    if (within) inside(flight, rnd);
+    else elsewhere(flight, rnd);
     for (let k = 0; k < 4; k++) {
       flight.sense();
       out.push(flight);
@@ -34,7 +37,10 @@ function places(space, seed, n = 8) {
 
 // (And the arcology whose plaza fades, as it did: see PLAZA in
 // spaces/arcology.js.)
-const MADE = await Promise.all([...WORLDS.map((name) => makeWorld(name)), makeWorld('arcology', { plaza: { fades: true } })]);
+const MADE = await Promise.all([makeWorld('arcology'), makeWorld('arcology', { plaza: { fades: true } })]);
+// (Each test asks the places of each half, and holds each to reaching what
+// it means to.)
+const HALVES = [[false, 'first visits'], [true, 'inside']];
 for (const { space, set } of MADE) {
   const label = space.name + (set ? '&plaza.fades=true' : '');
   // A distance that never overstates mostly changes no faster than the
@@ -47,6 +53,7 @@ for (const { space, set } of MADE) {
   // the camera and near the surfaces round it, a short way apart (across
   // cell sides and levels as they fall).
   test(`${label}: no level's distance changes faster than the point moves, or overstates`, () => {
+    for (const [within, half] of HALVES) {
     const rnd = rand(11);
     let pairs = 0, worst = 0, balls = 0;
     // (The ball round v that a, the level's distance there, claims: no point
@@ -69,7 +76,7 @@ for (const { space, set } of MADE) {
         assert.ok(a > 0 ? b > -tol : b < tol, `level ${r.level} at F ${flight.pos.F}: ${a} at ${v}, but ${b} within it, ${where}`);
       }
     };
-    for (const flight of places(space, 3)) {
+    for (const flight of places(space, 3, 8, within)) {
       const c = Math.max(flight.clearance, 1e-3);
       for (const r of flight.here) {
         for (let k = 0; k < 30; k++) {
@@ -90,10 +97,11 @@ for (const { space, set } of MADE) {
         }
       }
     }
-    assert.ok(pairs > 5000 && worst > 0.5, `${pairs} pairs, the steepest ${worst}: the test reaches surfaces`);
+    assert.ok(pairs > 5000 && worst > 0.5, `${half}: ${pairs} pairs, the steepest ${worst}: the test reaches surfaces`);
     // (The balls are asked about seldom: were they often, the distance
     // would be capped widely, and the rule above would say little.)
-    assert.ok(balls <= pairs / 100, `${balls} of ${pairs} pairs changed faster than the point moved`);
+    assert.ok(balls <= pairs / 100, `${half}: ${balls} of ${pairs} pairs changed faster than the point moved`);
+    }
   });
 
   // Where nothing says otherwise, a cell sits in its parent at
@@ -101,7 +109,7 @@ for (const { space, set } of MADE) {
   // its default place in air on purpose: the arcology's, standing on the
   // plaza, at the two levels finer than the city. Which rule holds for every world is open:
   // ledger A1.)
-  const onPurpose = space.name === 'arcology' ? [-1, 0] : [];
+  const onPurpose = [-1, 0];
   test(`${label}: a cell sits somewhere solid in its parent`, () => {
     for (let F = -8; F <= 6; F++) {
       if (onPurpose.includes(F)) continue;
@@ -116,10 +124,11 @@ for (const { space, set } of MADE) {
   // directions, the axes and the diagonals (where a plane is met exactly
   // edge on).
   test(`${label}: what a level says of a ray holds`, () => {
+    for (const [within, half] of HALVES) {
     const rnd = rand(17);
     const dirs = [[1, 0, 0], [0, 1, 0], [0, 0, -1], [Math.SQRT1_2, 0, Math.SQRT1_2], [0, -Math.SQRT1_2, Math.SQRT1_2]];
     let rays = 0, inAir = 0;
-    for (const flight of places(space, 7)) {
+    for (const flight of places(space, 7, 8, within)) {
       const c = Math.max(flight.clearance, 1e-3);
       for (const r of flight.here) {
         for (let k = 0; k < 12; k++) {
@@ -133,11 +142,14 @@ for (const { space, set } of MADE) {
         }
       }
     }
-    assert.ok(rays > 1000 && inAir > 100, `${rays} rays, ${inAir} in air: the test reaches what it means to`);
+    assert.ok(rays > 1000 && inAir > 100, `${half}: ${rays} rays, ${inAir} in air: the test reaches what it means to`);
+    }
   });
 
   test(`${label}: the world is the same every time`, () => {
-    const [a, b] = [places(space, 5, 2), places(space, 5, 2)];
-    a.forEach((f, i) => f.here.forEach((r, j) => assert.equal(f.airAt(r, [0.1, 0.2, 0.3]), b[i].airAt(b[i].here[j], [0.1, 0.2, 0.3]))));
+    for (const [within] of HALVES) {
+      const [a, b] = [places(space, 5, 2, within), places(space, 5, 2, within)];
+      a.forEach((f, i) => f.here.forEach((r, j) => assert.equal(f.airAt(r, [0.1, 0.2, 0.3]), b[i].airAt(b[i].here[j], [0.1, 0.2, 0.3]))));
+    }
   });
 }

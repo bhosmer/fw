@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { Flight, PITCH_MAX } from '../../src/flight.js';
 import { elsewhere } from '../../src/arrival.js';
 import { placeWorld, readPlace, placeOf, writePlace, applyPlace, LEVEL_MOST } from '../../src/place.js';
-import { WORLDS, makeWorld, fromLink } from '../../src/worlds.js';
+import { makeWorld } from '../../src/worlds.js';
 import { rand } from './rand.js';
 
 const hash = (o) => '#' + Buffer.from(JSON.stringify(o)).toString('base64');
-const worlds = await Promise.all(WORLDS.map((name) => makeWorld(name)));
+const worlds = [await makeWorld('arcology')];
 const R = worlds[0].space.R;
 
 // Where a flight is, to compare: its level, offset, every digit from well
@@ -56,16 +56,22 @@ test('a place written and read again is the same place', () => {
 // Two worlds compared, which put their default digits differently: a place
 // flown to with the second shown, written for both, is the same place gone
 // to from the first, flipped as the app flips (see Flight.setSpace), once
-// its level is set and before its offset and digits are.
-test('a place shown on the other side of a comparison is there again', async () => {
-  const link = fromLink('?halls&vs=halls&vs.solid=0.3');
-  const A = (await makeWorld(link.name, link.changes)).space, B = (await makeWorld(link.vs.name, link.vs.changes)).space;
+// its level is set and before its offset and digits are. (The second, the
+// arcology with its default digit moved across at a level coarser than the
+// city's, where all is solid: none of its variants puts one elsewhere.)
+test('a place shown on the other side of a comparison is there again', () => {
+  const A = worlds[0].space, moved = [5, A.ancestorDigit(-3)[1], 7];
+  const B = { ...A, ancestorDigit: (j) => (j === -3 ? moved : A.ancestorDigit(j)) };
+  assert.notDeepEqual(A.ancestorDigit(-3), moved);
   const rnd = rand(3);
   for (const flight of visits(A, 3, 6)) {
+    // (Flipped, our digit there, A's default, becomes B's.)
+    assert.deepEqual(flight.pos.digit(-3), A.ancestorDigit(-3));
     flight.setSpace(B);
+    assert.deepEqual(flight.pos.digit(-3), moved, 'the default digit was not taken to the other world\'s');
     const dir = [rnd() - 0.5, 0, rnd() - 0.5];
     for (let s = 0; s < 60; s++) flight.step(1 / 30, dir.map((x) => x * 4));
-    const text = writePlace(placeOf(flight, 'halls', 'B'), [A, B]);
+    const text = writePlace(placeOf(flight, 'arcology', 'B'), [A, B]);
     const { place } = readPlace(text, R);
     assert.equal(place.shown, 'B');
     const there = new Flight(A);
@@ -79,10 +85,10 @@ test('a place shown on the other side of a comparison is there again', async () 
     assert.deepEqual(seen, { shown: 'B', ...before, F: place.F });
     // (Written again, the same link: before where() fills in digits, which
     // would be written where they are B's defaults and not A's.)
-    assert.equal(writePlace(placeOf(there, 'halls', 'B'), [A, B]), text);
+    assert.equal(writePlace(placeOf(there, 'arcology', 'B'), [A, B]), text);
     assert.equal(where(there), where(flight), text);
     // (Shown A, nothing is written of it.)
-    assert.ok(!Object.hasOwn(JSON.parse(atob(writePlace(placeOf(flight, 'halls'), [A, B]).slice(1))), 'shown'));
+    assert.ok(!Object.hasOwn(JSON.parse(atob(writePlace(placeOf(flight, 'arcology'), [A, B]).slice(1))), 'shown'));
   }
 });
 
