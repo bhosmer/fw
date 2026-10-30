@@ -1,9 +1,17 @@
-// What the renderer is to draw, decided from where the flight is: which
-// levels, the outer plane (see outerAir), and the camera. The flight knows
-// where we are and which way we face; this, what of it to show.
+// What the renderer is to draw, decided from where the flight is and how the
+// view is shown: which levels, the outer plane (see outerAir), the camera,
+// the view as drawn (makeView) and when it would be drawn differently
+// (viewKey). The flight knows where we are and which way we face; this,
+// what of it to show.
 import { UP } from './flight.js';
 import { gradient } from './air.js';
 import { SLACK } from './shaders.js';
+import { SCHEMES } from './schemes.js';
+
+// Of the levels around us, the most that are drawn.
+export const N_VIEW = 12;
+// The tan of half the field of view, up and down.
+export const FOV_TAN = Math.tan((70 * Math.PI) / 360);
 
 const SHIFT = (25 * Math.PI) / 180; // the most of the pitch that slides the picture rather than tilts it (see camera)
 
@@ -65,4 +73,53 @@ export function outerAir(flight, all) {
   const len = Math.hypot(...g);
   if (!(len > 0)) return null;
   return { level: r.level, dist, normal: g.map((x) => x / len) };
+}
+
+// What is to be drawn, from where the flight is and how it is to be shown:
+// the levels (recs: see visible) and the view the renderer draws them by.
+// s: the canvas's size (w, h) and lodH (see resize in main.js); upscale and
+// snapping (drawn at that fraction of the pixels, or, snapping, all of them
+// and without antialiasing over time); debug and reference (see fw in
+// main.js); scheme, an index into SCHEMES; side, which of two worlds
+// compared is shown (the flight is in it).
+export function makeView(flight, s) {
+  const { pos, space, R } = flight, scheme = SCHEMES[s.scheme];
+  const fogLen = flight.fog * scheme.fog;
+  const maxT = 4 * Math.max(flight.fog, fogLen);
+  const { recs, all } = visible(flight, maxT, N_VIEW);
+  const { fwd, right, up } = camera(flight);
+  const view = {
+    cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
+    tan: FOV_TAN,
+    lodH: s.lodH,
+    scale: flight.scale,
+    fogLen,
+    maxT,
+    fogK: space.fogK * R * scheme.fog,
+    debug: s.debug,
+    reference: s.reference,
+    taa: !s.snapping,
+    // (What fraction of the pixels each way the view is drawn at: see upscale
+    // in main.js.)
+    upscale: s.snapping ? 1 : s.upscale,
+    scheme,
+    outer: outerAir(flight, all),
+    sky: flight.skyHeight(),
+    // (Deep down R^F is Infinity, and none times that no number at all.)
+    sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
+  };
+  return { recs, view };
+}
+
+// What makeView's picture is made from, as text: the same unless the picture
+// would differ, so that it is drawn again only then (see present in
+// main.js). From the same s: where we are and which way we face (of the
+// digits, those that are not the world's default: one filled in as a level
+// is first asked changes nothing); scale and fog to 3 digits (imperceptible
+// settling draws nothing); and the rest of s but snapping (a snapshot is
+// drawn regardless).
+export function viewKey(flight, s) {
+  const { pos } = flight;
+  const own = [...pos.digits].filter(([j, d]) => d.some((x, a) => x !== pos.defaultDigit(j)[a])).sort((a, b) => a[0] - b[0]);
+  return [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), s.w, s.h, s.lodH, s.upscale, s.debug, s.reference, s.scheme, s.side, own].join();
 }

@@ -814,6 +814,56 @@ check('a link whose place cannot be read still opens somewhere', async () => {
   assert(pitch === 0 && [0, 1, 2, 3].some((k) => yaw === (k * Math.PI) / 2), `no facing: faced ${yaw}, ${pitch}`);
 });
 
+// A link changed only in its digits (where we are, far up) is another place,
+// and is drawn, though nothing else in the view's key changes (view.js).
+check('a link changed only in its digits is drawn', async () => {
+  await load('court');
+  const r = await page.eval(`(async () => {
+    fw.renderer.timed = () => [];
+    let n = 0;
+    const draw = fw.renderer.draw.bind(fw.renderer);
+    fw.renderer.draw = (...a) => (n++, draw(...a));
+    let t = performance.now() + 5000;
+    const ticks = (k) => { const n0 = n; for (let i = 0; i < k; i++) fw.tick((t += 1000 / 60)); return n - n0; };
+    ticks(60);
+    const atRest = ticks(5);
+    const state = () => JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch, fw.flight.scale.toPrecision(3), fw.flight.fog.toPrecision(3)]);
+    const was = state();
+    const at = JSON.parse(atob(${JSON.stringify(PLACES.court)}));
+    const d = fw.space.ancestorDigit(-8).slice();
+    d[0] = d[0] > 0 ? d[0] - 1 : d[0] + 1;
+    location.hash = btoa(JSON.stringify({ ...at, digits: [...at.digits, [-8, d]] }));
+    await new Promise((ok) => setTimeout(ok, 100));
+    return { atRest, same: state() === was, drawn: ticks(1), digit: fw.pos.digit(-8).join() === d.join() };
+  })()`);
+  assert(r.atRest === 0 && r.same && r.digit, `not a change of digits alone, at rest: ${JSON.stringify(r)}`);
+  assert(r.drawn === 1, `a link changed only in its digits drew ${r.drawn} frames`);
+});
+
+// N at rest goes somewhere new, and it is drawn there every time, though a
+// first visit is often at the same level, offset and facing as the last
+// (only its digits differ: see viewKey in view.js).
+check('N at rest is drawn somewhere new every time', async () => {
+  await load('start');
+  const drew = await page.eval(`(() => {
+    fw.renderer.timed = () => [];
+    let n = 0;
+    const draw = fw.renderer.draw.bind(fw.renderer);
+    fw.renderer.draw = (...a) => (n++, draw(...a));
+    let t = performance.now() + 5000;
+    const ticks = (k) => { const n0 = n; for (let i = 0; i < k; i++) fw.tick((t += 1000 / 60)); return n - n0; };
+    ticks(60);
+    const drew = [];
+    for (let i = 0; i < 40; i++) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN' }));
+      window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyN' }));
+      drew.push(ticks(20));
+    }
+    return drew;
+  })()`);
+  assert(drew.every((n) => n > 0), `of 40 presses of N at rest, ${drew.filter((n) => !n).length} drew nothing: ${drew}`);
+});
+
 check('reading back what the tour sees raises no warnings', async () => {
   const warnings = [];
   const on = (m) => {

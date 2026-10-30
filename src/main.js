@@ -8,7 +8,7 @@ import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { elsewhere } from './arrival.js';
 import { placeWorld, readPlace, placeOf, writePlace, applyPlace } from './place.js';
-import { visible, outerAir, camera } from './view.js';
+import { camera, makeView, viewKey, N_VIEW, FOV_TAN } from './view.js';
 import { trace, check, checkRays, compareRays } from './debug.js';
 import { Pacing } from './pacing.js';
 
@@ -66,10 +66,6 @@ const labels = [
 const worldLabel = () => (other ? `${side ? 'B' : 'A'}: ${labels[side]}` : labels[0]);
 const R = space.R;
 
-// Of the levels around us, the most that are drawn.
-const N_VIEW = 12;
-
-const FOV_TAN = Math.tan((70 * Math.PI) / 360);
 const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
 
 const canvas = document.getElementById('view');
@@ -108,37 +104,14 @@ let reference = false; // draw with the old ray stepping, to compare
 let scheme = loadScheme(); // index into SCHEMES
 let schemeShown = 0; // when the scheme last changed, to name it for a moment
 
-function viewNow() {
-  const fogLen = flight.fog * SCHEMES[scheme].fog;
-  const maxT = 4 * Math.max(flight.fog, fogLen);
-  const { recs, all } = visible(flight, maxT, N_VIEW);
-  const { fwd, right, up } = camera(flight);
-  const view = {
-    cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
-    tan: FOV_TAN,
-    lodH,
-    scale: flight.scale,
-    fogLen,
-    maxT,
-    fogK: space.fogK * R * SCHEMES[scheme].fog,
-    debug,
-    reference,
-    taa: !snapping,
-    // (What fraction of the pixels each way the view is drawn at: see upscale.)
-    upscale: snapping ? 1 : upscale,
-    scheme: SCHEMES[scheme],
-    outer: outerAir(flight, all),
-    sky: flight.skyHeight(),
-    // (Deep down R^F is Infinity, and none times that no number at all.)
-    sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
-  };
-  return { recs, view };
-}
+// How the view is to be shown, as it now is (see makeView in view.js).
+const showing = () => ({ w: canvas.width, h: canvas.height, lodH, upscale, snapping, debug, reference, scheme, side });
 
+// Draw the view as it now is; what was drawn.
 function draw() {
-  const { recs, view } = viewNow();
-  renderer.draw(recs, view);
-  return recs.length;
+  const made = makeView(flight, showing());
+  renderer.draw(made.recs, made.view);
+  return made;
 }
 
 // Where we are, for the tour: our level, clearance, height above the ground
@@ -152,14 +125,15 @@ const whereNow = () => ({
 });
 
 // The tour's eyes: a sparse picture of distances, a few times a second, read
-// back without holding anything up.
+// back without holding anything up. (drawn: the view as drawn this frame, if
+// it was: nothing has changed since.)
 let lookAt = null, lookedAt = 0;
-function look(now) {
+function look(now, drawn) {
   const got = renderer.seen();
   if (got && lookAt) pilot.see(got, lookAt.basis, lookAt.F, FOV_TAN, lookAt.res, lookAt.stride, whereNow());
   if (renderer.looking || now - lookedAt < 250) return;
   const stride = Math.max(4, Math.round(canvas.width / 100));
-  const { recs, view } = viewNow();
+  const { recs, view } = drawn || makeView(flight, showing());
   if (renderer.look(recs, view, stride)) {
     lookAt = { basis: camera(flight), F: pos.F, res: [canvas.width, canvas.height], stride };
     lookedAt = now;
@@ -305,23 +279,24 @@ if (!loadLocation()) elsewhere(flight, Math.random);
 // drawn at full resolution again, whatever motion took it down to: the
 // history carries on, so the picture sharpens over those frames.
 let shown = '', settled = 0;
+// Returns what was drawn, if anything (see draw).
 function present() {
   resize();
-  const keyNow = () => [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), canvas.width, canvas.height, upscale, debug, reference, scheme, side].join();
-  let key = keyNow();
+  let key = viewKey(flight, showing());
   if (key === shown && upscale < 1) {
     upscale = 1;
-    key = keyNow();
+    key = viewKey(flight, showing());
     shown = key;
     settled = 0;
   }
   if (key === shown) {
-    if (settled >= TAA_N) return false;
+    if (settled >= TAA_N) return null;
     settled++;
   } else settled = 0;
   shown = key;
-  levelsDrawn = draw();
-  return true;
+  const drawn = draw();
+  levelsDrawn = drawn.recs.length;
+  return drawn;
 }
 // (Snapshots draw one frame as it is, without antialiasing over time.)
 let snapping = false;
@@ -329,7 +304,8 @@ let snapping = false;
 let last = performance.now();
 let slow = 0, quick = 0, fps = 0, levelsDrawn = 0, unsaved = 0;
 const pacing = new Pacing(last);
-// (Should a frame fail, say so rather than stop without a word.)
+// A frame of the loop, and the next asked for. (Should a frame fail, say so
+// rather than stop without a word.)
 function frame(now) {
   try {
     tick(now);
@@ -339,12 +315,11 @@ function frame(now) {
     help.classList.remove('hidden');
     throw err;
   }
+  requestAnimationFrame(frame);
 }
+// What a frame of the loop does, at time now (ms).
 function tick(now) {
-  if (!pacing.refresh(now, renderer.timed())) {
-    requestAnimationFrame(frame);
-    return;
-  }
+  if (!pacing.refresh(now, renderer.timed())) return;
   const raw = (now - last) / 1000;
   last = now;
   const dt = Math.min(raw, 0.1);
@@ -366,7 +341,7 @@ function tick(now) {
 
   const drew = present();
   if (drew) document.getElementById('loading')?.remove();
-  if (pilot.on) look(now);
+  if (pilot.on) look(now, drew);
   if (drew && moved && raw < 0.25) {
     // Resolution gives way quickly when frames run long and returns slowly
     // while we move (at rest it is full: see present).
@@ -394,7 +369,6 @@ function tick(now) {
   }
   const sign = pos.F > 0 ? '+' : '';
   hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 || now - flippedAt < 2000 ? `   world: ${worldLabel()}` : other ? `   ${side ? 'B' : 'A'}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}${now - unreadAt < 4000 ? `   the link's place: ${unread}` : ''}`;
-  requestAnimationFrame(frame);
 }
 // Where two worlds are compared, the one not shown drawn once before the
 // first frame: the GPU builds a program's pipeline when first drawing with
@@ -421,6 +395,9 @@ window.fw = {
   },
   renderer,
   flip,
+  // (What a frame of the loop does at time now, ms, without asking for the
+  // next: for driving the app on a script's clock.)
+  tick,
   // (Which world compared is shown: 'A' or 'B'; null if none is compared.)
   get shown() {
     return other ? (side ? 'B' : 'A') : null;
@@ -477,7 +454,7 @@ window.fw = {
     for (let i = 0; i < seconds * 60; i++) {
       if (i % 15 === 0) {
         const stride = Math.max(4, Math.round(canvas.width / 100));
-        const { recs, view } = viewNow();
+        const { recs, view } = makeView(flight, showing());
         renderer.look(recs, view, stride);
         // (A fence's state only changes between tasks. However long the GPU
         // takes, give it up to three seconds.)
@@ -538,7 +515,7 @@ window.fw = {
     resize();
     flight.sense();
     const ms = await renderer.time(() => {
-      for (let i = 0; i < n; i++) levelsDrawn = draw();
+      for (let i = 0; i < n; i++) levelsDrawn = draw().recs.length;
     });
     return ms / n;
   },
