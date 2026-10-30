@@ -239,5 +239,16 @@ test('a link sets how we fly, apart from the world', async () => {
   for (const flight of [{ speed: 0 }, { speed: -1 }, { speed: Infinity }, { ease: -0.5 }, { ease: Infinity }, { ease: NaN }]) assert.throws(() => makeSettings({ flight }), /definition: flight\.(speed|ease) is a number/, JSON.stringify(flight));
   assert.equal(makeSettings({ flight: { ease: 0 } }).flight.ease, 0);
   assert.throws(() => makeSettings(fromLink('?flight.speed=1e999').settings), /flight\.speed is a number more than 0, not Infinity/);
+  // (How frames are drawn, too: view.history, a word.)
+  assert.deepEqual(fromLink('?arcology&vs.view.history=range').vs.settings, { view: { history: 'range' } });
+  assert.deepEqual(makeSettings(fromLink('?view.history=range').settings).view, { history: 'range' });
+  assert.equal(makeSettings(undefined).view.history, 'depth');
+  assert.throws(() => makeSettings({ view: { history: 'fog' } }), /view\.history is depth or range, not fog/);
+  assert.throws(() => makeSettings({ view: { nope: 1 } }), /there is no view\.nope/);
+  assert.deepEqual(fromLink('?arcology&building.edge=cornice').changes, { building: { edge: 'cornice' } });
+  assert.throws(() => fromLink('?arcology&town.density=[1,2'), /not one/);
+  // (A word where a number belongs is refused as one; true and false are still JSON.)
+  assert.throws(() => makeSettings(fromLink('?flight.speed=fast').settings), /is a number, not "fast"/);
+  assert.deepEqual(fromLink('?halls&a=true&b=false&c=null').changes, { a: true, b: false, c: null });
   for (const name of WORLDS) for (const part of Object.keys(SETTINGS)) await assert.rejects(() => makeWorld(name, { [part]: {} }), new RegExp(`there is no ${part}`), `${name} has a part named ${part}`);
 });

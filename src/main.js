@@ -26,9 +26,10 @@ function cannot(err) {
 // fromLink in worlds.js), or that the place in a link is in (one from
 // before there were others is in the halls), or else the one last visited;
 // made from its definition with the link's changes; with the link's
-// settings (how we fly: see fromLink). And, where the link names one to
-// compare it with (&vs=...), that one too (other), on the same lattice: V
-// flips between them. (It may be the same world, with other settings.)
+// settings (how we fly, and how frames are drawn: see fromLink). And, where
+// the link names one to compare it with (&vs=...), that one too (other), on
+// the same lattice: V flips between them. (It may be the same world, with
+// other settings.)
 const WORLD_KEY = 'fw.world';
 let world, other = null, link;
 try {
@@ -56,7 +57,7 @@ try {
     // with its program (review123).)
     const besides = (s) => JSON.stringify([Object.entries(s).filter(([k, v]) => typeof v !== 'function' && !['name', 'glsl', 'tables', 'volume'].includes(k)), [-4, -3, -2, -1, 0, 1, 2, 3, 4].map((l) => s.palette(l))]);
     if (other.space.glsl === world.space.glsl && besides(other.space) === besides(world.space)) {
-      if (JSON.stringify(other.settings) === JSON.stringify(world.settings)) throw new Error(`vs: ${link.vs.name} is the same world as ${name}, as the link changes them, flown the same way`);
+      if (JSON.stringify(other.settings) === JSON.stringify(world.settings)) throw new Error(`vs: ${link.vs.name} is the same world as ${name}, as the link changes them, with the same settings`);
       other.space = world.space;
     }
   }
@@ -93,6 +94,7 @@ const showing = {
   reference: false, // draw with the old ray stepping, to compare
   scheme: loadScheme(),
   side: 0,
+  history: world.settings.view.history, // (the side shown's view.history: set again at each flip)
 };
 // When the scheme last changed, the worlds compared were last flipped, and
 // the link's place was found unreadable (and why): the legend names each for
@@ -210,8 +212,8 @@ function loadLocation() {
 // legend. (The old way of stepping rays, to compare by eye: fw.reference.)
 
 // Off to the next world, somewhere in it as on a first visit (as it is: a
-// variant, and a world compared, are left behind with the link; how we fly,
-// its settings, comes along).
+// variant, and a world compared, are left behind with the link; its
+// settings, how we fly and how frames are drawn, come along).
 function nextWorld() {
   try {
     localStorage.setItem(WORLD_KEY, WORLDS[(WORLDS.indexOf(world.base) + 1) % WORLDS.length]);
@@ -225,9 +227,9 @@ function nextWorld() {
 }
 
 // The other world compared, where we are, as we are (see Flight.setSpace),
-// flown as its link has it (its settings): nothing else changes, so that what
-// differs is the world, or how we fly through it. (The tour, if on, starts
-// afresh; what it was about to see was of the other.)
+// with its link's settings (how we fly, and how frames are drawn): nothing
+// else changes, so that what differs is the world, or its settings. (The
+// tour, if on, starts afresh; what it was about to see was of the other.)
 function flip() {
   if (!other) return;
   showing.side = 1 - showing.side;
@@ -235,6 +237,7 @@ function flip() {
   renderer.setSpace(space);
   flight.setSpace(space);
   flight.settings = settings.flight;
+  showing.history = settings.view.history;
   lookAt = null;
   if (pilot.on) pilot.start(pos.F);
   said.world = performance.now();

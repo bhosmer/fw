@@ -7,6 +7,22 @@ import { UP } from './flight.js';
 import { gradient } from './air.js';
 import { SLACK } from './shaders.js';
 import { SCHEMES } from './schemes.js';
+import { define, frozen } from './util.js';
+
+// How frames are drawn, as a link may set it (?view.history=range: see
+// fromLink in worlds.js), at its defaults:
+//   history  which of the frame before's pixels moving temporal
+//            antialiasing keeps (see TAAU_FRAG in frame.js): depth, those
+//            that saw about this pixel's own distance; range, those that saw
+//            a distance among the samples around it, or the sky where one of
+//            them did (steadier far detail in motion, ledger B25)
+export const VIEW = frozen({ history: 'depth' });
+// Settings for the view, from VIEW with changes, checked.
+export function viewSettings(set) {
+  const s = define(VIEW, set, 'view.');
+  if (!['depth', 'range'].includes(s.history)) throw new Error(`definition: view.history is depth or range, not ${s.history}`);
+  return s;
+}
 
 // Of the levels around us, the most that are drawn.
 export const N_VIEW = 12;
@@ -82,7 +98,8 @@ export function outerAir(flight, all) {
 // snapping (drawn at that fraction of the pixels, or, snapping, all of them
 // and without antialiasing over time); debug and reference (see fw in
 // main.js); scheme, an index into SCHEMES; side, which of two worlds
-// compared is shown (the flight is in it).
+// compared is shown (the flight is in it); history, the view.history setting
+// (see VIEW).
 export function makeView(flight, s) {
   const { pos, space, R } = flight, scheme = SCHEMES[s.scheme];
   const fogLen = flight.fog * scheme.fog;
@@ -104,6 +121,7 @@ export function makeView(flight, s) {
     // in main.js.)
     upscale: s.snapping ? 1 : s.upscale,
     scheme,
+    history: s.history,
     outer: outerAir(flight, all),
     sky: flight.skyHeight(),
     // (Deep down R^F is Infinity, and none times that no number at all.)
@@ -122,5 +140,5 @@ export function makeView(flight, s) {
 export function viewKey(flight, s) {
   const { pos } = flight;
   const own = [...pos.digits].filter(([j, d]) => d.some((x, a) => x !== pos.defaultDigit(j)[a])).sort((a, b) => a[0] - b[0]);
-  return [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), s.w, s.h, s.lodH, s.upscale, s.debug, s.reference, s.scheme, s.side, own].join();
+  return [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), s.w, s.h, s.lodH, s.upscale, s.debug, s.reference, s.scheme, s.side, s.history, own].join();
 }

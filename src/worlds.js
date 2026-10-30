@@ -5,6 +5,7 @@
 // (see fromLink).
 import { HEXAHEDRON } from './spaces/hexahedron.js';
 import { FLIGHT, flightSettings } from './flight.js';
+import { VIEW, viewSettings } from './view.js';
 import { byPaths, merge, define, frozen } from './util.js';
 
 // (Each with the changes set, or as it is.)
@@ -38,12 +39,14 @@ export async function makeWorld(name, changes) {
 }
 
 // What a link's query names: ?variant&part.of.it=value&... (each value as
-// JSON: town.density=[10,30,60]): its world's name (or none), and the
+// JSON: town.density=[10,30,60]; or a word alone, as text:
+// view.history=range): its world's name (or none), and the
 // changes, as define takes them. Passed over: a number alone (as makes a
 // link new), and what is added to links as they are passed on (utm_..., and
 // the like). A link with changes names its world (the parts differ).
-// Settings, how we fly through it (flight.ease=2: see FLIGHT in flight.js),
-// are apart from the world's changes (settings), and need no world named:
+// Settings, how we fly through it and how its frames are drawn (flight.ease=2:
+// see FLIGHT in flight.js; view.history=range: see VIEW in view.js), are
+// apart from the world's changes (settings), and need no world named:
 // they are the same for every one, and go with us to the next world (see
 // nextWorld in main.js). (So no world has a part of that name: the tests
 // see to it.)
@@ -52,13 +55,13 @@ export async function makeWorld(name, changes) {
 // top (vs.part.of.it=value); it must differ from the first, if only in its
 // settings.
 export const ADDED = /^(utm_\w+|fbclid|gclid|msclkid|mc_\w+|ref)$/;
-export const SETTINGS = frozen({ flight: FLIGHT });
+export const SETTINGS = frozen({ flight: FLIGHT, view: VIEW });
 // Whether a link's path (part.of.it, or vs.part.of.it) is of a setting.
 export const isSetting = (path) => Object.hasOwn(SETTINGS, path.replace(/^vs\./, '').split('.')[0]);
 // Settings, from a link's (as fromLink gives them), checked and whole.
 export function makeSettings(set) {
   const s = define(SETTINGS, set);
-  return s === SETTINGS ? s : { ...s, flight: flightSettings(s.flight) };
+  return s === SETTINGS ? s : { ...s, flight: flightSettings(s.flight), view: viewSettings(s.view) };
 }
 export function fromLink(search) {
   const parts = search.replace(/^\?/, '').split('&').filter(Boolean).map((x) => {
@@ -84,9 +87,9 @@ export function fromLink(search) {
     const into = isSetting(p) ? (theirsToo ? theirSettings : settings) : theirsToo ? theirs : changes;
     if (into.has(p)) throw new Error(`${path} is set twice`);
     try {
-      into.set(p, JSON.parse(text));
+      into.set(p, /^[A-Za-z][\w-]*$/.test(text) && !['true', 'false', 'null'].includes(text) ? text : JSON.parse(text));
     } catch {
-      throw new Error(`${path}=${text}: the value is not one (a number, true or false, "text", or [a, list])`);
+      throw new Error(`${path}=${text}: the value is not one (a number, true or false, a word, "text", or [a, list])`);
     }
   }
   if ((changes.size || vs !== null || theirs.size || theirSettings.size) && !names.length) throw new Error('a link with changes, or a world to compare with, names its world (?arcology&..., ?halls&...)');

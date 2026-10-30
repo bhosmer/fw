@@ -145,6 +145,7 @@ export class Frame {
     gl.uniform1i(q.u.uHave, D ? 1 : 0);
     gl.uniform1i(q.u.uStill, still ? 1 : 0);
     gl.uniform1i(q.u.uRestart, still && this.still === 1 ? 1 : 0);
+    gl.uniform1i(q.u.uRange, view.history === 'range' ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
     for (const name of ['uCur', 'uHist', 'uHistW']) bindSampler(gl, q, name, null);
@@ -269,7 +270,9 @@ void main() {
 // the point its ray met, D further along (the camera's move since, in view
 // units), seen through the previous camera (uPrev); kept within the range of
 // the frame's samples around it, and dropped where it saw something else
-// (disocclusion) or was off screen.
+// (disocclusion) or was off screen. What counts as something else (uRange:
+// see VIEW in view.js): another distance than this pixel's (depth), or one
+// outside those of the samples around it (range).
 export const TAAU_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 uniform sampler2D uCur, uHist, uHistW;
@@ -277,7 +280,7 @@ uniform vec2 uRes, uRender, uJit;
 uniform mat3 uCam, uPrev;
 uniform vec3 uD;
 uniform float uTan, uLog, uCap;
-uniform bool uHave, uStill, uRestart;
+uniform bool uHave, uStill, uRestart, uRange;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outW;
 
@@ -288,9 +291,13 @@ void main() {
   vec2 x = gl_FragCoord.xy, sc = uRender / uRes, y = x * sc;
   ivec2 at = ivec2(x), k0 = ivec2(floor(y - uJit)), top = ivec2(uRender) - 1;
   // The samples around: in this pixel (box), and all, weighed by nearness
-  // (wide, for want of history); their range, for what history may take.
+  // (wide, for want of history); their range, for what history may take;
+  // and the range of their distances, and whether any saw the sky (dlo,
+  // dhi, sky: for range, below).
   vec3 lo = vec3(1e9), hi = vec3(-1e9), cb = vec3(0.0), cw = vec3(0.0);
   float wb = 0.0, ww = 0.0, near = 1e9, dep = 1e4, sw = max(0.5 / min(sc.x, sc.y), 0.5);
+  float dlo = 1e9, dhi = -1e9;
+  bool sky = false;
   for (int j = -1; j <= 1; j++)
     for (int i = -1; i <= 1; i++) {
       ivec2 k = k0 + ivec2(i, j);
@@ -300,6 +307,8 @@ void main() {
       vec2 d = (vec2(k) + 0.5 + uJit) / sc - x;
       vec3 yc = ycocg(c.rgb);
       lo = min(lo, yc); hi = max(hi, yc);
+      if (c.a > 1e3) sky = true;
+      else { dlo = min(dlo, c.a); dhi = max(dhi, c.a); }
       if (abs(d.x) < 0.5 && abs(d.y) < 0.5) { cb += c.rgb; wb += 1.0; }
       float w = exp(-dot(d, d) / (2.0 * sw * sw));
       cw += w * c.rgb; ww += w;
@@ -338,11 +347,23 @@ void main() {
   // pixels must have seen this point. In the frame before's units: they
   // change with the level we are at.)
   float was = far ? 1e4 : log2(length(q)) + uLog;
+  // (range: one of them saw a distance among those the samples around this
+  // pixel see now, each moved as this point's has (by how far we came, and
+  // the change of units; where this pixel's own sample saw the sky, by the
+  // units alone), give or take as much as depth allows; or saw the sky
+  // where one of them does. So a surface seen at a slant, or the near side
+  // of an edge that holds still, keeps its history as we move. A point just
+  // uncovered keeps what covered it only while that is still among the
+  // samples around it: within a render pixel of a moving edge (the sky's,
+  // leading or trailing, too), and no further than the colour clamp lets
+  // it.)
+  float shift = far ? uLog : was - dep;
   ivec2 c = ivec2(floor(pp - 0.5));
   bool same = false;
   for (int k = 0; k < 4; k++) {
     float a = texelFetch(uHist, clamp(c + ivec2(k & 1, k >> 1), ivec2(0), ivec2(uRes) - 1), 0).a;
-    same = same || (far ? a > 1e3 : a < 1e3 && abs(a - was) < 0.07);
+    if (uRange) same = same || (a > 1e3 ? sky : dlo < 1e8 && a > dlo + shift - 0.07 && a < dhi + shift + 0.07);
+    else same = same || (far ? a > 1e3 : a < 1e3 && abs(a - was) < 0.07);
   }
   if (!same) return;
   vec3 kept = rgb(clamp(ycocg(h.rgb), lo, hi));

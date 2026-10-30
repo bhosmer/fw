@@ -513,11 +513,57 @@ check('a link sets how we fly, and two ways of flying are compared', async () =>
   }
   const next = await page.eval(`({ search: location.search, world: fw.space.name, settings: { ...fw.flight.settings }, shown: fw.shown })`);
   assert(next.search === '?flight.ease=2' && next.world === 'halls' && next.settings.ease === 2 && next.shown === null, `the next world: ${JSON.stringify(next)}`);
-  for (const [link, said] of [['arcology&flight.nope=1', /there is no flight\.nope/], ['halls&flight.speed=-1', /flight\.speed is a number more than 0/], ['arcology&vs=arcology&vs.flight.ease=1', /the same world as arcology, as the link changes them, flown the same way/]]) {
+  for (const [link, said] of [['arcology&flight.nope=1', /there is no flight\.nope/], ['halls&flight.speed=-1', /flight\.speed is a number more than 0/], ['arcology&vs=arcology&vs.flight.ease=1', /the same world as arcology, as the link changes them, with the same settings/]]) {
     await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra', false, 'halls'));
     const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
     assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
   }
+});
+
+// How frames are drawn, by link (view.history: see VIEW in view.js): the
+// first world's way, then, flipped, the other's, each handed to the renderer
+// as the frame's; one program for both.
+check('a link sets how frames are drawn, and V flips it', async () => {
+  await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=range#${PLACES.court}`, setup('alhambra', false, 'halls'));
+  const r = await page.eval(`(() => {
+    fw.renderer.timed = () => [];
+    let drawn = [];
+    const draw = fw.renderer.draw.bind(fw.renderer);
+    fw.renderer.draw = (recs, view) => (drawn.push(view.history), draw(recs, view));
+    let t = 2 ** 20;
+    fw.tick((t += 1000 / 60));
+    const a = drawn.at(-1), programs = fw.renderer.entries.size;
+    fw.flip();
+    fw.tick((t += 1000 / 60));
+    const b = drawn.at(-1);
+    fw.flip();
+    fw.tick((t += 1000 / 60));
+    return { a, b, back: drawn.at(-1), programs, label: document.querySelector('.world').textContent };
+  })()`);
+  assert(!page.errors.length, page.errors.join('\n'));
+  assert(r.a === 'depth' && r.b === 'range' && r.back === 'depth' && r.programs === 1, `view.history drawn: ${JSON.stringify(r)}`);
+  // (And it does something: the gathering program has it, and moving frames
+  // drawn the two ways differ.)
+  const moving = async (flip) => {
+    await page.goto(`${base}index.html?${++loads}&halls&vs.view.history=range#${PLACES.court}`, setup('alhambra', false, 'halls'));
+    await page.eval(PAGE_HELPERS);
+    return page.eval(`(() => {
+      if (${flip}) fw.flip();
+      fw.renderer.reset();
+      fw.upscale = 0.5;
+      let px;
+      for (let i = 0; i < 12; i++) (fw.fly(1 / 60, { f: 1, r: 0.5 }), (px = fw.snap(160, 90, true)));
+      let h = 2166136261;
+      for (let i = 0; i < px.length; i++) h = Math.imul(h ^ px[i], 16777619) >>> 0;
+      return { h, has: fw.renderer.frame.taau.u.uRange != null };
+    })()`);
+  };
+  const [depth, range] = [await moving(false), await moving(true)];
+  assert(depth.has, 'the gathering program has no uRange');
+  assert(depth.h !== range.h, 'moving frames drawn with view.history range and depth are the same');
+  await page.goto(`${base}index.html?${++loads}&halls&view.history=fog`, setup('alhambra', false, 'halls'));
+  const error = await page.eval(`document.getElementById('help').textContent`);
+  assert(/view\.history is depth or range, not fog/.test(error), `view.history=fog: the page said ${JSON.stringify(error)}`);
 });
 
 // A flip at rest, drawn as the app draws (not by a snapshot, which senses
