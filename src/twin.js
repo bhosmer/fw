@@ -312,26 +312,8 @@ export function check(lang, e, names, where) {
 export const reask = (js, d, ask) =>
   js ? [`through(ray, ${d}, () => ${ask});`] : [`if (ray && ${d} + gO <= 0.0) {`, '  gRay = true;', `  ${ask};`, '  gRay = false;', '  if (gX > reach) { reach = gX; nrm = gN; }', '}'];
 
-// What the cell writers (the halls' pieces, the arcology's cityPieces)
-// write alike, in GLSL or JavaScript (js): a function's opening line, from
-// its parameters' types; a declaration (changing: one that changes after);
-// a counted loop; a number, as a float (in JavaScript exactly, -0 too);
-// a vector of floats as a function's argument (in JavaScript, three
-// arguments: so only in a call) and one of whole numbers (ivec3, ivec2:
-// an array); lines
-// for the shader alone (fade: its fading with distance; the JavaScript's
-// world is as it is, see pieces.js); lines indented; how far the ray goes
-// (REACH: the inout reach in GLSL, the ray's object's in JavaScript), and
-// where a ray's piece of air ends taken for it, with its normal (take: if
-// it compares with the reach as asked; keep: if further); an axis's normal and a vector as a call's
-// arguments (axis, arg3: in JavaScript, three, each signed as GLSL's -EX
-// is, -0 too); the point along slant k, its whole part into n and the rest
-// (slant: in GLSL slantAt, setting n as it gives the rest; in JavaScript
-// the slants as setPoint sets them, SL, the whole part a statement of its
-// own); vectors added and taken away (vadd, vsub); a struct, declared and
-// made (struct: in JavaScript an object); a
-// piece's distance (D), no piece (NOTHING), and the ray's state
-// (RAY: whether there is one; X: how far it goes in the piece).
+// What the cell writers (the halls' pieces, the arcology's) write alike,
+// in GLSL or JavaScript (js): each helper says what it writes.
 // (state: the name the JavaScript knows the pieces' state by, S unless
 // that is taken.)
 export function writer(js, state = 'S') {
@@ -347,19 +329,38 @@ export function writer(js, state = 'S') {
     return e;
   };
   const take = (cmp) => (js ? `if (${state}.x ${cmp} ray.reach) (ray.reach = ${state}.x), (ray.nx = ${state}.nx), (ray.ny = ${state}.ny), (ray.nz = ${state}.nz);` : `if (gX ${cmp} reach) { reach = gX; nrm = gN; }`);
+  // (Lines for the shader alone.)
+  const shaderOnly = (...lines) => (js ? [] : lines);
   return {
+    // A function's opening line, from its parameters' types; a declaration
+    // (changing: one that changes after); a counted loop.
     fn: (type, name, params) => (js ? `function ${name}(${params.map((p) => p.split(' ').pop()).join(', ')}) {` : `${type} ${name}(${params.join(', ')}) {`),
     decl: (type, rest, changing = false) => `${js ? (changing ? 'let' : 'const') : type} ${rest};`,
     loop: (v, from, to) => `for (${js ? 'let' : 'int'} ${v} = ${from}; ${v} < ${to}; ${v}++) {`,
+    // A number, as a float (in JavaScript exactly, -0 too).
     num: (x) => (js ? (Object.is(x, -0) ? '-0' : String(x)) : glf(x)),
+    // A vector of floats as a function's argument (in JavaScript, three
+    // arguments: so only in a call); one of whole numbers (an array in
+    // JavaScript); one of whole numbers as floats (in JavaScript, as it is).
     vec3Arg: (xs) => (js ? xs.join(', ') : `vec3(${xs.join(', ')})`),
     ivec3: (xs) => (js ? `[${xs.join(', ')}]` : `ivec3(${xs.join(', ')})`),
     ivec2: (xs) => (js ? `[${xs.join(', ')}]` : `ivec2(${xs.join(', ')})`),
-    // (Vectors added and taken away: in JavaScript by AS_GLSL_VEC's add3,
-    // sub3; in GLSL the right one in parentheses where it is a sum.)
+    vec3Of: (e) => (js ? e : `vec3(${e})`),
+    // Vectors added and taken away: in JavaScript by AS_GLSL_VEC's add3,
+    // sub3 (whole numbers) and addf3 (floats: vaddf); in GLSL the right one
+    // in parentheses where it is a sum.
     vadd: (a, b) => (js ? `add3(${a}, ${b})` : `${a} + ${term(b)}`),
+    vaddf: (a, b) => (js ? `addf3(${a}, ${b})` : `${a} + ${term(b)}`),
     vsub: (a, b) => (js ? `sub3(${a}, ${b})` : `${a} - ${term(b)}`),
-    fade: (...lines) => (js ? [] : lines),
+    // Lines and terms for the shader alone: its fading with distance (fade,
+    // faded: the JavaScript's world is as it is, see pieces.js), and the
+    // rest, such as gRay's saving and restoring (shaderOnly; fade is the
+    // same, named for what it writes).
+    fade: shaderOnly,
+    faded: (term) => (js ? '' : term),
+    shaderOnly,
+    // An axis's normal and a vector as a call's arguments (in JavaScript,
+    // three, each signed as GLSL's -EX is, -0 too); lines indented.
     axis: (a, sign = '') => (js ? [0, 1, 2].map((b) => `${sign}${b === a ? 1 : 0}`).join(', ') : `${sign}${AXES[a]}`),
     arg3: (v, sign = '') => (js ? [0, 1, 2].map((a) => `${sign}${v}[${a}]`).join(', ') : `${sign}${v}`),
     indent: (lines, by = '  ') => lines.map((l) => by + l),
@@ -377,10 +378,23 @@ export function writer(js, state = 'S') {
         },
       };
     },
+    // The point along slant k, its whole part into n and the rest: in GLSL
+    // slantAt, setting n as it gives the rest; in JavaScript the slants as
+    // setPoint sets them, SL, the whole part a statement of its own.
     slant: (k, n) => (js ? { whole: [`${n} = SL.Ls[${k}];`], rest: `SL.Fs[${k}]` } : { whole: [], rest: `slantAt(${k}, ${n})` }),
+    // The ray aimed afresh, where the shader starts reach and nrm (in
+    // JavaScript P.aim, if there is a ray); how far it goes (REACH: the
+    // inout reach in GLSL, the ray's object's in JavaScript; READ_REACH: the
+    // same with or without a ray, -1 without one, as the shader's is once
+    // aimed); where a piece of its air ends taken for it, with its normal
+    // (take: if it compares with the reach as asked; keep: if further).
+    aim: (by = '') => (js ? [`${by}if (ray) aim(ray);`] : [`${by}reach = -1.0;`, `${by}nrm = vec3(0.0);`]),
     REACH: js ? 'ray.reach' : 'reach',
+    READ_REACH: js ? '(ray ? ray.reach : -1.0)' : 'reach',
     take,
     keep: take('>'),
+    // A piece's distance (D), no piece (NOTHING), and the ray's state (RAY:
+    // whether there is one; X: how far it goes in the piece).
     D: js ? `${state}.d` : 'gD',
     NOTHING: js ? 'NONE' : '1e9',
     RAY: js ? `${state}.ray` : 'gRay',
@@ -391,12 +405,15 @@ export function writer(js, state = 'S') {
 // has them.)
 export const AS_GLSL = 'const float = (x) => x, abs = Math.abs, int = (x) => x | 0, uint = (x) => x >>> 0, ceil = Math.ceil;';
 // (And GLSL's vectors' functions, as the JavaScript they write asks them:
-// ivec3, uvec4 made from numbers (one, or each); add3, sub3 (see vadd,
-// vsub); any, lessThan, greaterThanEqual, part by part. The rule: a shim
-// only for a GLSL builtin called as a function, and exact on arrays and
-// numbers; operators, swizzles and conversions go through the writer.)
+// ivec3, uvec4 made from numbers (one, or each); add3, sub3, addf3 (see
+// vadd, vsub, vaddf); any, lessThan, greaterThanEqual, part by part. The
+// rule: a shim only for a GLSL builtin called as a function, and exact on
+// arrays and numbers; operators, swizzles and conversions go through the
+// writer. A shim asked with whole numbers and with floats at once runs
+// slower for both (its call becomes polymorphic): so floats are added by
+// addf3, not add3.)
 export const AS_GLSL_VEC =
-  "const num = (x) => { if (typeof x !== 'number') throw new Error('a vector from ' + typeof x + ', not numbers'); return x; }, ivec3 = (x, y = x, z = x) => [num(x), num(y), num(z)], uvec4 = (x, y = x, z = x, w = x) => [num(x), num(y), num(z), num(w)], add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], any = (b) => b.some((x) => x), lessThan = (a, b) => a.map((x, i) => x < b[i]), greaterThanEqual = (a, b) => a.map((x, i) => x >= b[i]);";
+  "const num = (x) => { if (typeof x !== 'number') throw new Error('a vector from ' + typeof x + ', not numbers'); return x; }, ivec3 = (x, y = x, z = x) => [num(x), num(y), num(z)], uvec4 = (x, y = x, z = x, w = x) => [num(x), num(y), num(z), num(w)], add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], addf3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], any = (b) => b.some((x) => x), lessThan = (a, b) => a.map((x, i) => x < b[i]), greaterThanEqual = (a, b) => a.map((x, i) => x >= b[i]);";
 // Their text in JavaScript, where vectors are arrays: each component of
 // the names given, and of any element of a table (L.x, SLO[k].y, GUP[k].w),
 // as an element (L[0], SLO[k][1], GUP[k][3]).

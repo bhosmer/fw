@@ -396,7 +396,7 @@ function families(spec) {
 function pieces(js, levels, salt) {
   // (An expression (checked: see families), in the language.)
   const e = (x) => (js || typeof x === 'number' ? String(x) : twin.glsl(LANG, x));
-  const { fn, decl, loop, num, D, NOTHING } = twin.writer(js);
+  const { fn, decl, loop, num, aim, D, NOTHING } = twin.writer(js);
   // (The kind the hash's number t picks: for each kind, the lines give(kind)
   // writes, one kind's only; none: what is returned instead, below the first
   // kind's share, when that kind is nothing.)
@@ -555,7 +555,7 @@ function pieces(js, levels, salt) {
   // (In GLSL, the cell asks its pieces with gRay clear but where it says,
   // and gives it back as it was: see hallsCell below.)
   out.push(js ? 'function hallsAir(L, f, id, seed, dg, level, rule, ray) {' : 'float hallsCellIn(ivec3 L, vec3 f, ivec3 id, uint seed, int level, bool ray, out float reach, out vec3 nrm) {');
-  out.push(...(js ? ["if (!Number.isInteger(level)) throw new Error('halls: a cell asked at no level');", 'at(L, f, dg);', 'if (ray) aim(ray);'] : ['reach = -1.0;', 'nrm = vec3(0.0);']).map((l) => '  ' + l));
+  out.push(...(js ? ["if (!Number.isInteger(level)) throw new Error('halls: a cell asked at no level');", 'at(L, f, dg);'] : []).map((l) => '  ' + l), ...aim('  '));
   out.push(
     ...[
       decl('bool', `here = ${hasRoom('id')}`),
