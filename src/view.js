@@ -1,9 +1,22 @@
 // What the renderer is to draw, decided from where the flight is: which
-// levels, and the outer plane (see outerAir). The flight knows where we are;
-// this, what of it to show.
+// levels, the outer plane (see outerAir), and the camera. The flight knows
+// where we are and which way we face; this, what of it to show.
 import { UP } from './flight.js';
 import { gradient } from './air.js';
 import { SLACK } from './shaders.js';
+
+const SHIFT = (25 * Math.PI) / 180; // the most of the pitch that slides the picture rather than tilts it (see camera)
+
+// How the screen maps to rays, facing as the flight does: the ray through
+// (x, y) (tan of the half field of view at the screen's edge) goes along
+// fwd + x right + y up. As a shift lens: near level the picture plane stays
+// upright and slides (fwd is not then square to it), so that what is
+// upright stays so; looking further up or down, more and more of the pitch
+// tilts it instead, smoothly (the slide never more than SHIFT).
+export function camera(flight) {
+  const shift = SHIFT * Math.tanh(flight.pitch / SHIFT), { fwd, right, up } = flight.basis(flight.pitch - shift);
+  return { fwd: fwd.map((x, a) => x + Math.tan(shift) * up[a]), right, up };
+}
 
 // The levels to draw, seen out to maxT, at most n of them, each with how far
 // away its nearest air is (near), from where we are now (which may be a step

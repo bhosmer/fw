@@ -61,13 +61,18 @@ export function builtClearance(levels, air, finest = Infinity) {
   return most;
 }
 
+export const PITCH_MAX = 1.55; // the furthest up or down we can face
+
 export class Flight {
-  // controls: which way we face (yaw, pitch), and how much faster than usual
-  // to go (boost()).
-  constructor(space, controls) {
+  // settings: how it flies, as a link may set it (none yet).
+  constructor(space, settings = {}) {
     this.space = space;
     this.R = space.R;
-    this.controls = controls;
+    this.settings = settings;
+    // Which way we face: yaw, turned right from looking along -z; pitch, up
+    // from level (turned, no further either way than PITCH_MAX).
+    this.yaw = 0;
+    this.pitch = 0;
     this.pos = new Position(this.R, space.ancestorDigit, space.start, space.slants ?? []);
     this.here = []; // the levels around us, as sense() last found them
     this.sensed = []; // per level: the clearance it alone gives us
@@ -105,6 +110,22 @@ export class Flight {
     this.space = space;
     this.pos.defaultDigit = space.ancestorDigit;
     this.pos.slants = space.slants ?? [];
+  }
+
+  // Turn by dyaw and dpitch (radians: right and up).
+  turn(dyaw, dpitch) {
+    this.yaw += dyaw;
+    this.pitch = Math.min(PITCH_MAX, Math.max(-PITCH_MAX, this.pitch + dpitch));
+  }
+
+  // The way we face (fwd), and right and up of it, as if pitched by pitch.
+  basis(pitch = this.pitch) {
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const fwd = [sy * cp, sp, -cy * cp];
+    const right = [cy, 0, sy];
+    const up = [-sy * sp, cp, cy * sp];
+    return { fwd, right, up };
   }
 
   // One level's air distance at the point v from the camera (see airAt in
@@ -351,18 +372,18 @@ export class Flight {
     this.lastMove = delta;
     const { trail } = this;
     trail.length = this.travelled;
-    trail.push({ delta, F: this.pos.F, dt, yaw: this.controls.yaw, pitch: this.controls.pitch });
+    trail.push({ delta, F: this.pos.F, dt, yaw: this.yaw, pitch: this.pitch });
     if (trail.length > TRAIL_MAX) trail.splice(0, TRAIL_MAX / 10);
     this.travelled = trail.length;
     return len;
   }
 
   // Fly dt seconds along the trail, backwards (way = -1) or forwards again
-  // (way = 1), faster than it was flown. The view turns to face the way it
-  // did then, eased so that it never snaps.
-  retrace(dt, way) {
-    const { trail, pos, controls, R } = this;
-    let budget = dt * 2.5 * controls.boost();
+  // (way = 1), faster than it was flown (boost times faster again). The view
+  // turns to face the way it did then, eased so that it never snaps.
+  retrace(dt, way, boost = 1) {
+    const { trail, pos, R } = this;
+    let budget = dt * 2.5 * boost;
     let len = 0;
     let facing = null;
     while (budget > 0 && (way < 0 ? this.travelled > 0 : this.travelled < trail.length)) {
@@ -378,9 +399,9 @@ export class Flight {
     facing ??= trail[Math.max(0, Math.min(trail.length - 1, way < 0 ? this.travelled : this.travelled - 1))];
     if (facing) {
       const ease = 1 - Math.exp(-dt / 0.15);
-      const turn = Math.atan2(Math.sin(facing.yaw - controls.yaw), Math.cos(facing.yaw - controls.yaw));
-      controls.yaw += turn * ease;
-      controls.pitch += (facing.pitch - controls.pitch) * ease;
+      const turn = Math.atan2(Math.sin(facing.yaw - this.yaw), Math.cos(facing.yaw - this.yaw));
+      this.yaw += turn * ease;
+      this.pitch += (facing.pitch - this.pitch) * ease;
     }
     this.sense();
     this.settle(dt);

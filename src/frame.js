@@ -326,7 +326,7 @@ void main() {
   vec3 rd = normalize(uCam * vec3(uv * uTan, -1.0));
   bool far = dep > 1e3;
   vec3 q = far ? rd : rd * exp2(dep) + uD;
-  vec3 v = inverse(uPrev) * q; // (not square, as a shift lens: see Controls.camera)
+  vec3 v = inverse(uPrev) * q; // (not square, as a shift lens: see camera in view.js)
   if (v.z >= 0.0) return;
   vec2 pv = v.xy / (-v.z * uTan);
   vec2 pp = (pv * uRes.y + uRes) * 0.5;

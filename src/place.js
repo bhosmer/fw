@@ -10,13 +10,13 @@
 //   digits       of the position's digits, [j, [x, y, z]] for those (j <= F)
 //                that are not what they would be anyway
 //   yaw, pitch   which way we face (the pitch no further up or down than
-//                we can face: see Controls)
+//                we can face: see Flight.turn)
 //   shown        'B' where two worlds are compared and the second is shown
 //
 // It is read here and written here, and a place is checked whole before any
 // of it is applied: one that cannot be read is no place at all.
 import { ALMOST_ONE } from './position.js';
-import { PITCH_MAX } from './controls.js';
+import { PITCH_MAX } from './flight.js';
 import { faceOpen } from './arrival.js';
 
 // The furthest level from 0, either way, that a link may name, or a digit of
@@ -66,7 +66,7 @@ export function readPlace(hash, R) {
   const faced = yaw != null && pitch != null;
   if ((yaw != null && !Number.isFinite(yaw)) || (pitch != null && !Number.isFinite(pitch))) return { why: 'which way it faces is not two numbers' };
   // (A pitch further up or down than we can face is taken to the most we
-  // can, as turning would take it: see Controls.turn.)
+  // can, as turning would take it: see Flight.turn.)
   return {
     place: {
       world,
@@ -82,13 +82,13 @@ export function readPlace(hash, R) {
 // Where a flight is, as a place in the world named world, with the side
 // shown ('A' or 'B').
 export function placeOf(flight, world, shown = 'A') {
-  const { pos, controls } = flight;
+  const { pos } = flight;
   return {
     world,
     F: pos.F,
     frac: pos.frac.slice(),
     digits: [...pos.digits].map(([j, d]) => [j, d.slice()]),
-    facing: { yaw: controls.yaw, pitch: controls.pitch },
+    facing: { yaw: flight.yaw, pitch: flight.pitch },
     shown,
   };
 }
@@ -107,14 +107,14 @@ export function writePlace({ world, F, frac, digits, facing, shown }, spaces) {
 // digits are set, as a flip makes the digits there into the other world's
 // (see Flight.setSpace), and these are already in the world shown.
 export function applyPlace(flight, { F, frac, digits, facing, shown }, show = () => {}) {
-  const { pos, controls } = flight;
+  const { pos } = flight;
   pos.F = F;
   show(shown);
   pos.frac = frac.slice();
   pos.digits = new Map(digits.map(([j, d]) => [j, d.slice()]));
   if (facing) {
-    controls.yaw = facing.yaw;
-    controls.pitch = facing.pitch;
+    flight.yaw = facing.yaw;
+    flight.pitch = facing.pitch;
   }
   flight.begin();
   // (Without a facing, the way a new visit faces: the most open.)

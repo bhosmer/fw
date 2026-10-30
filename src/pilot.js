@@ -547,12 +547,13 @@ export class Pilot {
     this.F = F;
   }
 
-  // Fly like a plane: on at a steady speed, turning toward the target at a
-  // bounded rate, never stopping to turn. away() gives the way directly away
-  // from the nearest surface. While steered (the view is being turned by
-  // hand) it only flies on the way we face, and looks for somewhere to go
-  // afresh once that stops. Returns the velocity wished for, as from the
-  // keys.
+  // Fly like a plane: on at a steady speed, turning the flight toward the
+  // target at a bounded rate, never stopping to turn. speed is how much
+  // faster than usual (as the keys set it: see Controls.faster); away()
+  // gives the way directly away from the nearest surface. While steered (the
+  // view is being turned by hand) it only flies on the way we face, and
+  // looks for somewhere to go afresh once that stops. Returns the velocity
+  // wished for, as from the keys.
   //
   // Speed is a steady CRUISE of how big the space we are in looks (how far
   // off what is in view is: see see); failing a look, our clearance. It
@@ -564,19 +565,19 @@ export class Pilot {
   // Steering is pure pursuit: for a point STEER seconds ahead along the way,
   // turning at a rate in proportion to how far off it is, which carries us
   // round corners in arcs begun before them.
-  fly(dt, controls, scale, away, steered) {
+  fly(dt, flight, speed, away, steered) {
+    const scale = flight.scale;
     this.time += dt;
     this.dt = dt;
     if (steered) {
       this.target = this.plan = null;
       this.rate = [0, 0];
     }
-    const { fwd } = controls.basis();
+    const { fwd } = flight.basis();
     this.fwd = fwd;
     // Every so often, when there is no way planned, plan one (out under the
     // sky there is none to plan: there we go by looking).
-    const flight = this.planner?.flight;
-    if (flight && !this.plan && !steered && this.time - this.planned > PLAN_EVERY && flight.room !== null) {
+    if (this.planner && !this.plan && !steered && this.time - this.planned > PLAN_EVERY && flight.room !== null) {
       this.planned = this.time;
       if (flight.sky > 0) {
         if (this.phase === 'surface') (this.phase = 'dive'), (this.goal = null);
@@ -675,8 +676,8 @@ export class Pilot {
       // (Toward a point nearly straight up or down, which way it is round
       // about hardly matters, and is no steady guide: turn little.)
       const level = Math.min(1, Math.hypot(dir[0], dir[2]) / 0.3);
-      const ey = level * Math.atan2(Math.sin(yaw - controls.yaw), Math.cos(yaw - controls.yaw));
-      const ep = pitch - controls.pitch;
+      const ey = level * Math.atan2(Math.sin(yaw - flight.yaw), Math.cos(yaw - flight.yaw));
+      const ep = pitch - flight.pitch;
       // (Pure pursuit: the turn that would bring us to the point on an arc.)
       want[0] = Math.max(-TURN, Math.min(TURN, (2 * ey) / STEER));
       want[1] = Math.max(-TILT, Math.min(TILT, (2 * ep) / STEER));
@@ -685,13 +686,13 @@ export class Pilot {
     // (Turning eased only enough not to jerk.)
     const ease = 1 - Math.exp(-dt / 0.2);
     this.rate = this.rate.map((r, a) => r + (want[a] - r) * ease);
-    controls.yaw += this.rate[0] * dt;
-    const most = this.plan ? PITCH_PLAN : Math.max(PITCH_MAX, Math.abs(controls.pitch));
-    controls.pitch = Math.max(-most, Math.min(most, controls.pitch + this.rate[1] * dt));
+    flight.yaw += this.rate[0] * dt;
+    const most = this.plan ? PITCH_PLAN : Math.max(PITCH_MAX, Math.abs(flight.pitch));
+    flight.pitch = Math.max(-most, Math.min(most, flight.pitch + this.rate[1] * dt));
     // How fast: CRUISE of the space, a little less turning back on
     // ourselves (a tighter circle); no faster than what is in front lets
     // us; changed gradually, by a factor at a time.
-    const open = flight?.opened > 0 ? flight.opened : Infinity;
+    const open = flight.opened > 0 ? flight.opened : Infinity;
     const goal = Math.min(CRUISE * size * (err > Math.PI / 2 ? 0.6 : 1), open / BRAKE);
     const grow = Math.log(Math.max(goal, 1e-30) / v0);
     const v = v0 * Math.exp(Math.max(-dt / SLACKEN, Math.min(dt / QUICKEN, grow)));
@@ -699,8 +700,8 @@ export class Pilot {
     this.v = Math.min(v, (2 * open) / BRAKE);
     // Flight goes at its pace (level-F cells per second, for a wish of 1),
     // so this wish comes to v.
-    const pace = flight?.pace > 0 ? flight.pace : scale;
-    const go = (controls.speed * this.v) / pace;
+    const pace = flight.pace > 0 ? flight.pace : scale;
+    const go = (speed * this.v) / pace;
     return fwd.map((x) => x * go);
   }
 }

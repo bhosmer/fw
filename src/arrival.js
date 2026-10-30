@@ -40,7 +40,7 @@ export function faceOpen(flight) {
   for (let k = 0; k < 4; k++) {
     const yaw = (k * Math.PI) / 2;
     const open = flight.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
-    if (open > best) (best = open), (flight.controls.yaw = yaw);
+    if (open > best) (best = open), (flight.yaw = yaw);
   }
-  flight.controls.pitch = 0;
+  flight.pitch = 0;
 }

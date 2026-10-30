@@ -67,7 +67,7 @@ test('the building in other shapes: rays hold in it', () => {
     const space = makeArcology({ building: set }).arcology, rnd = rand(29);
     let rays = 0, inAir = 0;
     for (let i = 0; i < 6; i++) {
-      const flight = new Flight(space, { yaw: 0, pitch: 0, boost: () => 1 });
+      const flight = new Flight(space);
       elsewhere(flight, rnd);
       for (let s = 0; s < 3; s++) {
         flight.sense();

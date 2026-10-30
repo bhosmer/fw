@@ -1,7 +1,7 @@
 // The JavaScript twin of the world compared with the shader (fw.check,
 // fw.checkRays, fw.compareRays), and a ray marched in it as the shader marches
 // (fw.trace), from the console and the tests: each given the app's fw object
-// (see main.js) as ctx, for its pos, flight, renderer, controls and fly.
+// (see main.js) as ctx, for its pos, flight, renderer and fly.
 import { UP, DOWN, builtClearance } from './flight.js';
 
 // How far from the camera, in a level's lattice units, the shader and the
@@ -38,12 +38,12 @@ export function trace(ctx, dir, steps = 60, finest = Infinity) {
 // than there is, for the flight), and how many comparisons away from the
 // camera were made.
 export function check(ctx, n = 300, round = 15) {
-  const { pos, flight, renderer, controls } = ctx;
+  const { pos, flight, renderer } = ctx;
   let seed = 99;
   const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
   let worst = { diff: 0 }, more = { diff: 0 }, compared = 0;
   for (let i = 0; i < n; i++) {
-    if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
+    if (i % 10 === 0) (flight.yaw = rnd() * 6.28), (flight.pitch = (rnd() - 0.5) * 2.4);
     ctx.fly(0.05 + rnd() * 0.4, { f: 1 });
     const recs = pos.levels(pos.F - UP, pos.F + DOWN);
     const points = [[0, 0, 0]];
@@ -76,13 +76,13 @@ export function check(ctx, n = 300, round = 15) {
 // in air at all (apart), or about the surface; and how many were compared,
 // and of those, how many in air, by level.
 export function checkRays(ctx, n = 150, round = 15) {
-  const { pos, controls } = ctx;
+  const { pos, flight } = ctx;
   let seed = 7;
   const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
   const AXES = [[1, 0, 0], [0, -1, 0], [0, 0, 1], [Math.SQRT1_2, Math.SQRT1_2, 0], [0, -Math.SQRT1_2, -Math.SQRT1_2]];
   const sum = { ratio: 0, apart: 0, facing: 0, compared: 0, inAir: {} };
   for (let i = 0; i < n; i++) {
-    if (i % 10 === 0) (controls.yaw = rnd() * 6.28), (controls.pitch = (rnd() - 0.5) * 2.4);
+    if (i % 10 === 0) (flight.yaw = rnd() * 6.28), (flight.pitch = (rnd() - 0.5) * 2.4);
     ctx.fly(0.05 + rnd() * 0.4, { f: 1 });
     const e = i % 3 === 0 ? AXES[(i / 3) % AXES.length] : [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
     const points = [[0, 0, 0]];

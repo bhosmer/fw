@@ -7,7 +7,7 @@ import { Flight } from '../../src/flight.js';
 // the middle city cell's corner.
 export function clippedRays(rnd, n) {
   const R = arcology.R, out = [];
-  const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 });
+  const flight = new Flight(arcology);
   for (const [blo, bhi] of _V2.BARE_BOX) {
     const [l, h] = [blo, bhi].map((b) => b.map((x, a) => x + _V2.ORIGIN[a]));
     for (let k = 0; k < n; k++) {

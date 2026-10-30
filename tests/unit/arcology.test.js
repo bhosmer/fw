@@ -84,12 +84,10 @@ test('coarser than the city, all is solid', () => {
   }
 });
 
-// Just what Flight needs of the controls.
-const controls = () => ({ yaw: 0, pitch: 0, boost: () => 1 });
 // Fly straight ahead (yaw 0, level) n steps from somewhere in the city,
 // given as the digits of our level -2 and -1 cells.
 function flyFrom(d2, d1, frac, n, each) {
-  const flight = new Flight(arcology, controls());
+  const flight = new Flight(arcology);
   flight.pos.F = -1;
   flight.pos.frac = frac;
   flight.pos.digits.set(-2, d2);
@@ -226,7 +224,7 @@ test(`where ${what} run on, the cells they run into say so`, () => {
 // (its plane 52 y - 90 z = 1781 from the building's origin), at a place on
 // it where L and f each say much and their sum nearly nothing.
 test('close to a sloped face, many levels down, its distance keeps its precision', () => {
-  const flight = new Flight(arcology, controls());
+  const flight = new Flight(arcology);
   const pos = flight.pos, deep = 12;
   // (0, 30.5, -2 - 4/24) is on the face; the building's origin is (12, 2, 12)
   // in the middle city cell, so in lattice units it is (12, 32.5, 9 + 20/24):
@@ -289,7 +287,7 @@ test('what the openings and the town say of a ray holds', () => {
   const s = Math.SQRT1_2;
   const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
   let cells = 0, shared = 0, towns = 0, inAir = 0, townAir = 0, corners = 0;
-  const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 });
+  const flight = new Flight(arcology);
   // (The camera at frac in cell x, y, z; its record of the level.)
   const at = (x, y, z, frac) => {
     Object.assign(flight.pos, { F: CITY + 1, frac, digits: new Map([[CITY + 1, [x, y, z]]]) });
@@ -344,7 +342,7 @@ test('what the city says of a ray holds', () => {
   const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
   const { lo, size, kind, at: cellAt } = VOLUME;
   const middle = lo.map((x, a) => x + size[a] / 2);
-  const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 });
+  const flight = new Flight(arcology);
   // (From x, lattice units of the city's level over the middle city cell's
   // corner, along each of es: how many in air at that level.)
   const ask = (x, es) => {
@@ -427,7 +425,7 @@ test('the ridges\' rows looked up are the rows as made', () => {
 // Position.levels carries them. They are the very numbers the true height
 // gives, so the shader's form and the plain one agree exactly.
 test("the relief's heights at the city's level: the slant's form is the true height's", () => {
-  const flight = new Flight(arcology, { yaw: 0, pitch: 0, boost: () => 1 }), rnd = rand(11);
+  const flight = new Flight(arcology), rnd = rand(11);
   const FOUR = flight.pos.slants.findIndex((m) => m[0] === 0 && m[1] === 4 && m[2] === 0);
   assert.ok(FOUR >= 0, 'no FOUR slant');
   let n = 0;

@@ -1,13 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Flight } from '../../src/flight.js';
+import { Flight, PITCH_MAX } from '../../src/flight.js';
 import { elsewhere } from '../../src/arrival.js';
 import { placeWorld, readPlace, placeOf, writePlace, applyPlace, LEVEL_MOST } from '../../src/place.js';
-import { PITCH_MAX } from '../../src/controls.js';
 import { WORLDS, makeWorld, fromLink } from '../../src/worlds.js';
 import { rand } from './rand.js';
 
-const controls = () => ({ yaw: 0, pitch: 0, boost: () => 1 });
 const hash = (o) => '#' + Buffer.from(JSON.stringify(o)).toString('base64');
 const worlds = await Promise.all(WORLDS.map((name) => makeWorld(name)));
 const R = worlds[0].space.R;
@@ -15,10 +13,10 @@ const R = worlds[0].space.R;
 // Where a flight is, to compare: its level, offset, every digit from well
 // above anything stored down to its level, and its facing.
 function where(flight, top = -100) {
-  const { pos, controls } = flight;
+  const { pos } = flight;
   const digits = [];
   for (let j = Math.min(top, ...pos.digits.keys()); j <= pos.F; j++) digits.push([j, pos.digit(j).slice()]);
-  return JSON.stringify({ F: pos.F, frac: pos.frac, digits, yaw: controls.yaw, pitch: controls.pitch });
+  return JSON.stringify({ F: pos.F, frac: pos.frac, digits, yaw: flight.yaw, pitch: flight.pitch });
 }
 
 // Places a visit might be: first visits, flown on from a little way.
@@ -26,10 +24,10 @@ function visits(space, seed, n = 12) {
   const rnd = rand(seed);
   const out = [];
   for (let i = 0; i < n; i++) {
-    const flight = new Flight(space, controls());
+    const flight = new Flight(space);
     elsewhere(flight, rnd);
-    flight.controls.yaw = (rnd() - 0.5) * 20;
-    flight.controls.pitch = (rnd() - 0.5) * 2;
+    flight.yaw = (rnd() - 0.5) * 20;
+    flight.pitch = (rnd() - 0.5) * 2;
     const dir = [rnd() - 0.5, (rnd() - 0.5) * 0.3, rnd() - 0.5];
     for (let s = 0; s < 30 * i; s++) flight.step(1 / 30, dir.map((x) => x * 4));
     out.push(flight);
@@ -45,8 +43,8 @@ test('a place written and read again is the same place', () => {
       const { place, why } = readPlace(text, R);
       assert.ok(place, `${base}: refused (${why}): ${text}`);
       assert.equal(place.shown, 'A');
-      const there = new Flight(space, controls());
-      there.controls.yaw = 99;
+      const there = new Flight(space);
+      there.yaw = 99;
       applyPlace(there, place);
       assert.equal(where(there), where(flight), `${base}: ${text}`);
       // (And written again, the same link.)
@@ -70,7 +68,7 @@ test('a place shown on the other side of a comparison is there again', async () 
     const text = writePlace(placeOf(flight, 'halls', 'B'), [A, B]);
     const { place } = readPlace(text, R);
     assert.equal(place.shown, 'B');
-    const there = new Flight(A, controls());
+    const there = new Flight(A);
     const snap = () => ({ F: there.pos.F, frac: there.pos.frac.slice(), digits: [...there.pos.digits].map(([j, d]) => [j, d.slice()]) });
     const before = snap();
     let seen = null;
@@ -95,12 +93,12 @@ test('a place without a facing faces the most open way, as a new visit does', ()
     for (const facing of [{ yaw: undefined, pitch: undefined }, { yaw: null, pitch: null }, { yaw: 1, pitch: undefined }]) {
       const { place } = readPlace(hash({ ...at, ...facing }), R);
       assert.equal(place.facing, null);
-      const there = new Flight(space, controls());
-      there.controls.yaw = 0.6;
-      there.controls.pitch = -0.05;
+      const there = new Flight(space);
+      there.yaw = 0.6;
+      there.pitch = -0.05;
       applyPlace(there, place);
-      assert.equal(there.controls.pitch, 0);
-      assert.ok([0, 1, 2, 3].some((k) => there.controls.yaw === (k * Math.PI) / 2), `faced ${there.controls.yaw}`);
+      assert.equal(there.pitch, 0);
+      assert.ok([0, 1, 2, 3].some((k) => there.yaw === (k * Math.PI) / 2), `faced ${there.yaw}`);
       assert.equal(there.pos.F, flight.pos.F);
     }
   }
@@ -169,7 +167,7 @@ test('a place at the furthest levels a link may name is gone to whole', () => {
     for (const at of [{ F: -LEVEL_MOST }, { F: LEVEL_MOST }, { F: 0, digits: [[-LEVEL_MOST, [1, 1, 1]]] }]) {
       const { place, why } = readPlace(hash({ world: base, frac: [0.5, 0.5, 0.5], yaw: 0, pitch: 0, ...at }), R);
       assert.ok(place, `${base} ${JSON.stringify(at)}: refused (${why})`);
-      const flight = new Flight(space, controls());
+      const flight = new Flight(space);
       applyPlace(flight, place);
       for (let s = 0; s < 30; s++) flight.step(1 / 30, [0, 0, -1]);
       const { F, frac } = flight.pos;
@@ -183,7 +181,7 @@ test('a place read is its own: changing it changes nothing it was read from or a
   const { base, space } = worlds[0];
   const [flight] = visits(space, 9, 1);
   const { place } = readPlace(writePlace(placeOf(flight, base), [space]), R);
-  const there = new Flight(space, controls());
+  const there = new Flight(space);
   applyPlace(there, place);
   const was = where(there);
   place.frac[0] = 0.999;

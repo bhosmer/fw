@@ -1,15 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Flight } from '../../src/flight.js';
+import { Flight, PITCH_MAX } from '../../src/flight.js';
+import { camera } from '../../src/view.js';
 import { elsewhere } from '../../src/arrival.js';
 import halls from '../../src/spaces/halls.js';
 import { rand } from './rand.js';
 import * as P from '../../src/pieces.js';
 
 const R = halls.R;
-
-// Just what Flight needs of the controls.
-const controls = () => ({ yaw: 0, pitch: 0, boost: () => 1 });
 
 // Fly a while, wandering: n steps of dt seconds, the heading drifting and now
 // and then turning, calling each(flight, len) after every step.
@@ -20,8 +18,8 @@ function wander(flight, n, each, seed = 1, dt = 1 / 60, boost = 1) {
     if (i % 90 === 0) turn = (rnd() - 0.5) * 3;
     yaw += turn * dt;
     pitch = Math.max(-1, Math.min(1, pitch + (rnd() - 0.5) * 0.05));
-    flight.controls.yaw = yaw;
-    flight.controls.pitch = pitch;
+    flight.yaw = yaw;
+    flight.pitch = pitch;
     const wish = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)].map((x) => x * boost);
     const len = flight.step(dt, wish);
     each?.(flight, len);
@@ -29,7 +27,7 @@ function wander(flight, n, each, seed = 1, dt = 1 / 60, boost = 1) {
 }
 
 test('a first visit begins somewhere with room to stand', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(halls);
   flight.begin(true);
   assert.ok(flight.clearance > 0.05, `clearance ${flight.clearance}`);
   assert.ok(flight.fog > 0 && flight.scale > 0);
@@ -38,7 +36,7 @@ test('a first visit begins somewhere with room to stand', () => {
 test('flying never ends a step in solid, nor goes more than half the way open', () => {
   // (Also at ten frames a second with shift held, where steps are long.)
   for (const [seed, dt, boost, n] of [[1, 1 / 60, 1, 1500], [2, 1 / 60, 1, 1500], [3, 0.1, 8, 600]]) {
-    const flight = new Flight(halls, controls());
+    const flight = new Flight(halls);
     flight.begin(true);
     const levels = new Set();
     wander(flight, n, (f, len) => {
@@ -52,7 +50,7 @@ test('flying never ends a step in solid, nor goes more than half the way open', 
 });
 
 test('the working level follows how much room there is', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(halls);
   flight.begin(true);
   wander(flight, 1000, (f) => {
     f.sense();
@@ -63,7 +61,7 @@ test('the working level follows how much room there is', () => {
 });
 
 test('speeding up is eased; slowing down is not', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(halls);
   flight.begin(true);
   let before = null;
   wander(flight, 1500, (f) => {
@@ -78,7 +76,7 @@ test('speeding up is eased; slowing down is not', () => {
 });
 
 test('rewinding comes back to where we started', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(halls);
   flight.begin(true);
   const start = { F: flight.pos.F, frac: flight.pos.frac.slice() };
   wander(flight, 600, null, 6);
@@ -107,7 +105,7 @@ function press(flight, levels, n, each) {
 // Flying at a surface that never opens takes us ever finer, and the space we
 // are really in ever further up: further than sense() looks as a rule.
 test('held at a surface for ever, we still know where the air is', () => {
-  const flight = new Flight(bare, controls());
+  const flight = new Flight(bare);
   flight.begin(true);
   press(flight, 80, 1000, (f) => assert.ok(f.clearance > 0, `in solid at level ${f.pos.F}`));
   // (Past where it used to be lost: UP + FAR = 72 levels up.)
@@ -115,13 +113,13 @@ test('held at a surface for ever, we still know where the air is', () => {
 });
 
 test('sent somewhere deep, we find the room we are in', () => {
-  const flight = new Flight(bare, controls());
+  const flight = new Flight(bare);
   flight.begin(true);
   press(flight, 80, 1000);
   const { F, frac } = flight.pos;
   const digits = new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()]));
   // (As a link would: nothing known but where.)
-  const there = new Flight(bare, controls());
+  const there = new Flight(bare);
   Object.assign(there.pos, { F, frac: frac.slice(), digits });
   there.begin();
   assert.ok(there.clearance > 0 && there.room < F - 72, `clearance ${there.clearance}, room ${there.room} at ${F}`);
@@ -130,7 +128,7 @@ test('sent somewhere deep, we find the room we are in', () => {
 // (Past about 223 levels down, a level-0 cell is more level-F cells than a
 // number holds, and the room we were in, at level 0, is too far up to ask.)
 test('however deep, where the sky is stays a number', () => {
-  const flight = new Flight(halls, controls());
+  const flight = new Flight(halls);
   flight.begin(true);
   for (let i = 0; i < 300; i++) flight.pos.refine();
   assert.ok(Number.isFinite(flight.skyHeight()) && Number.isFinite(flight.skyHeight(1)), `sky ${flight.skyHeight()}, ${flight.skyHeight(1)}`);
@@ -146,13 +144,13 @@ test('a first visit begins somewhere different each time, with room ahead', () =
   const rnd = rand(9);
   const places = new Set();
   for (let i = 0; i < 30; i++) {
-    const flight = new Flight(halls, controls());
+    const flight = new Flight(halls);
     elsewhere(flight, rnd);
     assert.ok(flight.clearance >= 0.08 && flight.sky < 0, `clearance ${flight.clearance}, sky ${flight.sky}`);
     // (Facing the most open of the four ways along the walls.)
     const open = (yaw) => flight.ahead([Math.sin(yaw), 0, -Math.cos(yaw)]);
     const most = Math.max(...[0, 1, 2, 3].map((k) => open((k * Math.PI) / 2)));
-    assert.ok(open(flight.controls.yaw) >= most && flight.controls.pitch === 0, 'not facing the most open way');
+    assert.ok(open(flight.yaw) >= most && flight.pitch === 0, 'not facing the most open way');
     places.add(JSON.stringify([flight.pos.F, [...flight.pos.digits].sort()]));
   }
   assert.ok(places.size >= 25, `only ${places.size} different places in 30`);
@@ -211,7 +209,7 @@ function past(flight) {
 
 test('a face two pieces of air only share is flown through, head on and aslant', () => {
   for (const pitch of [0, 0.3, -0.6]) {
-    const flight = new Flight(twoBoxes(0), { yaw: Math.PI, pitch, boost: () => 1 });
+    const flight = Object.assign(new Flight(twoBoxes(0)), { yaw: Math.PI, pitch });
     flight.begin();
     const dir = [0, Math.sin(pitch), Math.cos(pitch)];
     let frames = 0;
@@ -224,7 +222,7 @@ test('a wall however thin is never flown through', () => {
   for (const wall of [1e-7, 1e-3, 0.5]) {
     for (const pitch of [0, 0.3, -0.6, 1.0]) {
       for (const [dt, boost] of [[1 / 60, 1], [0.1, 8]]) {
-        const flight = new Flight(twoBoxes(wall), { yaw: Math.PI, pitch, boost: () => 1 });
+        const flight = Object.assign(new Flight(twoBoxes(wall)), { yaw: Math.PI, pitch });
         flight.begin();
         const dir = [0, Math.sin(pitch) * boost, Math.cos(pitch) * boost];
         for (let i = 0; i < 600; i++) {
@@ -243,7 +241,7 @@ test('a wall however thin is never flown through', () => {
 test('the way found open is air all the way', async () => {
   const { default: arcology } = await import('../../src/spaces/arcology.js');
   for (const space of [halls, arcology]) {
-  const flight = new Flight(space, controls());
+  const flight = new Flight(space);
   if (space === halls) flight.begin(true);
   else elsewhere(flight, rand(3));
   const rnd = rand(51);
@@ -263,4 +261,17 @@ test('the way found open is air all the way', async () => {
     }
   }, 1);
   }
+});
+
+// Turning: up or down no further than PITCH_MAX, however far asked; and the
+// camera, looking level, is the way we face.
+test('turning stops at the furthest up or down, and the camera looking level is the facing', () => {
+  const flight = new Flight(halls);
+  flight.turn(0.4, 3);
+  assert.equal(flight.pitch, PITCH_MAX);
+  assert.equal(flight.yaw, 0.4);
+  flight.turn(0, -10);
+  assert.equal(flight.pitch, -PITCH_MAX);
+  flight.pitch = 0;
+  assert.deepEqual(camera(flight), flight.basis());
 });

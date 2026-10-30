@@ -14,13 +14,13 @@ Each world answers, for a point at a level, its distance to that level's air, an
 
 ## Flying
 
-- `src/flight.js`: sensing (what is around us at every scale) and motion (how far the way ahead is open, each step, the trail).
+- `src/flight.js`: sensing (what is around us at every scale) and motion (how far the way ahead is open, each step, the trail), and which way we face.
 - `src/arrival.js`: where a visit starts (somewhere new in a world).
 - `src/place.js`: a place in a link (the URL's hash): read and checked whole, written, and gone to.
 - `src/position.js`: where we are, as digits at every level; each level's record (`levels`).
 - `src/air.js`: asking a world what the shader asks of it, in JavaScript (`airAt`), and a gradient of such answers.
-- `src/view.js`: which levels to draw, and the outer plane.
-- `src/controls.js`, `src/pacing.js`: input, and frame pacing.
+- `src/view.js`: which levels to draw, the outer plane, and the camera (how the screen maps to rays).
+- `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing.
 
 ## Drawing
 

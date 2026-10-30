@@ -8,7 +8,7 @@ import { Planner } from './planner.js';
 import { Flight, UP, DOWN } from './flight.js';
 import { elsewhere } from './arrival.js';
 import { placeWorld, readPlace, placeOf, writePlace, applyPlace } from './place.js';
-import { visible, outerAir } from './view.js';
+import { visible, outerAir, camera } from './view.js';
 import { trace, check, checkRays, compareRays } from './debug.js';
 import { Pacing } from './pacing.js';
 
@@ -94,8 +94,11 @@ try {
 } catch (err) {
   cannot(err);
 }
-const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN));
-const flight = new Flight(space, controls);
+const flight = new Flight(space);
+// (Facing, until a link or a first visit says which way: a little to the
+// side and down. A first visit that finds no room keeps it: see elsewhere.)
+flight.turn(0.6, -0.05);
+const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN), flight);
 const pos = flight.pos;
 const pilot = new Pilot(R);
 pilot.planner = new Planner(flight);
@@ -109,7 +112,7 @@ function viewNow() {
   const fogLen = flight.fog * SCHEMES[scheme].fog;
   const maxT = 4 * Math.max(flight.fog, fogLen);
   const { recs, all } = visible(flight, maxT, N_VIEW);
-  const { fwd, right, up } = controls.camera();
+  const { fwd, right, up } = camera(flight);
   const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
     tan: FOV_TAN,
@@ -158,7 +161,7 @@ function look(now) {
   const stride = Math.max(4, Math.round(canvas.width / 100));
   const { recs, view } = viewNow();
   if (renderer.look(recs, view, stride)) {
-    lookAt = { basis: controls.camera(), F: pos.F, res: [canvas.width, canvas.height], stride };
+    lookAt = { basis: camera(flight), F: pos.F, res: [canvas.width, canvas.height], stride };
     lookedAt = now;
   }
 }
@@ -304,7 +307,7 @@ if (!loadLocation()) elsewhere(flight, Math.random);
 let shown = '', settled = 0;
 function present() {
   resize();
-  const keyNow = () => [pos.F, pos.frac, controls.yaw, controls.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), canvas.width, canvas.height, upscale, debug, reference, scheme, side].join();
+  const keyNow = () => [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), canvas.width, canvas.height, upscale, debug, reference, scheme, side].join();
   let key = keyNow();
   if (key === shown && upscale < 1) {
     upscale = 1;
@@ -349,13 +352,13 @@ function tick(now) {
   const way = controls.retracing();
   if (way) controls.drop();
   let moved;
-  if (way) moved = flight.retrace(dt, way);
+  if (way) moved = flight.retrace(dt, way, controls.boost());
   else if (pilot.on) {
     // Flying by hand during the tour steers it: turning takes the view (the
     // tour picks its way on from wherever we end up facing), and the keys
     // and the wheel add their own travel to its.
     const steered = now - controls.turned < 800;
-    const tour = pilot.fly(dt, controls, flight.scale, () => awayFrom(flight), steered).map((x) => x * controls.boost());
+    const tour = pilot.fly(dt, flight, controls.speed, () => awayFrom(flight), steered).map((x) => x * controls.boost());
     const hand = controls.wish();
     moved = flight.step(dt, tour.map((x, a) => x + hand[a]), controls.nudge(dt));
     pilot.moved(flight.lastMove, pos.F);
@@ -461,7 +464,7 @@ window.fw = {
     return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
-    const { fwd, right } = controls.basis();
+    const { fwd, right } = flight.basis();
     const wish = [0, 1, 2].map((a) => fwd[a] * f + right[a] * r + (a === 1 ? u : 0));
     for (let i = 0; i < seconds * 60; i++) flight.step(1 / 60, wish);
     return this.state;
@@ -487,11 +490,11 @@ window.fw = {
           });
           got = renderer.seen();
         }
-        if (got) pilot.see(got, controls.camera(), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
+        if (got) pilot.see(got, camera(flight), pos.F, FOV_TAN, [canvas.width, canvas.height], stride, whereNow());
         log.push({ t: i / 60, F: pos.F, phase: pilot.phase, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }
-      flight.step(1 / 60, pilot.fly(1 / 60, controls, flight.scale, () => awayFrom(flight)));
+      flight.step(1 / 60, pilot.fly(1 / 60, flight, controls.speed, () => awayFrom(flight)));
       pilot.moved(flight.lastMove, pos.F);
     }
     return log;
@@ -526,7 +529,7 @@ window.fw = {
   set upscale(v) { upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
   get upscale() { return upscale; },
   rewind(seconds) {
-    for (let i = 0; i < Math.abs(seconds) * 60; i++) flight.retrace(1 / 60, seconds > 0 ? -1 : 1);
+    for (let i = 0; i < Math.abs(seconds) * 60; i++) flight.retrace(1 / 60, seconds > 0 ? -1 : 1, controls.boost());
     return this.state;
   },
   // GPU milliseconds per frame for the current view, at one pixel per CSS pixel.

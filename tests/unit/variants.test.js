@@ -171,7 +171,7 @@ test('a variant keeps what a world must', () => {
   const rnd = rand(47);
   let inAir = 0;
   for (let i = 0; i < 6; i++) {
-    const flight = new Flight(space, { yaw: 0, pitch: 0, boost: () => 1 });
+    const flight = new Flight(space);
     elsewhere(flight, rnd);
     for (let s = 0; s < 30; s++) flight.step(1 / 30, [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5].map((x) => x * 4));
     flight.sense();

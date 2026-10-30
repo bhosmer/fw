@@ -404,8 +404,8 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
 // drawn once already, behind the loading screen); and a link saved with B
 // shown opens with B shown.
 check('two worlds compared flip, and nothing else changes', async () => {
-  const STATE = `window.__keep = () => ({ F: fw.pos.F, frac: fw.pos.frac.slice(), digits: [...fw.pos.digits].map(([j, d]) => [j, d.slice()]), yaw: fw.controls.yaw, pitch: fw.controls.pitch, scale: fw.flight.scale, pace: fw.flight.pace, fog: fw.flight.fog, fogTarget: fw.flight.fogTarget, room: fw.flight.room });
-    window.__put = (s) => { fw.pos.F = s.F; fw.pos.frac = s.frac.slice(); fw.pos.digits = new Map(s.digits.map(([j, d]) => [j, d.slice()])); Object.assign(fw.controls, { yaw: s.yaw, pitch: s.pitch }); Object.assign(fw.flight, { scale: s.scale, pace: s.pace, fog: s.fog, fogTarget: s.fogTarget, room: s.room }); };
+  const STATE = `window.__keep = () => ({ F: fw.pos.F, frac: fw.pos.frac.slice(), digits: [...fw.pos.digits].map(([j, d]) => [j, d.slice()]), yaw: fw.flight.yaw, pitch: fw.flight.pitch, scale: fw.flight.scale, pace: fw.flight.pace, fog: fw.flight.fog, fogTarget: fw.flight.fogTarget, room: fw.flight.room });
+    window.__put = (s) => { fw.pos.F = s.F; fw.pos.frac = s.frac.slice(); fw.pos.digits = new Map(s.digits.map(([j, d]) => [j, d.slice()])); Object.assign(fw.flight, { yaw: s.yaw, pitch: s.pitch, scale: s.scale, pace: s.pace, fog: s.fog, fogTarget: s.fogTarget, room: s.room }); };
     window.__pic = (s, ref = false) => { __put(s); fw.reference = ref; const px = fw.snap(320, 240); fw.reference = false; let x = 2166136261; for (let i = 0; i < px.length; i++) x = Math.imul(x ^ px[i], 16777619) >>> 0; return x; };`;
   // (B: the city's pockets deeper, which the place looks into.)
   const A = 'arcology&vs.relief.city.depths=[0,0.25,0.75]', B = 'arcology&relief.city.depths=[0,0.25,0.75]';
@@ -529,7 +529,7 @@ check('every program sets every uniform it has', async () => {
 check('from above, each world is stepped through truly', async () => {
   for (const world of WORLDS) {
     await load('start', 'alhambra', false, world);
-    await page.eval('(fw.controls.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
+    await page.eval('(fw.flight.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
     const { newNearer } = await page.eval('fw.compare(320, 180, 0.02)');
     assert(newNearer < 0.002, `${world}: the exact way sees nearer at ${(newNearer * 100).toFixed(2)}% of pixels`);
   }
@@ -739,7 +739,7 @@ check('rewinding retraces the way we came', async () => {
   await load('court');
   const where = () => page.eval('JSON.stringify({ F: fw.pos.F, frac: fw.pos.frac, d: [...fw.pos.digits].sort() })');
   const before = JSON.parse(await where());
-  await page.eval(`(fw.controls.yaw += 0.7, fw.fly(1.5, { f: 1 }), fw.controls.yaw -= 1.2, fw.fly(1.5, { f: 1, r: 0.3 }))`);
+  await page.eval(`(fw.flight.yaw += 0.7, fw.fly(1.5, { f: 1 }), fw.flight.yaw -= 1.2, fw.fly(1.5, { f: 1, r: 0.3 }))`);
   const away = JSON.parse(await where());
   assert(JSON.stringify(away) !== JSON.stringify(before), 'flying went nowhere');
   await page.eval('fw.rewind(3)');
@@ -759,11 +759,11 @@ check('N goes somewhere new, with room to stand', async () => {
 
 check('a place survives a reload', async () => {
   await load('court');
-  await page.eval(`(fw.controls.yaw += 0.3, fw.fly(0.7, { f: 1 }))`);
+  await page.eval(`(fw.flight.yaw += 0.3, fw.fly(0.7, { f: 1 }))`);
   const url = await page.eval('fw.where');
-  const here = await page.eval('JSON.stringify([fw.pos.F, fw.pos.frac, fw.controls.yaw, fw.controls.pitch])');
+  const here = await page.eval('JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch])');
   await page.goto(url.replace(/\?\d*#/, `?${++loads}#`), setup('alhambra'));
-  const there = await page.eval('JSON.stringify([fw.pos.F, fw.pos.frac, fw.controls.yaw, fw.controls.pitch])');
+  const there = await page.eval('JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch])');
   assert(here === there, `${here} became ${there}`);
 });
 
@@ -772,7 +772,7 @@ check('a place survives a reload', async () => {
 // leaves us where we are. One without a facing faces the most open way, as a
 // first visit does.
 check('a link whose place cannot be read still opens somewhere', async () => {
-  const state = 'JSON.stringify([fw.pos.F, fw.pos.frac, fw.controls.yaw, fw.controls.pitch])';
+  const state = 'JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch])';
   await load('start');
   const first = await page.eval(state);
   const court = JSON.parse(Buffer.from(PLACES.court, 'base64').toString());

@@ -10,19 +10,17 @@ import { rayHolds } from './rays.js';
 // as the flight asks it (every level around places it might be), so that a
 // new world, or a new arrangement of one, is held to them without new tests.
 
-const controls = () => ({ yaw: 0, pitch: 0, boost: () => 1 });
-
 // Places in a world: first visits, and where short flights from them lead.
 function places(space, seed, n = 8) {
   const rnd = rand(seed);
   const out = [];
   for (let i = 0; i < n; i++) {
-    let flight = new Flight(space, controls());
+    let flight = new Flight(space);
     elsewhere(flight, rnd);
     for (let k = 0; k < 4; k++) {
       flight.sense();
       out.push(flight);
-      const next = new Flight(space, controls());
+      const next = new Flight(space);
       Object.assign(next.pos, { F: flight.pos.F, frac: flight.pos.frac.slice(), digits: new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()])) });
       next.begin();
       const dir = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
@@ -92,7 +90,7 @@ for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))
   test(`${space.name}: a cell sits somewhere solid in its parent`, () => {
     for (let F = -8; F <= 6; F++) {
       if (onPurpose.includes(F)) continue;
-      const flight = new Flight(space, controls());
+      const flight = new Flight(space);
       Object.assign(flight.pos, { F, frac: [0.5, 0.5, 0.5], digits: new Map() });
       const [parent] = flight.pos.levels(F - 1, F - 1);
       assert.ok(flight.airAt(parent) >= 0.5, `level ${F} at ${space.ancestorDigit(F)}: ${flight.airAt(parent)}`);

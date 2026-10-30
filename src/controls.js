@@ -2,21 +2,19 @@
 // right button (or with ctrl or cmd held) slides sideways and up and down, the
 // wheel travels forward and back. Or by touch (see below). There is no body, so no gravity and no
 // collision; the only thing scale does is set how fast we travel (see step in
-// flight.js).
+// flight.js). Which way we face is the flight's: these turn it.
 
-export const PITCH_MAX = 1.55; // the furthest up or down we can face
-const SHIFT = (25 * Math.PI) / 180; // the most of the pitch that slides the picture rather than tilts it (see camera)
 const WHEEL = 0.004; // clearances travelled per unit of wheel
 const WHEEL_EASE = 0.08; // seconds over which a turn of the wheel is spent
 const GRIP = 3; // how far off, in clearances, a dragged scene is taken to be
 const PINCH = 4; // clearances travelled for spreading two fingers e times as far apart
 
 export class Controls {
-  constructor(el, fovY) {
+  // flight: what these turn, and move along the way it faces.
+  constructor(el, fovY, flight) {
     this.el = el;
+    this.flight = flight;
     this.keys = new Set();
-    this.yaw = 0.6;
-    this.pitch = -0.05;
     this.speed = 1;
     this.turned = -Infinity; // when the view was last turned by hand
     this.slide = [0, 0]; // dragged sideways and up, not yet travelled (radians)
@@ -91,7 +89,7 @@ export class Controls {
   // What the mouse has asked for since last time, as a displacement in
   // clearances. A drag is travelled at once; the wheel is spent smoothly.
   nudge(dt) {
-    const { fwd, right, up } = this.basis();
+    const { fwd, right, up } = this.flight.basis();
     const go = this.dolly * (1 - Math.exp(-dt / WHEEL_EASE));
     this.dolly = Math.abs(this.dolly - go) < 1e-4 ? 0 : this.dolly - go;
     const [sx, sy] = this.slide;
@@ -107,8 +105,7 @@ export class Controls {
 
   turn(dyaw, dpitch) {
     if (dyaw || dpitch) this.turned = performance.now();
-    this.yaw += dyaw;
-    this.pitch = Math.min(PITCH_MAX, Math.max(-PITCH_MAX, this.pitch + dpitch));
+    this.flight.turn(dyaw, dpitch);
   }
 
   axis(pos, neg) {
@@ -119,29 +116,9 @@ export class Controls {
     this.turn(this.axis('ArrowRight', 'ArrowLeft') * 1.6 * dt, this.axis('ArrowUp', 'ArrowDown') * 1.6 * dt);
   }
 
-  basis(pitch = this.pitch) {
-    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
-    const cp = Math.cos(pitch), sp = Math.sin(pitch);
-    const fwd = [sy * cp, sp, -cy * cp];
-    const right = [cy, 0, sy];
-    const up = [-sy * sp, cp, cy * sp];
-    return { fwd, right, up };
-  }
-
-  // How the screen maps to rays: the ray through (x, y) (tan of the half
-  // field of view at the screen's edge) goes along fwd + x right + y up. As
-  // a shift lens: near level the picture plane stays upright and slides
-  // (fwd is not then square to it), so that what is upright stays so;
-  // looking further up or down, more and more of the pitch tilts it instead,
-  // smoothly (the slide never more than SHIFT).
-  camera() {
-    const shift = SHIFT * Math.tanh(this.pitch / SHIFT), { fwd, right, up } = this.basis(this.pitch - shift);
-    return { fwd: fwd.map((x, a) => x + Math.tan(shift) * up[a]), right, up };
-  }
-
   // Direction we want to travel (not normalised to zero when idle), and boost.
   wish() {
-    const { fwd, right } = this.basis();
+    const { fwd, right } = this.flight.basis();
     const f = this.axis('KeyW', 'KeyS');
     const r = this.axis('KeyD', 'KeyA');
     const u = this.axis('Space', 'KeyC');
