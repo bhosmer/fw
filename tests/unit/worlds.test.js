@@ -5,6 +5,7 @@ import { Flight } from '../../src/flight.js';
 import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
+import { M } from '../../src/spaces/halls.js';
 
 // What every world must be, whatever its arrangement: asked of each in turn
 // as the flight asks it (every level around places it might be), so that a
@@ -31,7 +32,11 @@ function places(space, seed, n = 8) {
   return out;
 }
 
-for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))) {
+// (And the arcology whose plaza does not fade, which may become the
+// default: see PLAZA in spaces/arcology.js.)
+const MADE = await Promise.all([...WORLDS.map((name) => makeWorld(name)), makeWorld('arcology', { plaza: { fades: false } })]);
+for (const { space, set } of MADE) {
+  const label = space.name + (set ? '&plaza.fades=false' : '');
   // A distance that never overstates mostly changes no faster than the
   // point moves: an exact one cannot, and were it to here, one of the two
   // values would likely be more than the true distance. But a distance may
@@ -41,12 +46,22 @@ for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))
   // (air all through, or none) is asked about directly. Pairs of points near
   // the camera and near the surfaces round it, a short way apart (across
   // cell sides and levels as they fall).
-  test(`${space.name}: no level's distance changes faster than the point moves, or overstates`, () => {
+  test(`${label}: no level's distance changes faster than the point moves, or overstates`, () => {
     const rnd = rand(11);
     let pairs = 0, worst = 0, balls = 0;
     // (The ball round v that a, the level's distance there, claims: no point
     // in it on the other side of the surface.)
+    // (Not where the city's air reaches over the sky's plane, up to M, which
+    // the cells over the plane do not count (ledger B35): where its level's
+    // air is open at every distance, the plaza's pieces reach there from
+    // every row.)
+    const overSky = (flight, r, v) => {
+      if (r.level !== space.openAir) return false;
+      const over = (flight.skyHeight() + v[1]) * r.sig;
+      return over > -1e-6 && over < M + 1e-6;
+    };
     const claim = (flight, r, v, a, where) => {
+      if (overSky(flight, r, v)) return;
       const tol = 1e-9 + 1e-9 * Math.abs(a);
       for (let k = 0; k < 400; k++) {
         const e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], l = Math.hypot(...e), t = (Math.abs(a) / r.sig) * Math.cbrt(k < 100 ? 1 : rnd()) * (1 - 1e-9);
@@ -87,7 +102,7 @@ for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))
   // plaza, at the two levels finer than the city. Which rule holds for every world is open:
   // ledger A1.)
   const onPurpose = space.name === 'arcology' ? [-1, 0] : [];
-  test(`${space.name}: a cell sits somewhere solid in its parent`, () => {
+  test(`${label}: a cell sits somewhere solid in its parent`, () => {
     for (let F = -8; F <= 6; F++) {
       if (onPurpose.includes(F)) continue;
       const flight = new Flight(space);
@@ -100,7 +115,7 @@ for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))
   // What a level says of a ray holds (see rayHolds), along random
   // directions, the axes and the diagonals (where a plane is met exactly
   // edge on).
-  test(`${space.name}: what a level says of a ray holds`, () => {
+  test(`${label}: what a level says of a ray holds`, () => {
     const rnd = rand(17);
     const dirs = [[1, 0, 0], [0, 1, 0], [0, 0, -1], [Math.SQRT1_2, 0, Math.SQRT1_2], [0, -Math.SQRT1_2, Math.SQRT1_2]];
     let rays = 0, inAir = 0;
@@ -121,7 +136,7 @@ for (const { space } of await Promise.all(WORLDS.map((name) => makeWorld(name)))
     assert.ok(rays > 1000 && inAir > 100, `${rays} rays, ${inAir} in air: the test reaches what it means to`);
   });
 
-  test(`${space.name}: the world is the same every time`, () => {
+  test(`${label}: the world is the same every time`, () => {
     const [a, b] = [places(space, 5, 2), places(space, 5, 2)];
     a.forEach((f, i) => f.here.forEach((r, j) => assert.equal(f.airAt(r, [0.1, 0.2, 0.3]), b[i].airAt(b[i].here[j], [0.1, 0.2, 0.3]))));
   });

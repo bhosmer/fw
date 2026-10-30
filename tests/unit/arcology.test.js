@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import arcology, { CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
+import arcology, { makeArcology, CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight } from '../../src/flight.js';
 import { rayHolds } from './rays.js';
 import { clippedRays } from './clipped.js';
 import { M } from '../../src/spaces/halls.js';
+// (The world's own _V2, where a test's variant has its own.)
+const V2 = _V2;
 
 const R = arcology.R;
 const P = R * R;
@@ -336,70 +338,75 @@ test('what the openings and the town say of a ray holds', () => {
 // diagonals and toward the buildings' middle; in the city's pockets in the
 // faces; down the light wells into the halls under them; and up from the
 // top row into the sky. What a level says of a ray holds (see rayHolds).
-test('what the city says of a ray holds', () => {
-  const rnd = rand(23);
-  const s = Math.SQRT1_2;
-  const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
-  const { lo, size, kind, at: cellAt } = VOLUME;
-  const middle = lo.map((x, a) => x + size[a] / 2);
-  const flight = new Flight(arcology);
-  // (From x, lattice units of the city's level over the middle city cell's
-  // corner, along each of es: how many in air at that level.)
-  const ask = (x, es) => {
-    Object.assign(flight.pos, { F: CITY - 1, frac: x.map((v) => (12 + v / R) / R), digits: new Map() });
-    flight.sense();
-    const r = flight.pos.levels(CITY, Math.max(CITY, flight.pos.F)).find((q) => q.level === CITY);
-    return es.reduce((n, e) => n + rayHolds(flight, r, [0, 0, 0], e.map((u) => u / Math.hypot(...e)), `city point ${x}`).inAir, 0);
-  };
-  const count = { plaza: 0, pockets: 0, bare: 0, clipped: 0, wells: 0, sky: 0 };
-  // (The plaza's air round the buildings, both rows.)
-  for (const key of _V2.NEAR.keys()) {
-    const [a, b, c] = key.split(',').map(Number);
-    for (let k = 0; k < 60; k++) {
-      const x = [(a + rnd()) * R, (b + rnd()) * R, (c + rnd()) * R];
-      count.plaza += ask(x, [dirs[k % dirs.length], middle.map((m, i) => m - x[i])]);
+// (Where the plaza does not fade, too: its pieces are then the whole height
+// of the city's rows, and far out one piece: see plaza.)
+for (const fades of [true, false]) {
+  test(`what the city says of a ray holds${fades ? '' : ', where the plaza does not fade'}`, () => {
+    const { arcology: space, _V2 } = fades ? { arcology, _V2: V2 } : makeArcology({ plaza: { fades } });
+    const rnd = rand(23);
+    const s = Math.SQRT1_2;
+    const dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, s], [s, 0, -s], [-s, 0, -s], [0, s, s], [s, -s, 0], [2, 0, 1], [1, 0, -2]];
+    const { lo, size, kind, at: cellAt } = VOLUME;
+    const middle = lo.map((x, a) => x + size[a] / 2);
+    const flight = new Flight(space);
+    // (From x, lattice units of the city's level over the middle city cell's
+    // corner, along each of es: how many in air at that level.)
+    const ask = (x, es) => {
+      Object.assign(flight.pos, { F: CITY - 1, frac: x.map((v) => (12 + v / R) / R), digits: new Map() });
+      flight.sense();
+      const r = flight.pos.levels(CITY, Math.max(CITY, flight.pos.F)).find((q) => q.level === CITY);
+      return es.reduce((n, e) => n + rayHolds(flight, r, [0, 0, 0], e.map((u) => u / Math.hypot(...e)), `city point ${x}`).inAir, 0);
+    };
+    const count = { plaza: 0, pockets: 0, bare: 0, clipped: 0, wells: 0, sky: 0 };
+    // (The plaza's air round the buildings, both rows.)
+    for (const key of _V2.NEAR.keys()) {
+      const [a, b, c] = key.split(',').map(Number);
+      for (let k = 0; k < 60; k++) {
+        const x = [(a + rnd()) * R, (b + rnd()) * R, (c + rnd()) * R];
+        count.plaza += ask(x, [dirs[k % dirs.length], middle.map((m, i) => m - x[i])]);
+      }
     }
-  }
-  // (The pockets: round the buildings' skin, a few units in or out.)
-  const skin = [];
-  for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
-    if (kind[cellAt([x, y, z])] === 2) skin.push([x + lo[0], y + lo[1], z + lo[2]]);
-  for (let k = 0; k < 1500; k++) {
-    const x = skin[Math.floor(rnd() * skin.length)].map((v) => v + 0.5 + (2 * rnd() - 1) * 6);
-    count.pockets += ask(x, [dirs[k % dirs.length], middle.map((m, i) => i === 1 ? 0 : m - x[i])]);
-  }
-  // (Round the solids without relief, a few units off, toward them: where
-  // the pockets' rays must stop at them.)
-  for (const [blo, bhi] of _V2.BARE_BOX) {
-    const [l, h] = [blo, bhi].map((b) => b.map((x, a) => x + _V2.ORIGIN[a]));
-    for (let k = 0; k < 150; k++) {
-      const x = [0, 1, 2].map((a) => (a === 1 ? l[a] + rnd() * (h[a] - l[a]) : l[a] - 6 + rnd() * (h[a] - l[a] + 12)));
-      const mid = [0, 1, 2].map((a) => (l[a] + h[a]) / 2 + (2 * rnd() - 1));
-      count.bare += ask(x, [mid.map((m, i) => m - x[i])]);
+    // (The pockets: round the buildings' skin, a few units in or out.)
+    const skin = [];
+    for (let z = 0; z < size[2]; z++) for (let y = 0; y < size[1]; y++) for (let x = 0; x < size[0]; x++)
+      if (kind[cellAt([x, y, z])] === 2) skin.push([x + lo[0], y + lo[1], z + lo[2]]);
+    for (let k = 0; k < 1500; k++) {
+      const x = skin[Math.floor(rnd() * skin.length)].map((v) => v + 0.5 + (2 * rnd() - 1) * 6);
+      count.pockets += ask(x, [dirs[k % dirs.length], middle.map((m, i) => i === 1 ? 0 : m - x[i])]);
     }
-  }
-  // (And the rays the pockets take that those solids stop, found among many
-  // close by them toward points inside them: few, so asked about only once
-  // found.)
-  const stopped = clippedRays(rnd, 6000);
-  for (const [x, e] of stopped) count.clipped += ask(x, [e]);
-  // (The wells, of the cells round the middle one on the bottom row: down
-  // into the halls, and up.)
-  for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) {
-    const id = [_V2.MID + a, ROW_ID, _V2.MID + c], w = _V2.wellOf(id, seed);
-    if (!w) continue;
-    for (let k = 0; k < 30; k++) {
-      const x = [a * R + R / 2 + (2 * rnd() - 1) * (w.w - 0.5), rnd() * (M + 1), c * R + R / 2 + (2 * rnd() - 1) * (w.w - 0.5)];
-      count.wells += ask(x, [[rnd() - 0.5, -1, rnd() - 0.5], [rnd() - 0.5, 1, rnd() - 0.5]]);
+    // (Round the solids without relief, a few units off, toward them: where
+    // the pockets' rays must stop at them.)
+    for (const [blo, bhi] of _V2.BARE_BOX) {
+      const [l, h] = [blo, bhi].map((b) => b.map((x, a) => x + _V2.ORIGIN[a]));
+      for (let k = 0; k < 150; k++) {
+        const x = [0, 1, 2].map((a) => (a === 1 ? l[a] + rnd() * (h[a] - l[a]) : l[a] - 6 + rnd() * (h[a] - l[a] + 12)));
+        const mid = [0, 1, 2].map((a) => (l[a] + h[a]) / 2 + (2 * rnd() - 1));
+        count.bare += ask(x, [mid.map((m, i) => m - x[i])]);
+      }
     }
-  }
-  // (Up from the top row, into the sky.)
-  for (let k = 0; k < 300; k++) {
-    const x = [middle[0] + (2 * rnd() - 1) * 2 * R, (ROWS - rnd() * 0.5) * R, middle[2] + (2 * rnd() - 1) * 2 * R];
-    count.sky += ask(x, [[rnd() - 0.5, 1, rnd() - 0.5]]);
-  }
-  assert.ok(count.plaza > 1000 && count.pockets > 500 && count.bare > 300 && count.clipped >= 10 && count.wells > 50 && count.sky > 200, `rays in air: ${JSON.stringify(count)}: the test reaches what it means to`);
-});
+    // (And the rays the pockets take that those solids stop, found among many
+    // close by them toward points inside them: few, so asked about only once
+    // found.)
+    const stopped = clippedRays(rnd, 6000);
+    for (const [x, e] of stopped) count.clipped += ask(x, [e]);
+    // (The wells, of the cells round the middle one on the bottom row: down
+    // into the halls, and up.)
+    for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) {
+      const id = [_V2.MID + a, ROW_ID, _V2.MID + c], w = _V2.wellOf(id, seed);
+      if (!w) continue;
+      for (let k = 0; k < 30; k++) {
+        const x = [a * R + R / 2 + (2 * rnd() - 1) * (w.w - 0.5), rnd() * (M + 1), c * R + R / 2 + (2 * rnd() - 1) * (w.w - 0.5)];
+        count.wells += ask(x, [[rnd() - 0.5, -1, rnd() - 0.5], [rnd() - 0.5, 1, rnd() - 0.5]]);
+      }
+    }
+    // (Up from the top row, into the sky.)
+    for (let k = 0; k < 300; k++) {
+      const x = [middle[0] + (2 * rnd() - 1) * 2 * R, (ROWS - rnd() * 0.5) * R, middle[2] + (2 * rnd() - 1) * 2 * R];
+      count.sky += ask(x, [[rnd() - 0.5, 1, rnd() - 0.5]]);
+    }
+    assert.ok(count.plaza > 1000 && count.pockets > 500 && count.bare > 300 && count.clipped >= 10 && count.wells > 50 && count.sky > 200, `rays in air: ${JSON.stringify(count)}: the test reaches what it means to`);
+  });
+}
 
 // The ridges' rows, as both copies look them up (the table, RIDGE_ROWS), are
 // the rows as the table was made from (ridgeRow): at every height it holds.
@@ -457,4 +464,90 @@ test('every opening up from under the plaza is carried on up by a light well', (
       assert.ok(_V2.wellOf(above, seed), `the opening up out of [${below}] ends in the plaza's floor (city cell [${x}, ${z}] across from the middle)`);
     }
   assert.ok(seen.length >= 2, `only ${seen.length} openings up from under the plaza: the test reaches none`);
+});
+
+// Where the plaza does not fade (plaza.fades false: ledger B33), a city cell
+// further out than one past those that hold anything else answers the
+// plaza's air as one piece (see farAxis and plaza). The air is the same as
+// where it fades (the same points are in it); its distance changes no faster
+// than the point moves; and what it says of a ray holds, near the building,
+// in the ring just past what it holds, and far off, out to the next
+// building's (cell ids repeat).
+test('where the plaza does not fade, its far cells are its air as one piece', () => {
+  const open = makeArcology({ plaza: { fades: false } }), space = open.arcology;
+  assert.equal(space.openAir, CITY);
+  assert.equal(arcology.openAir, null);
+  const [x0, x1, z0, z1] = open._V2.NEAR_BOX, MID = open._V2.MID;
+  const at = (s) => (q, id) => {
+    const L = q.map(Math.round);
+    return s.cellAir(L, q.map((x, a) => x - L[a]), id, seed, undefined, CITY);
+  };
+  const mine = at(space), theirs = at(arcology), rnd = rand(31);
+  // (Cells across from the middle one: near, in the ring just past, and far
+  // out, up to where ids repeat.)
+  const across = () => {
+    const k = rnd();
+    const pick = (lo, hi) => (k < 0.4 ? lo - 3 + Math.floor(rnd() * (hi - lo + 6)) : k < 0.7 ? (rnd() < 0.5 ? lo - 2 - Math.floor(rnd() * 3) : hi + 1 + Math.floor(rnd() * 3)) : Math.floor(rnd() * P) - MID);
+    return [pick(x0, x1), pick(z0, z1)];
+  };
+  let worst = 0, inAir = 0;
+  for (let n = 0; n < 20000; n++) {
+    const [a, c] = across(), id = wrapId([MID + a, ROW_ID + [-1, 0, 1, 2][n % 4], MID + c]);
+    const q = [0, 1, 2].map(() => 0.6 + rnd() * (R - 1.2));
+    const d = mine(q, id);
+    assert.equal(d <= 0, theirs(q, id) <= 0, `in air in one and not the other, at ${q} in ${id}`);
+    inAir += d <= 0;
+    const step = 10 ** (rnd() * 3 - 3), dir = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], len = Math.hypot(...dir);
+    const q2 = q.map((x, i) => Math.min(R - 0.51, Math.max(0.51, x + (dir[i] / len) * step)));
+    const moved = Math.hypot(...q2.map((x, i) => x - q[i])), change = Math.abs(mine(q2, id) - d);
+    worst = Math.max(worst, change / moved);
+    assert.ok(change <= moved * (1 + 1e-6) + 1e-9, `changed ${change} over ${moved} at ${q} in ${id}`);
+  }
+  assert.ok(worst > 0.5 && inAir > 5000, `the test meets surfaces (${worst}) and air (${inAir})`);
+  // (Nor does it overstate across cells: the ball its distance claims, air
+  // all through or none, holds into the cells round it. Not where the city's
+  // air reaches over the sky's plane, up to M, which the cells over it do not
+  // count: ledger B35. X: lattice units from the middle city cell's corner.)
+  const abs = (X) => {
+    const c = X.map((x) => Math.floor(x / R));
+    return mine(X.map((x, i) => x - c[i] * R), wrapId([MID + c[0], ROW_ID + c[1], MID + c[2]]));
+  };
+  const overSky = (X) => X[1] > ROWS * R - 1e-6 && X[1] < ROWS * R + M + 1e-6;
+  let balls = 0;
+  for (let n = 0; n < 4000; n++) {
+    const [a, c] = across(), X = [(a + rnd()) * R, (rnd() * 3 - 1) * R, (c + rnd()) * R];
+    const d = abs(X);
+    if (overSky(X) || Math.abs(d) < 1e-3) continue;
+    for (let k = 0; k < 40; k++) {
+      const e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], l = Math.hypot(...e), t = Math.abs(d) * Math.cbrt(k < 10 ? 1 : rnd()) * (1 - 1e-9);
+      const Y = X.map((x, i) => x + (e[i] / l) * t);
+      if (overSky(Y)) continue;
+      const b = abs(Y), tol = 1e-9 + 1e-9 * Math.abs(d);
+      assert.ok(d > 0 ? b > -tol : b < tol, `${d} at ${X}, but ${b} at ${Y} within it`);
+    }
+    balls++;
+  }
+  assert.ok(balls > 3000, `${balls} balls asked about`);
+  // (Rays, from points in the plaza's air, both rows, along the axes, the
+  // diagonals, at a slant, toward the building and away.)
+  const flight = new Flight(space), s = Math.SQRT1_2;
+  const dirs = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [s, 0, s], [-s, 0, -s], [0, -s, s], [0.3, 0.05, -1], [1, -0.02, 0.4], [0.2, 0.3, 1]];
+  let rays = 0, far = 0;
+  for (let k = 0; k < 1500; k++) {
+    const [a, c] = across(), x = [(a + rnd()) * R, (rnd() * 1.9 + 0.05) * R, (c + rnd()) * R];
+    // (At the city's level, in the cell x is in: its id's digits there and
+    // one level coarser, and where in it x is.)
+    const cell = [a, Math.floor(x[1] / R), c], id = [MID + cell[0], ROW_ID + cell[1], MID + cell[2]];
+    const mod = (v) => ((v % R) + R) % R;
+    Object.assign(flight.pos, { F: CITY, frac: x.map((v, i) => v / R - cell[i]), digits: new Map([[CITY, id.map(mod)], [CITY - 1, id.map((v) => mod(Math.floor(v / R)))]]) });
+    flight.sense();
+    const r = flight.pos.levels(CITY, Math.max(CITY, flight.pos.F)).find((q) => q.level === CITY);
+    const e = k % 3 ? dirs[k % dirs.length] : [-x[0], 0, -x[2]];
+    const said = rayHolds(flight, r, [0, 0, 0], e.map((u) => u / Math.hypot(...e)), `plaza point ${x}`);
+    rays += said.inAir;
+    const ray = { dir: e.map((u) => u / Math.hypot(...e)) };
+    flight.airAt(r, [0, 0, 0], ray);
+    if (ray.reach > 10 * R) far++;
+  }
+  assert.ok(rays > 600 && far > 100, `rays in air: ${rays}, ${far} of them far: the test reaches what it means to`);
 });

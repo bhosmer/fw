@@ -68,9 +68,16 @@ const TOWN_DEF = {
   margin: 1,
   types: TOWN_TYPES,
 };
+// Whether the plaza's air fades with distance as the rest of its level does
+// (fades), or, being open at every distance, never does (see openAir in
+// halls.js, and plaza): the rest of the level (the building's masses, the
+// light wells, the city's pockets, the halls under the plaza) fades either
+// way. (It fades for now, until the open plaza has been looked at: ledger
+// B33.)
+const PLAZA = { fades: true };
 // The arcology's definition: its building (see hexahedron.js), the halls it
-// is built of (see halls.js), its relief and its town.
-export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF });
+// is built of (see halls.js), its relief, its town and its plaza.
+export const ARCOLOGY = frozen({ building: HEXAHEDRON, halls: HALLS, relief: RELIEF, town: TOWN_DEF, plaza: PLAZA });
 
 // The most ridge rows a face's rectangle can span, one level finer: as many
 // as both copies look under (see underRidge), check's bound on the relief.
@@ -164,6 +171,8 @@ export function makeArcology(set) {
   // (What every world's cells share: see pieces.js.)
   const { beyond, h01 } = P;
   const def = check(frozen(define(ARCOLOGY, set)));
+  // (Whether the plaza's air is open at every distance: see PLAZA.)
+  const UNFADED = !def.plaza.fades;
   const { space: halls, spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf } = makeHalls(def.halls);
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
@@ -269,16 +278,43 @@ export function makeArcology(set) {
   const ownGlsl = (id) => `${id} - R * ivec3(floor((vec3(${id}) + 0.5) / float(R)))`;
   const ownOf = (id) => id.map((x) => x - R * Math.floor((x + 0.5) / R));
 
+  // Where the plaza does not fade (see PLAZA), the solids standing in it are
+  // grown as their level fades, by up to a whole fade (CLOSE R: see plaza):
+  // how far out along any axis a solid then reaches, for each unit its planes
+  // are moved out, at most (GROW), from their corners. (Each extent is
+  // concave in the growth, so the most is for the least: asked at a small
+  // one.) And how far that is at a whole fade (GROWN), by which the solids'
+  // bounds are taken out where the plaza's pieces are listed (NEAR).
+  const reach = (s, g) => {
+    const ps = planesOf(s).map((p) => ({ n: p.n, K: p.K + g * Math.hypot(...p.n) })), at = [];
+    for (let i = 0; i < ps.length; i++)
+      for (let j = i + 1; j < ps.length; j++)
+        for (let k = j + 1; k < ps.length; k++) {
+          const X = solve3([ps[i].n, ps[j].n, ps[k].n], [ps[i].K, ps[j].K, ps[k].K]);
+          if (X.every(Number.isFinite) && ps.every((p) => dot(p.n, X) <= p.K + 1e-6 * Math.hypot(...p.n))) at.push(X);
+        }
+    return [0, 1, 2].flatMap((a) => [Math.min(...at.map((X) => X[a])), Math.max(...at.map((X) => X[a]))]);
+  };
+  const GROW = UNFADED ? Math.max(...SOLIDS.flatMap((s) => {
+    const r0 = reach(s, 0), g = 1e-3;
+    return reach(s, g).map((x, i) => (i % 2 ? x - r0[i] : r0[i] - x) / g);
+  })) : 0;
+  const GROWN = GROW * halls.close * R;
+
   // For each city cell (across from the middle one) with any solid near it,
   // the solids that reach into the air it answers for (its plaza piece, see
   // plaza): only those are asked about.
   const NEAR = new Map();
-  SOLIDS.forEach(({ lo: [x0, y0, z0], hi: [x1, y1, z1] }, k) => {
+  SOLIDS.forEach(({ lo, hi }, k) => {
+    // (Grown, where the plaza does not fade: see GROWN.)
+    const [x0, y0, z0] = lo.map((x) => x - GROWN), [x1, y1, z1] = hi.map((x) => x + GROWN);
     for (let a = Math.floor((x0 - 2 * R) / R); a <= Math.floor((x1 + R) / R); a++)
-      for (let b = Math.floor((y0 - R - M) / R); b <= Math.floor((y1 + M) / R); b++)
+      for (let b = UNFADED ? 0 : Math.floor((y0 - R - M) / R); b <= (UNFADED ? ROWS - 1 : Math.floor((y1 + M) / R)); b++)
         for (let c = Math.floor((z0 - 2 * R) / R); c <= Math.floor((z1 + R) / R); c++) {
           if (b < 0 || b >= ROWS) continue;
-          const lo = [a * R - R, b * R + (b === 0 ? G : -M), c * R - R], hi = [a * R + 2 * R, b * R + R + M, c * R + 2 * R];
+          // (Where the plaza does not fade, each piece is the whole height of
+          // the city's rows: see plaza.)
+          const lo = [a * R - R, UNFADED ? G : b * R + (b === 0 ? G : -M), c * R - R], hi = [a * R + 2 * R, UNFADED ? ROWS * R + M : b * R + R + M, c * R + 2 * R];
           if (x1 <= lo[0] || x0 >= hi[0] || y1 <= lo[1] || y0 >= hi[1] || z1 <= lo[2] || z0 >= hi[2]) continue;
           const key = `${a},${b},${c}`;
           if (!NEAR.has(key)) NEAR.set(key, []);
@@ -289,6 +325,14 @@ export function makeArcology(set) {
   const NEAR_START = [0];
   for (const k of NEAR.keys()) NEAR_START.push(NEAR_START.at(-1) + NEAR.get(k).length);
   const NEAR_BLOCKS = [...NEAR.values()].flat();
+  // Where the plaza does not fade (see PLAZA): the city cells (x and z,
+  // across from the middle one) that hold anything but the plaza's air, its
+  // solids (NEAR) and the cells with halls under them and wells up through
+  // the floor (offBuilt 0 or 1), lie in NEAR_X0 to NEAR_X1 and NEAR_Z0 to
+  // NEAR_Z1 (the higher not included). A cell further out than one past them
+  // holds the plaza's air alone, and answers it as one piece: see plaza.
+  const [NEAR_X0, NEAR_Z0] = [0, 2].map((a) => Math.min(...NEAR_CELLS.map((c) => c[a]), ...BUILT_CELLS.map((c) => c[a / 2] - 1)));
+  const [NEAR_X1, NEAR_Z1] = [0, 2].map((a) => Math.max(...NEAR_CELLS.map((c) => c[a] + 1), ...BUILT_CELLS.map((c) => c[a / 2] + 2)));
 
   // Pockets: a face is cut, along it and up it, into rectangles: super-blocks
   // sb long in rows sby high (rows by true height), each row shifted along by
@@ -826,7 +870,7 @@ export function makeArcology(set) {
   // (For the checks: how many rays the solids without relief have stopped
   // in the city's pockets: see the pockets' block in cellAir.)
   const SEEN = { clipped: 0 };
-  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
   const VOLUME = (() => {
     const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
     const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -1122,7 +1166,7 @@ export function makeArcology(set) {
     // q. Otherwise the text is both's: in JavaScript float, abs, min and max
     // are as GLSL has them, points are arrays, and whole numbers are as
     // twin.unsigned makes them.)
-    const { fn, decl, loop, num, vec3Arg, ivec3, vadd, vsub, D, NOTHING, RAY, X, slant } = twin.writer(js);
+    const { fn, decl, loop, num, vec3Arg, ivec3, vadd, vsub, D, NOTHING, RAY, X, slant, fade, faded } = twin.writer(js);
     const middle = [
       '// Where the middle city cell is from this one, in lattice units.',
       fn('ivec3', 'fromMiddle', ['ivec3 id']),
@@ -1183,6 +1227,26 @@ export function makeArcology(set) {
     // (How far the point is outside solid k's bounds along axis a.)
     const off = (a) => `max(float(SLO[k].${a} - o.${a}) - q.${a}, q.${a} - float(SHI[k].${a} - o.${a}))`;
     const span = (x, f, lo, hi, a) => twin.planes(js, 'air', [{ span: [x, f, lo, hi, a] }])[0];
+    // (Where the plaza does not fade, its own lines: see PLAZA. In the shader,
+    // the plaza's air is asked unshrunk (gO and gA 0), its solids as the level
+    // fades them, grown; and the distance less gO, which map takes off the
+    // whole level again, as the town's is: see townAir.)
+    const [opened, openedFade, openedFaded] = [(...lines) => (UNFADED ? lines : []), (...lines) => (UNFADED ? fade(...lines) : []), (term) => (UNFADED ? faded(term) : '')];
+    const farAxis = opened(
+      '// Which way city cell o (counted from the middle one) is out past the',
+      '// cells that hold anything but the plaza\'s air by more than one (see',
+      '// NEAR_X0): 0, along x; 2, along z (x first); -1, it is not.',
+      fn('int', 'farAxis', ['ivec3 o']),
+      '  if (o.x < NEAR_X0 - 1 || o.x >= NEAR_X1 + 1) return 0;',
+      '  if (o.z < NEAR_Z0 - 1 || o.z >= NEAR_Z1 + 1) return 2;',
+      '  return -1;',
+      '}',
+    );
+    // (Cell ids repeat every P cells (see wrapId), and the building with them:
+    // a cell out past it along x answers the air between this building's
+    // near cells and the next one's, from the one's far side to the other's
+    // near side.)
+    const PC = R * R;
     const plaza = [
       '// The air over the plaza, less the building: the distance to the nearest',
       '// solid (and, for a ray, where it strikes one, if before it leaves this',
@@ -1190,31 +1254,59 @@ export function makeArcology(set) {
       '// that it does not seem to close in at every one; narrower, rays far off',
       '// crossed so many pieces that they ran out of steps), and the solids asked',
       '// about are all that reach into it (see NEAR).',
+      ...opened(
+        '// (Where the plaza does not fade, a cell further out than one past the',
+        '// cells that hold anything else (see farAxis) answers the plaza\'s air',
+        '// alone, from the floor to over the sky\'s plane, as one piece: out from',
+        "// the near cells' side, a cell back from its own, to the next building's",
+        '// along that axis, and half the way to where ids repeat along the other.',
+        '// Rays far off cross it in a step or two.)',
+      ),
       fn('float', 'plaza', ['ivec3 L', 'vec3 f', 'ivec3 id']),
       ...[
+        ...opened(decl('ivec3', 'o = fromMiddle(id)'), decl('int', `side = farAxis(${js ? 'o.map((x) => x / R)' : 'o / R'})`)),
+        ...openedFade('float fo = gO, fa = gA;', 'gO = 0.0; gA = 0.0;'),
         'airPiece();',
-        span('L.x', 'f.x', '-R', '2 * R', 0),
-        span('L.z', 'f.z', '-R', '2 * R', 2),
-        '// (From the floor, in the bottom row; higher up, from a little below the',
-        '// cell, into the air of the one under it.)',
-        span('L.y', 'f.y', `id.y == ${ROW_ID} ? G : -M`, 'R + M', 1),
+        ...(UNFADED
+          ? [
+              'if (side < 0) {',
+              '  ' + span('L.x', 'f.x', '-R', '2 * R', 0),
+              '  ' + span('L.z', 'f.z', '-R', '2 * R', 2),
+              '} else if (side == 0) {',
+              '  ' + span('L.x', 'f.x', `o.x >= (NEAR_X1 + 1) * R ? NEAR_X1 * R - o.x : (NEAR_X1 - ${PC}) * R - o.x`, `o.x >= (NEAR_X1 + 1) * R ? (NEAR_X0 + ${PC}) * R - o.x : NEAR_X0 * R - o.x`, 0),
+              '  ' + span('L.z', 'f.z', `-${PC / 2} * R`, `${PC / 2 + 1} * R`, 2),
+              '} else {',
+              '  ' + span('L.x', 'f.x', `-${PC / 2} * R`, `${PC / 2 + 1} * R`, 0),
+              '  ' + span('L.z', 'f.z', `o.z >= (NEAR_Z1 + 1) * R ? NEAR_Z1 * R - o.z : (NEAR_Z1 - ${PC}) * R - o.z`, `o.z >= (NEAR_Z1 + 1) * R ? (NEAR_Z0 + ${PC}) * R - o.z : NEAR_Z0 * R - o.z`, 2),
+              '}',
+            ]
+          : [span('L.x', 'f.x', '-R', '2 * R', 0), span('L.z', 'f.z', '-R', '2 * R', 2)]),
+        ...(UNFADED
+          ? ["// (From the floor to a little over the sky's plane, in every row: one", "// piece, so that how open it is over the floor does not stop at the", '// rows\' seam, as the occlusion would see it.)']
+          : ['// (From the floor, in the bottom row; higher up, from a little below the', '// cell, into the air of the one under it.)']),
+        UNFADED
+          ? span('L.y', 'f.y', `G - R * (id.y - ${ROW_ID})`, `${ROWS} * R + M - R * (id.y - ${ROW_ID})`, 1)
+          : span('L.y', 'f.y', `id.y == ${ROW_ID} ? G : -M`, 'R + M', 1),
         decl('float', `box = ${D}`),
+        ...openedFade('gO = fo; gA = fa;'),
+        ...opened(`if (side >= 0) return box${openedFaded(' - gO')};`),
         decl('float', `d = ${NOTHING}`, true),
         js ? 'const q = [L[0] + f[0], L[1] + f[1], L[2] + f[2]];' : 'vec3 q = vec3(L) + f;',
-        decl('ivec3', 'o = fromMiddle(id)'),
+        ...(UNFADED ? [] : [decl('ivec3', 'o = fromMiddle(id)')]),
         ...near,
-        'if (n < 0) return box;',
+        `if (n < 0) return box${openedFaded(' - gO')};`,
         loop('j', 'NEAR_START[n]', 'NEAR_START[n + 1]'),
         ...[
           decl('int', 'k = NEAR_BLOCKS[j]'),
           '// (A solid further off than one already found, or than a ray goes in',
           '// this piece, is not asked about.)',
+          ...openedFade('// (Grown as it fades: see GROW.)'),
           decl('float', `far = max(max(${off('x')}, ${off('y')}), ${off('z')})`),
-          `if (far >= d && (!${RAY} || far >= ${X})) continue;`,
+          `if (far >= d && (!${RAY} || far >= ${X}${openedFaded(` + GROW * (gO + gA * ${X})`)})) continue;`,
           'd = min(d, solid(k, L, f, o));',
         ].map((l) => '  ' + l),
         '}',
-        'return max(box, -d);',
+        `return max(box${openedFaded(' - gO')}, -d);`,
       ].map((l) => '  ' + l),
       '}',
     ];
@@ -1248,7 +1340,7 @@ export function makeArcology(set) {
       '}',
     ];
     const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['L', 'f', 'q', 'o', 'v', 'id', 'own', 'up', 'VOL_LO', 'VOL_SIZE'])) : lines.join('\n'));
-    return { middle: text(middle), offBuilt: text(offBuilt), room: text(room), solids: text([...solids, solid]), plaza: text(plaza), table: text(table), ground: text(ground) };
+    return { middle: text(middle), offBuilt: text(offBuilt), room: text(room), solids: text([...solids, solid]), farAxis: text(farAxis), plaza: text(plaza), table: text(table), ground: text(ground) };
   }
   // The openings, in either language (js: true, or GLSL), written once from
   // their tables (OPEN_ROWS): which sides a cell's openings run on across
@@ -2339,6 +2431,8 @@ export function makeArcology(set) {
   // and cityFaces, the city's plaza and ground, as made before it.)
   function cellPieces(js) {
     const { fn, decl, num, vadd, vaddf, vsub, vec3Of, RAY, X, D, REACH, READ_REACH, aim, take, fade, faded, shaderOnly, axis, NOTHING } = twin.writer(js);
+    // (Where the plaza does not fade, its own lines and terms: see PLAZA.)
+    const [opened, openedFade, openedFaded] = [(...lines) => (UNFADED ? lines : []), (...lines) => (UNFADED ? fade(...lines) : []), (term) => (UNFADED ? faded(term) : '')];
     const CB = cellB(js);
     const relief = [
       '// What the table says of the level-(CITY + 1) cell id, in a city cell',
@@ -2443,18 +2537,27 @@ export function makeArcology(set) {
       `  return a${faded(' - gO')};`,
       '}',
     ];
+    // (Where the plaza does not fade: whether the city's level is faded fully,
+    // as the cell being asked about is seen (see gScale). Then all there is of
+    // it is the plaza, and the solids standing in it, grown as far as they
+    // grow; its wells, its pockets and the halls under the plaza are gone, as
+    // the whole level would be. Asked where it is used: kept in a global,
+    // set once, it took the shader's build from 2.4 s to 4.0 s.)
+    const GONE = '(gScale - 1.0 / LOD_HI) * LOD_K >= 1.0';
     const city = [
       '// A cell of the city.',
+      ...opened("// (Where the plaza does not fade, a cell far out holds nothing but its air: see farAxis.)"),
       js ? 'function city(L, f, id, seed, ray) {' : 'float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {',
       ...aim('  '),
       ...shaderOnly('  bool ray = gRay;', '  gRay = false;'),
-      '  ' + decl('float', `w = id.y == ${ROW_ID} ? well(L, f, id, seed) : ${NOTHING}`),
+      ...opened('  ' + decl('bool', `rest = farAxis(${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'}) < 0${openedFaded(` && !(${GONE})`)}`)),
+      '  ' + decl('float', `w = id.y == ${ROW_ID}${UNFADED ? ' && rest' : ''} ? well(L, f, id, seed) : ${NOTHING}`),
       '  ' + decl('float', 'p = plaza(L, f, id)'),
       ...[...twin.reask(js, 'p', 'plaza(L, f, id)'), ...twin.reask(js, 'w', 'well(L, f, id, seed)')].map((l) => '  ' + l),
       ...shaderOnly('  gRay = ray;'),
       '  // (Its pockets: see cell.)',
-      `  ${CARVE} = 0;`,
-      `  ${CARVE_FACES} = cityFaces(L, f, fromMiddle(id));`,
+      UNFADED ? `  ${CARVE} = rest ? 0 : -1;` : `  ${CARVE} = 0;`,
+      UNFADED ? `  ${CARVE_FACES} = rest ? cityFaces(L, f, fromMiddle(id)) : 0u;` : `  ${CARVE_FACES} = cityFaces(L, f, fromMiddle(id));`,
       `  ${BASE} = ${vsub('fromMiddle(id)', 'ORIGIN')};`,
       '  return min(p, w);',
       '}',
@@ -2493,6 +2596,7 @@ export function makeArcology(set) {
       ...aim('      '),
       `      return float(L.y + R * (id.y - ${ROW_ID + ROWS})) + f.y;`,
       '    }',
+      ...openedFade("    // (The city's level faded fully: none of it is left but the plaza, and", '    // the solids standing in it, grown.)', `    if (level == ${CITY} && ${GONE}) {`, ...aim('      '), `      return ${NOTHING};`, '    }'),
       '    // (The halls asked after in one place only: the compiler copies them out',
       '    // wherever they are asked after, and they are much the biggest part. Not',
       '    // at all in the skin and plain cells, which have none.)',
@@ -2557,7 +2661,12 @@ const int NEAR_BLOCKS[${NEAR_BLOCKS.length}] = int[${NEAR_BLOCKS.length}](${NEAR
 const int NBUILT = ${BUILT_CELLS.length};
 const ivec2 BUILT_CELLS[NBUILT] = ivec2[NBUILT](${BUILT_CELLS.map(([a, b]) => `ivec2(${a}, ${b})`).join(', ')});
 ${CITY_GLSL.offBuilt}
-
+${UNFADED ? `// The city cells that hold anything but the plaza's air (see farAxis), and
+// how far out a solid reaches for each unit it is grown (see plaza).
+const int NEAR_X0 = ${NEAR_X0}, NEAR_X1 = ${NEAR_X1}, NEAR_Z0 = ${NEAR_Z0}, NEAR_Z1 = ${NEAR_Z1};
+const float GROW = ${glf(GROW)};
+${CITY_GLSL.farAxis}
+` : ''}
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});
 const ivec3 VOL_SIZE = ivec3(${VOLUME.size.join(', ')});
 const ivec3 ORIGIN = ivec3(${ORIGIN.join(', ')});
@@ -2757,10 +2866,10 @@ ${CELL_GLSL.cell}
   // The rest of the city's own pieces in JavaScript (see cityPieces), made
   // into functions.
   const NEAR_AT = new Map(NEAR_CELLS.map((c, n) => [c.join(), n]));
-  const { plaza, tableAt, groundCell, groundAir } = new Function(
-    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE',
-    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\n${CITY_JS.solids}\n${CITY_JS.plaza}\n${CITY_JS.table}\n${CITY_JS.ground}\nreturn { plaza, tableAt, groundCell, groundAir };\n//# sourceURL=cityPieces.gen.js`,
-  )(P, SL, fromMiddle, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size);
+  const { plaza, tableAt, groundCell, groundAir, farAxis } = new Function(
+    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE', 'NEAR_X0', 'NEAR_X1', 'NEAR_Z0', 'NEAR_Z1',
+    `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\n${CITY_JS.solids}\n${CITY_JS.farAxis}\n${CITY_JS.plaza}\n${CITY_JS.table}\n${CITY_JS.ground}\nreturn { plaza, tableAt, groundCell, groundAir${UNFADED ? ', farAxis' : ''} };\n//# sourceURL=cityPieces.gen.js`,
+  )(P, SL, fromMiddle, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size, NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1);
 
   // The point along the diagonals (the shared pieces', see pieces.at), and
   // along the slants (from dg, or else from L and f).
@@ -2823,9 +2932,9 @@ ${CELL_GLSL.cell}
   // shader's texelFetch reads its texture.
   const CELL_JS = cellPieces(true);
   const { relief, wellOf, cellAir } = new Function(
-    'P', 'SEEN', 'RS', 'setPoint', 'plaza', 'tableAt', 'groundCell', 'groundAir', 'hallsAir', 'carve', 'cityFaces', 'bareIn', 'openings', 'townAir', 'OPEN_AT', 'CROSS_AT', 'TOWN_AT', 'FACE_AT', 'CELL', 'R', 'M', 'G', 'fromMiddle', 'offBuilt', 'ownOf', 'wrapId', 'built', 'spaceRoom', 'hashCell', 'slabHole', 'slabHalf', 'NBUILT', 'BUILT_CELLS', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
+    'P', 'SEEN', 'RS', 'setPoint', 'plaza', 'farAxis', 'tableAt', 'groundCell', 'groundAir', 'hallsAir', 'carve', 'cityFaces', 'bareIn', 'openings', 'townAir', 'OPEN_AT', 'CROSS_AT', 'TOWN_AT', 'FACE_AT', 'CELL', 'R', 'M', 'G', 'fromMiddle', 'offBuilt', 'ownOf', 'wrapId', 'built', 'spaceRoom', 'hashCell', 'slabHole', 'slabHalf', 'NBUILT', 'BUILT_CELLS', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
     `'use strict';\nconst { S, airPiece, airPlane, aim, through, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst NO_ENTRY = [0, 0, 0, 0];\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.well}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\n${CELL_JS.city}\n${CELL_JS.cell}\nreturn { relief, wellOf, cellAir };\n//# sourceURL=cellPieces.gen.js`,
-  )(P, SEEN, RS, setPoint, plaza, tableAt, groundCell, groundAir, hallsAir, carve, cityFaces, bareIn, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, FACE_AT, CELL, R, M, G, fromMiddle, offBuilt, ownOf, wrapId, built, spaceRoom, hashCell, slabHole, slabHalf, BUILT_CELLS.length, BUILT_CELLS, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
+  )(P, SEEN, RS, setPoint, plaza, farAxis, tableAt, groundCell, groundAir, hallsAir, carve, cityFaces, bareIn, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, FACE_AT, CELL, R, M, G, fromMiddle, offBuilt, ownOf, wrapId, built, spaceRoom, hashCell, slabHole, slabHalf, BUILT_CELLS.length, BUILT_CELLS, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
 
   // Where a first visit starts, in the middle city cell (lattice units): on
   // the plaza, near the building, wherever nothing stands.
@@ -2873,9 +2982,14 @@ ${CELL_GLSL.cell}
     // next for its pockets.
     slants: SLANTS,
     // A plaza's air reaches up out of its cell, and its longest way runs
-    // corner to corner across the cells either side.
+    // corner to corner across the cells either side. (Where the plaza does not
+    // fade, its pieces are bigger, as its air is: the shader does not hold the
+    // open level to these: see openAir.)
     maxInterior: 0.65,
     longestWay: 6,
+    // (Where the plaza does not fade, its air is open at every distance:
+    // see PLAZA.)
+    openAir: UNFADED ? CITY : null,
 
     // On the plaza, in the city's row; coarser than that, all is solid, so
     // anywhere does.

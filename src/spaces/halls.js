@@ -34,6 +34,15 @@
 //                  air, in cells
 //   close          how far (fraction of the cell) air is shrunk to fade a level
 //                  out with distance
+//   openAir        optionally, the one level some of whose air is open at
+//                  every distance (none here): its features have no bound,
+//                  where maxInterior and longestWay bound every other
+//                  level's. The shader does not leave it out for being small
+//                  or far itself (a coarser level's bound may still end a
+//                  step's asking before it, as for any level); the space
+//                  fades the rest of it its own way (see gScale in
+//                  shaders.js), and when that is gone leaves only the open
+//                  air and what stands in it, as grown as it grows
 //   openArea       roughly what fraction of a surface is openings
 //   ancestorDigit  where a cell sits inside its parent when nothing says
 //                  otherwise (must be somewhere solid in the parent)

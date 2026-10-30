@@ -307,11 +307,18 @@ void main() {
 // exact: step each ray from one piece of air to the next (the renderer).
 // Otherwise: step by the safe distance (sphere tracing, kept to check against).
 export function viewFrag(nlev, space, exact) {
+  // (Where a level's air is open at every distance (the space's openAir: see
+  // OPEN_AIR), what is said of it here and only then.)
+  const open = space.openAir != null, ifOpen = (text, otherwise = '') => (open ? text : otherwise);
   return (
     common(nlev, space) +
     /* glsl */ `
 #define EXACT ${exact ? 1 : 0}
-uniform int uN;            // levels in use, coarsest first
+${ifOpen(`// The level whose air is open at every distance (see openAir in
+// spaces/halls.js): it is not left out for being small or far itself. What
+// of it fades (all but its open air) the space fades its own way: see gScale.
+#define OPEN_AIR ${space.openAir}
+`)}uniform int uN;            // levels in use, coarsest first
 uniform float uNear[NLEV]; // how far from the camera each level's nearest air is
 uniform vec3 uWall[NLEV];
 uniform vec3 uFloor[NLEV];
@@ -408,9 +415,9 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     if (i >= uN) break;
     if (along < gSolid[i]) continue;   // nothing but solid at this level yet
     float cell = float(R) / uSig[i];
-    if (d > MAX_IN * cell) break;      // already in bigger air than this level has
+    if (d > MAX_IN * cell${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;      // already in bigger air than this level has
     float px = cell / foot;
-    if (px < LOD_LO) break;            // too small to see: leave it solid
+    if (px < LOD_LO${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;            // too small to see: leave it solid
     float a = levelAir(i, v, CLOSE * float(R) * clamp((foot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0), foot / cell);
     if (advance && a > SLACK) gSolid[i] = along + (a - SLACK) / uSig[i];
     float w = -a / uSig[i];
@@ -480,13 +487,17 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       if (i >= uN) break;
       if (t < gSolid[i]) continue;        // nothing but solid at this level yet
       float cell = float(R) / uSig[i];
-      if (best > LONGEST * cell) break;   // already going further than this level could take us
-      if ((foot / cell - 1.0 / LOD_HI) * LOD_K >= 1.0) break; // too small to see even face on: leave it solid
+${ifOpen(`      bool openAir = uLevel[i] == OPEN_AIR;
+`)}      if (best > LONGEST * cell${ifOpen(' && !openAir')}) break;   // already going further than this level could take us
+      if ((foot / cell - 1.0 / LOD_HI) * LOD_K >= 1.0${ifOpen(' && !openAir')}) break; // too small to see even face on: leave it solid
       float slant = seen ? max(lean(bn, dir), LEAN_MIN) : 1.0;
       float rel = (foot / (slant * cell) - 1.0 / LOD_HI) * LOD_K;
-      if (rel >= 1.0) continue;           // too foreshortened to see
-      gO = CLOSE * float(R) * max(rel, 0.0);
-      gA = rel > 0.0 ? CLOSE * LOD_K * pix / slant : 0.0;
+      if (rel >= 1.0${ifOpen(' && !openAir')}) continue;           // too foreshortened to see
+${ifOpen(`      // (The open level, faded fully, stays so: its open air as it is, the
+      // rest gone; see gScale.)
+      rel = min(rel, 1.0);
+`)}      gO = CLOSE * float(R) * max(rel, 0.0);
+      gA = rel > 0.0${ifOpen(' && rel < 1.0')} ? CLOSE * LOD_K * pix / slant : 0.0;
       gScale = foot / (slant * cell);
       gScaleRate = pix / (slant * float(R));
       gRay = true;
@@ -502,7 +513,7 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
         }
         // The shrinking changes pace where the level starts to fade and
         // where it is gone: go no further than that in one step.
-        float turn = slant * cell / ((rel > 0.0 ? LOD_LO : LOD_HI) * pix);
+        float turn = ${ifOpen('rel >= 1.0 ? 1e30 : ')}slant * cell / ((rel > 0.0 ? LOD_LO : LOD_HI) * pix);
         float e = min(reach / uSig[i], max(turn - far, 0.0));
         if (e > best) {
           // The surface takes its colour from the level whose air we are
@@ -682,12 +693,12 @@ void main() {
         vec3 ink = vec3(0.0);
         if (q == ASK_FOG) {
           // (Not as far as levels too small to see from here, as with drawing.)
-          if (cell < LOD_LO * down * pix) break;
+          if (cell < LOD_LO * down * pix${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;
         } else if (occlusion) {
           if (along < gSolid[i]) continue;   // nothing but solid at this level yet
-          if (m > MAX_IN * cell) break;      // already in bigger air than this level has
+          if (m > MAX_IN * cell${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;      // already in bigger air than this level has
           float px = cell / seenFoot;
-          if (px < LOD_LO) break;            // too small to see: leave it solid
+          if (px < LOD_LO${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;            // too small to see: leave it solid
           o = CLOSE * float(R) * clamp((seenFoot / cell - 1.0 / LOD_HI) * LOD_K, 0.0, 1.0);
           sc = seenFoot / cell;
         } else {

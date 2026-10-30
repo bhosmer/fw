@@ -22,6 +22,13 @@ const sample = (space) => {
   return out;
 };
 
+// How far a ray goes in the plaza's air, far off from the building.
+const farPlaza = (space) => {
+  const ray = { dir: [0.6, 0, 0.8] };
+  space.cellAir([12, 12, 12], [0.25, 0.25, 0.25], [340, 300, 330], levelSeed(-2), undefined, -2, [12, 12, 12], ray);
+  return ray.reach;
+};
+
 // And in the town on the roof band (whose cells _V2.relief marks), many
 // more: what its density and kinds of building change is only there.
 const townSample = (made) => {
@@ -48,6 +55,7 @@ test('a variant is made from the definition, and leaves the world as it was', ()
   assert.equal(viewFrag(12, again.arcology, true), before.glsl, 'made again: the same shader');
   assert.deepEqual(again.VOLUME.data, VOLUME.data, 'made again: the same table');
   assert.deepEqual(sample(again.arcology), before.at, 'made again: the same air');
+  assert.equal(viewFrag(12, makeArcology({ plaza: { fades: true } }).arcology, true), before.glsl, 'the plaza fading, as it does: the same shader');
   const v = makeArcology({ building: { edge: 'cornice' }, halls: { solid: 0.5, walls: { door: { share: 0.36 } } }, town: { density: [30, 60, 90] } });
   assert.equal(v.def.building.edge, 'cornice');
   assert.equal(v.def.halls.walls.door.share, 0.36);
@@ -78,12 +86,15 @@ test('every part of a variant is made', () => {
     { town: { plans: ARCOLOGY.town.plans.map((p, i) => (i === 4 ? [[0, 0, 12, 24], [12, 0, 24, 24]] : p)) } },
     { town: { types: ARCOLOGY.town.types.filter((t) => t.name !== 'row') } },
     { town: { types: [...ARCOLOGY.town.types, FIVE] } },
+    { plaza: { fades: false } },
   ]) {
     const v = makeArcology(set), what = JSON.stringify(set).slice(0, 80);
     assert.ok(v.arcology.glsl !== glsl, `${what} made no difference to the shader`);
     // (The column's rings aside, every part shows in the air the JavaScript
     // finds too.)
-    if (!set.building?.coreFace) assert.ok(JSON.stringify([sample(v.arcology), townSample(v)]) !== air, `${what} made no difference to the JavaScript`);
+    // (The plaza that does not fade, far off: see farPlaza.)
+    if (!set.building?.coreFace && !set.plaza) assert.ok(JSON.stringify([sample(v.arcology), townSample(v)]) !== air, `${what} made no difference to the JavaScript`);
+    if (set.plaza) assert.ok(farPlaza(v.arcology) !== farPlaza(arcology), `${what} made no difference to the JavaScript`);
     // (A building of five boxes: all five asked after, in both.)
     if (set.town?.types?.includes(FIVE)) assert.ok(v._V2.TOWN_SHAPES === 5 && v.arcology.glsl.includes('TOWN_SHAPES = 5'), 'the fifth box is not asked after');
   }
