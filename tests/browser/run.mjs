@@ -483,6 +483,43 @@ check('two worlds compared flip, and nothing else changes', async () => {
   assert(h.sky > -1e29, 'B, flipped to, has no sky: it stands on the other\'s ground');
 });
 
+// Settings in a link (how we fly): taken, refused when there is no such
+// one, and compared: the same world, flown two ways, with one program,
+// V flipping the settings alone.
+check('a link sets how we fly, and two ways of flying are compared', async () => {
+  await page.goto(`${base}index.html?${++loads}&arcology&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra', false, 'halls'));
+  const r = await page.eval(`(() => {
+    const out = { a: { ...fw.flight.settings }, space: fw.space, label: document.querySelector('.world').textContent, programs: fw.renderer.entries.size };
+    fw.flip();
+    out.b = { ...fw.flight.settings };
+    out.same = fw.space === out.space;
+    out.blabel = document.querySelector('.world').textContent;
+    delete out.space;
+    return out;
+  })()`);
+  assert(!page.errors.length, `errors: ${page.errors.join('\n')}`);
+  assert(r.a.ease === 2 && r.a.speed === 1 && r.b.ease === 2 && r.b.speed === 0.5, `the settings: ${JSON.stringify(r)}`);
+  assert(r.same && r.programs === 1, `two programs, or two worlds, for one world: ${JSON.stringify(r)}`);
+  assert(r.label === 'A: arcology flight.ease=2' && r.blabel === 'B: arcology flight.ease=2 flight.speed=0.5', `labels: ${r.label} / ${r.blabel}`);
+  // (On to the next world: how we fly comes along; the world's changes and
+  // the one compared are left behind.)
+  await page.goto(`${base}index.html?${++loads}&arcology&town.margin=0.5&flight.ease=2&vs.flight.speed=0.5`, setup('alhambra', false, 'halls'));
+  await page.eval(`(window.__old = true, setTimeout(() => document.getElementById('world-button').click()), 0)`);
+  for (let i = 0; i < 600; i++) {
+    try {
+      if (await page.eval(`!window.__old && !!window.fw`)) break;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const next = await page.eval(`({ search: location.search, world: fw.space.name, settings: { ...fw.flight.settings }, shown: fw.shown })`);
+  assert(next.search === '?flight.ease=2' && next.world === 'halls' && next.settings.ease === 2 && next.shown === null, `the next world: ${JSON.stringify(next)}`);
+  for (const [link, said] of [['arcology&flight.nope=1', /there is no flight\.nope/], ['halls&flight.speed=-1', /flight\.speed is a number more than 0/], ['arcology&vs=arcology&vs.flight.ease=1', /the same world as arcology, as the link changes them, flown the same way/]]) {
+    await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra', false, 'halls'));
+    const error = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : ''`);
+    assert(said.test(error), `${link}: the page said ${JSON.stringify(error)}`);
+  }
+});
+
 // A flip at rest, drawn as the app draws (not by a snapshot, which senses
 // afresh): from what the world flipped to says of each level here, the
 // flight not having moved (see Flight.setSpace).

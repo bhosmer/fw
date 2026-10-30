@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Flight, PITCH_MAX } from '../../src/flight.js';
+import { Flight, PITCH_MAX, FLIGHT } from '../../src/flight.js';
 import { camera } from '../../src/view.js';
 import { elsewhere } from '../../src/arrival.js';
 import halls from '../../src/spaces/halls.js';
@@ -299,4 +299,18 @@ test('the flight is sensed where it is, after every move', () => {
     }
   });
   assert.ok(moves > 1000 && refined > 0, `${moves} moves, ${refined} of them followed by a change of level`);
+});
+
+// How it flies, as a link may set it (see FLIGHT): at twice the speed, the
+// first step out of a room is twice as long; an unknown setting is refused.
+test('a flight flies as its settings say', () => {
+  const step = (settings) => {
+    const f = new Flight(halls, settings);
+    f.begin(true);
+    return f.step(1 / 600, [0, 0, -1]);
+  };
+  const one = step(undefined), two = step({ speed: 2 });
+  assert.ok(one > 0 && Math.abs(two / one - 2) < 1e-12, `${one}, ${two}`);
+  assert.equal(new Flight(halls).settings, FLIGHT);
+  assert.throws(() => new Flight(halls, { sped: 2 }), /there is no flight\.sped/);
 });

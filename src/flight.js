@@ -7,6 +7,7 @@
 // pilot.js.
 import { Position } from './position.js';
 import { airAt } from './air.js';
+import { define, frozen } from './util.js';
 
 // Levels looked at each frame, relative to the working level F: UP coarser
 // ones (so a wall we are pressed against, many scales up, is still known
@@ -32,7 +33,21 @@ const DEEPEST = 200;
 const REFINE_BELOW = 0.29;
 const COARSEN_ABOVE = 0.5;
 
-const SPEED = 1.0; // open distances per second (see step)
+// How it flies, as a link may set it (?flight.ease=2: see fromLink in
+// worlds.js), at its defaults:
+//   speed   open distances a second (see step), the keys held; and, as all
+//           travel goes through step, the wheel's and drag's moves too, and
+//           the tour's (whose own speed takes this to be 1: see Pilot.fly)
+//   ease    seconds over which speeding up is eased (slowing is not; 0:
+//           not eased at all)
+export const FLIGHT = frozen({ speed: 1, ease: 1 });
+// Settings for a flight, from FLIGHT with changes, checked.
+export function flightSettings(set) {
+  const s = define(FLIGHT, set, 'flight.');
+  if (!(Number.isFinite(s.speed) && s.speed > 0)) throw new Error(`definition: flight.speed is a number more than 0, not ${s.speed}`);
+  if (!(Number.isFinite(s.ease) && s.ease >= 0)) throw new Error(`definition: flight.ease is a number of seconds, 0 or more, not ${s.ease}`);
+  return s;
+}
 
 // How far ahead() looks: no further than LOOK times the width of the way,
 // or out in the open, SKY_LOOK times how high we are.
@@ -64,11 +79,11 @@ export function builtClearance(levels, air, finest = Infinity) {
 export const PITCH_MAX = 1.55; // the furthest up or down we can face
 
 export class Flight {
-  // settings: how it flies, as a link may set it (none yet).
-  constructor(space, settings = {}) {
+  // settings: how it flies, as a link may set it: changes to FLIGHT.
+  constructor(space, settings) {
     this.space = space;
     this.R = space.R;
-    this.settings = settings;
+    this.settings = flightSettings(settings);
     // Which way we face: yaw, turned right from looking along -z; pitch, up
     // from level (turned, no further either way than PITCH_MAX).
     this.yaw = 0;
@@ -383,7 +398,7 @@ export class Flight {
     if (wish.every((x) => x === 0) && nudge.every((x) => x === 0) && this.settled()) return 0;
     if (this.due) this.sense();
     this.settle(dt);
-    const aim = wish.map((x, a) => x * SPEED * dt + nudge[a]);
+    const aim = wish.map((x, a) => x * this.settings.speed * dt + nudge[a]);
     const size = Math.hypot(...aim);
     if (size <= 0) return 0;
     // Speed is proportional to how far the way ahead is open, and a step
@@ -396,7 +411,7 @@ export class Flight {
     // (In air, or on a face two pieces of air share, which is air too.)
     const inAir = this.clearance > 0 || this.goesOn(way);
     const open = (this.opened = inAir ? this.ahead(way) : 0);
-    this.pace = toward(this.pace, Math.max(open, 1e-6), 1 - Math.exp(-dt / 1.0));
+    this.pace = toward(this.pace, Math.max(open, 1e-6), 1 - Math.exp(-dt / this.settings.ease));
     this.pace = Math.min(this.pace, Math.max(open, 0.05 * this.scale));
     const want = size * this.pace;
     const len = inAir ? Math.min(want, 0.5 * open) : want;

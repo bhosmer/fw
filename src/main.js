@@ -1,7 +1,7 @@
 import { Renderer } from './renderer.js';
 import { TAA_N } from './frame.js';
 import { Controls } from './controls.js';
-import { WORLDS, makeWorld, fromLink, ADDED } from './worlds.js';
+import { WORLDS, makeWorld, fromLink, makeSettings, isSetting, ADDED } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot, awayFrom, outward } from './pilot.js';
 import { Planner } from './planner.js';
@@ -25,9 +25,10 @@ function cannot(err) {
 // The world we are in: the one a link names (?variant&part=value: see
 // fromLink in worlds.js), or that the place in a link is in (one from
 // before there were others is in the halls), or else the one last visited;
-// made from its definition with the link's changes. And, where the link
-// names one to compare it with (&vs=...), that one too (other), on the same
-// lattice: V flips between them.
+// made from its definition with the link's changes; with the link's
+// settings (how we fly: see fromLink). And, where the link names one to
+// compare it with (&vs=...), that one too (other), on the same lattice: V
+// flips between them. (It may be the same world, with other settings.)
 const WORLD_KEY = 'fw.world';
 let world, other = null, link;
 try {
@@ -37,15 +38,27 @@ try {
     name ??= localStorage.getItem(WORLD_KEY);
   } catch {}
   if (!name || (!link.name && !WORLDS.includes(name))) name = WORLDS[0];
-  world = await makeWorld(name, link.changes);
+  world = { ...(await makeWorld(name, link.changes)), settings: makeSettings(link.settings) };
   if (link.vs) {
     try {
-      other = await makeWorld(link.vs.name, link.vs.changes);
+      // (The same world as the first, as the link changes them, is not made
+      // twice.)
+      const same = link.vs.name === name && JSON.stringify(link.vs.changes) === JSON.stringify(link.changes);
+      other = { ...(same ? world : await makeWorld(link.vs.name, link.vs.changes)), settings: makeSettings(link.vs.settings) };
     } catch (err) {
       throw new Error(`vs: ${err.message}`);
     }
     if (other.space.R !== world.space.R) throw new Error(`vs: ${link.vs.name} is not on ${name}'s lattice: they cannot be compared`);
-    if (other.space.glsl === world.space.glsl) throw new Error(`vs: ${link.vs.name} is the same world as ${name}, as the link changes them`);
+    // (The same world, as the link changes them, is the same program: drawn
+    // with the first's, flown with its own settings. The same world is taken
+    // to be one with the same program and the same numbers and colours
+    // besides; its tables and volume, and its default digits, change only
+    // with its program (review123).)
+    const besides = (s) => JSON.stringify([Object.entries(s).filter(([k, v]) => typeof v !== 'function' && !['name', 'glsl', 'tables', 'volume'].includes(k)), [-4, -3, -2, -1, 0, 1, 2, 3, 4].map((l) => s.palette(l))]);
+    if (other.space.glsl === world.space.glsl && besides(other.space) === besides(world.space)) {
+      if (JSON.stringify(other.settings) === JSON.stringify(world.settings)) throw new Error(`vs: ${link.vs.name} is the same world as ${name}, as the link changes them, flown the same way`);
+      other.space = world.space;
+    }
   }
 } catch (err) {
   cannot(err);
@@ -106,7 +119,7 @@ try {
 } catch (err) {
   cannot(err);
 }
-const flight = new Flight(world.space);
+const flight = new Flight(world.space, world.settings.flight);
 // (Facing, until a link or a first visit says which way: a little to the
 // side and down. A first visit that finds no room keeps it: see elsewhere.)
 flight.turn(0.6, -0.05);
@@ -197,24 +210,31 @@ function loadLocation() {
 // legend. (The old way of stepping rays, to compare by eye: fw.reference.)
 
 // Off to the next world, somewhere in it as on a first visit (as it is: a
-// variant is left behind with its link).
+// variant, and a world compared, are left behind with the link; how we fly,
+// its settings, comes along).
 function nextWorld() {
   try {
     localStorage.setItem(WORLD_KEY, WORLDS[(WORLDS.indexOf(world.base) + 1) % WORLDS.length]);
-    history.replaceState(null, '', location.pathname);
+    const kept = location.search.slice(1).split('&').filter((x) => {
+      const path = decodeURIComponent(x.split('=')[0]);
+      return x.includes('=') && !path.startsWith('vs') && isSetting(path);
+    });
+    history.replaceState(null, '', location.pathname + (kept.length ? `?${kept.join('&')}` : ''));
   } catch {}
   location.reload();
 }
 
-// The other world compared, where we are, as we are (see Flight.setSpace):
-// nothing else changes, so that what differs is the world. (The tour, if
-// on, starts afresh; what it was about to see was of the other.)
+// The other world compared, where we are, as we are (see Flight.setSpace),
+// flown as its link has it (its settings): nothing else changes, so that what
+// differs is the world, or how we fly through it. (The tour, if on, starts
+// afresh; what it was about to see was of the other.)
 function flip() {
   if (!other) return;
   showing.side = 1 - showing.side;
-  const space = (showing.side ? other : world).space;
+  const { space, settings } = showing.side ? other : world;
   renderer.setSpace(space);
   flight.setSpace(space);
+  flight.settings = settings.flight;
   lookAt = null;
   if (pilot.on) pilot.start(pos.F);
   said.world = performance.now();
@@ -387,7 +407,8 @@ function legend(now) {
 // Where two worlds are compared, the one not shown drawn once before the
 // first frame: the GPU builds a program's pipeline when first drawing with
 // it, a stall better behind the loading screen than at the first flip.
-if (other) {
+// (Not where the two are one world flown two ways: one program.)
+if (other && other.space !== world.space) {
   try {
     flip();
     draw();
