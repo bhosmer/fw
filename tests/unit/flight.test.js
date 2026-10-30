@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { Flight, PITCH_MAX, FLIGHT } from '../../src/flight.js';
 import { camera } from '../../src/view.js';
 import { elsewhere } from '../../src/arrival.js';
+import { Pilot, awayFrom } from '../../src/pilot.js';
+import { Planner } from '../../src/planner.js';
 import halls from '../../src/spaces/halls.js';
 import { rand } from './rand.js';
 import * as P from '../../src/pieces.js';
@@ -313,4 +315,79 @@ test('a flight flies as its settings say', () => {
   assert.ok(one > 0 && Math.abs(two / one - 2) < 1e-12, `${one}, ${two}`);
   assert.equal(new Flight(halls).settings, FLIGHT);
   assert.throws(() => new Flight(halls, { sped: 2 }), /there is no flight\.sped/);
+});
+
+// The tour's travel is carried, not paced (see Flight.step's carry): flown
+// with hand flight's settings changed (speed twice or half, speeding up
+// eased over 0 s or 3 s), a tour flies the same way, step for step, and
+// gets somewhere; each step goes as far as it asks, or half the way open
+// where that is less (a carry far too fast, toward whatever is ahead, goes
+// exactly half); with the keys' wish too, only the wish's part follows
+// flight.speed; and where a sense due at the start of a step moves the
+// level, what is carried is taken to the new level's cells.
+test('the tour\'s travel is carried, not paced: the same at any flight.speed and flight.ease, as far as it asks, capped at half the way open', () => {
+  const opened = (f) => f.opened * Math.pow(R, f.lastMove.F - f.pos.F); // (in the cells of the level the move was made at)
+  const tour = (settings) => {
+    const flight = new Flight(halls, settings);
+    elsewhere(flight, rand(3));
+    const pilot = new Pilot(R);
+    pilot.planner = new Planner(flight);
+    const random = Math.random;
+    let s = 77;
+    Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+    try {
+      pilot.start(flight.pos.F);
+      const out = [];
+      let went = 0, capped = 0;
+      for (let i = 0; i < 600; i++) {
+        const v = pilot.fly(1 / 60, flight, 1, () => awayFrom(flight), false);
+        const F = flight.pos.F, asked = (Math.hypot(...v) / 60) * Math.pow(R, flight.pos.F - F);
+        const len = flight.step(1 / 60, [0, 0, 0], [0, 0, 0], v);
+        const most = Math.min(asked, 0.5 * opened(flight));
+        assert.ok(Math.abs(len - most) <= 1e-12 * most, `step ${i}: went ${len}, asked ${asked}, half the way open ${0.5 * opened(flight)}`);
+        if (asked > 0.5 * opened(flight)) capped++;
+        went += len / flight.scale;
+        pilot.moved(flight.lastMove, flight.pos.F);
+        out.push(JSON.stringify([flight.pos.F, flight.pos.frac, flight.yaw, flight.pitch]));
+      }
+      return { out, went, capped };
+    } finally {
+      Math.random = random;
+    }
+  };
+  const one = tour(undefined);
+  assert.ok(one.went > 1, `the tour went ${one.went} clearances in 10 s`);
+  for (const settings of [{ speed: 2 }, { speed: 0.5 }, { ease: 0 }, { ease: 3 }, { speed: 2, ease: 0.2 }]) assert.deepEqual(tour(settings).out, one.out, JSON.stringify(settings));
+  // (A carry far too fast: exactly half the way open, and still in air.)
+  const f = new Flight(halls);
+  f.begin(true);
+  for (let i = 0; i < 30; i++) {
+    const { fwd } = f.basis();
+    const len = f.step(1 / 60, [0, 0, 0], [0, 0, 0], fwd.map((x) => x * 1e6));
+    assert.ok(Math.abs(len - 0.5 * opened(f)) <= 1e-12 * len && f.clearance > 0, `went ${len} of ${opened(f)} open, clearance ${f.clearance}`);
+  }
+  // (The keys' wish with a carry: the wish's part goes twice as far at
+  // flight.speed 2, the carried part the same.)
+  const both = (speed) => {
+    const g = new Flight(halls, { speed });
+    g.begin(true);
+    const pace = g.pace, { fwd, right } = g.basis(), carry = right.map((x) => x * 0.2 * g.scale);
+    g.step(1 / 600, fwd, [0, 0, 0], carry);
+    const d = g.lastMove.delta, c = carry.map((x) => x / 600);
+    return { hand: Math.hypot(...d.map((x, a) => x - c[a])) / pace, carried: d };
+  };
+  const [s1, s2] = [both(1), both(2)];
+  assert.ok(Math.abs(s2.hand / s1.hand - 2) < 0.02, `the wish's part at speed 2 is ${s2.hand / s1.hand} times that at 1`);
+  // (Twelve levels too fine, as after a jump: the sense due at the start of
+  // a step moves the level the rest of the way, and what is carried is
+  // taken to the new level's cells.)
+  const jumped = new Flight(halls);
+  jumped.begin(true);
+  for (let i = 0; i < 12; i++) jumped.pos.refine();
+  jumped.sense();
+  assert.ok(jumped.due, 'twelve levels too fine, a sense is due');
+  const F = jumped.pos.F, v = [0, 0, -1e-3 * jumped.scale];
+  const len = jumped.step(1 / 60, [0, 0, 0], [0, 0, 0], v);
+  const asked = (Math.hypot(...v) / 60) * Math.pow(R, jumped.lastMove.F - F);
+  assert.ok(jumped.lastMove.F !== F && Math.abs(len - Math.min(asked, 0.5 * opened(jumped))) <= 1e-9 * len, `went ${len}, asked ${asked} (level ${F} to ${jumped.lastMove.F})`);
 });

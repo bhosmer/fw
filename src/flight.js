@@ -35,9 +35,9 @@ const COARSEN_ABOVE = 0.5;
 
 // How it flies, as a link may set it (?flight.ease=2: see fromLink in
 // worlds.js), at its defaults:
-//   speed   open distances a second (see step), the keys held; and, as all
-//           travel goes through step, the wheel's and drag's moves too, and
-//           the tour's (whose own speed takes this to be 1: see Pilot.fly)
+//   speed   open distances a second (see step), the keys held (not the
+//           wheel's and drag's moves, which go by the pace alone; nor the
+//           tour, which goes at its own speed: see step's carry)
 //   ease    seconds over which speeding up is eased (slowing is not; 0:
 //           not eased at all)
 export const FLIGHT = frozen({ speed: 1, ease: 1 });
@@ -390,33 +390,47 @@ export class Flight {
   }
 
   // Go on for dt seconds. wish is a velocity (from the keys) and nudge a
-  // displacement (from the mouse), both in clearances. Returns how far we
-  // went, in level-F cells.
-  step(dt, wish, nudge = [0, 0, 0]) {
-    this.lastMove = { delta: [0, 0, 0], F: this.pos.F };
+  // displacement (from the mouse), both in paces: how far the way ahead says
+  // (see paced). carry is a velocity of its own, in level-F cells a second
+  // (the tour's: see Pilot.fly), not paced. Returns how far we went, in
+  // level-F cells.
+  step(dt, wish, nudge = ORIGIN, carry = ORIGIN) {
+    const F = this.pos.F;
+    this.lastMove = { delta: [0, 0, 0], F };
+    const still = (v) => v.every((x) => x === 0);
     // Standing still with nothing left to settle: there is nothing to do.
-    if (wish.every((x) => x === 0) && nudge.every((x) => x === 0) && this.settled()) return 0;
+    if (still(wish) && still(nudge) && still(carry) && this.settled()) return 0;
     if (this.due) this.sense();
     this.settle(dt);
     const aim = wish.map((x, a) => x * this.settings.speed * dt + nudge[a]);
-    const size = Math.hypot(...aim);
+    // (The carried travel in cells of the level we work at: a sense due
+    // just now may have moved it from the one carry was given in.)
+    const k = Math.pow(this.R, this.pos.F - F);
+    const carried = carry.map((x) => x * dt * k);
+    // (Which way: the paced travel, at the pace we are going, and the
+    // carried, together.)
+    const by = aim.map((x, a) => x * this.pace + carried[a]);
+    const size = Math.hypot(...by);
     if (size <= 0) return 0;
-    // Speed is proportional to how far the way ahead is open, and a step
+    // Speed goes by how far the way ahead is open (see paced), and a step
     // never covers more than half of that, so nothing is ever reached, only
     // approached. Going by what is ahead and not by what is nearest means a
     // doorway or a wall alongside does not slow us, only a wall in front.
     // (Slowing down is immediate; only speeding up is eased, over about a
-    // second, and always from the speed we are actually going.)
-    const way = aim.map((x) => x / size);
+    // second, and always from the speed we are actually going.) Of all this,
+    // the carried travel keeps only the cap: half the way open.
+    const way = by.map((x) => x / size);
     // (In air, or on a face two pieces of air share, which is air too.)
     const inAir = this.clearance > 0 || this.goesOn(way);
     const open = (this.opened = inAir ? this.ahead(way) : 0);
-    this.pace = toward(this.pace, Math.max(open, 1e-6), 1 - Math.exp(-dt / this.settings.ease));
-    this.pace = Math.min(this.pace, Math.max(open, 0.05 * this.scale));
-    const want = size * this.pace;
+    const target = this.paced(open);
+    this.pace = toward(this.pace, Math.max(target, 1e-6), 1 - Math.exp(-dt / this.settings.ease));
+    this.pace = Math.min(this.pace, Math.max(target, 0.05 * this.scale));
+    // (How far: the paced travel at the pace now set, and the carried.)
+    const want = Math.hypot(...aim.map((x, a) => x * this.pace + carried[a]));
     const len = inAir ? Math.min(want, 0.5 * open) : want;
     if (len <= 0) return 0;
-    const delta = aim.map((x) => (x * len) / size);
+    const delta = by.map((x) => (x * len) / size);
     this.pos.move(delta);
     this.lastMove = { delta, F: this.pos.F };
     const { trail } = this;
@@ -427,6 +441,13 @@ export class Flight {
     // (Sensed where we now are: so the view, and the next step, go by here.)
     this.sense();
     return len;
+  }
+
+  // The pace for a way open this far ahead (level-F cells): how far a wish
+  // of 1 takes us in a second, before the speed setting (see step). In
+  // proportion to how far the way is open.
+  paced(open) {
+    return open;
   }
 
   // Fly dt seconds along the trail, backwards (way = -1) or forwards again

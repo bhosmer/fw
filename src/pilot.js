@@ -557,14 +557,13 @@ export class Pilot {
   // gives the way directly away from the nearest surface. While steered (the
   // view is being turned by hand) it only flies on the way we face, and
   // looks for somewhere to go afresh once that stops. Returns the velocity
-  // wished for, as from the keys.
+  // to go at, in level-F cells a second (Flight.step's carry: not paced).
   //
   // Speed is a steady CRUISE of how big the space we are in looks (how far
   // off what is in view is: see see); failing a look, our clearance. It
   // changes only gradually (by a factor at a time, the world being the
   // same at every scale), and never so fast that what is in front of us
-  // would be reached in under BRAKE seconds. Flight goes by how
-  // far the way ahead is open; the wish is scaled so that it comes to this.
+  // would be reached in under BRAKE seconds.
   //
   // Steering is pure pursuit: for a point STEER seconds ahead along the way,
   // turning at a rate in proportion to how far off it is, which carries us
@@ -702,10 +701,8 @@ export class Pilot {
     const v = v0 * Math.exp(Math.max(-dt / SLACKEN, Math.min(dt / QUICKEN, grow)));
     // (Whatever happens, never on at a wall faster than twice that.)
     this.v = Math.min(v, (2 * open) / BRAKE);
-    // Flight goes at its pace (level-F cells per second, for a wish of 1),
-    // so this wish comes to v.
-    const pace = flight.pace > 0 ? flight.pace : scale;
-    const go = (speed * this.v) / pace;
+    // (As the keys' speed has it: - and = speed the tour too.)
+    const go = speed * this.v;
     return fwd.map((x) => x * go);
   }
 }

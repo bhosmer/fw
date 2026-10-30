@@ -357,8 +357,7 @@ function tick(now) {
     // and the wheel add their own travel to its.
     const steered = now - controls.turned < 800;
     const tour = pilot.fly(dt, flight, controls.speed, () => awayFrom(flight), steered).map((x) => x * controls.boost());
-    const hand = controls.wish();
-    moved = flight.step(dt, tour.map((x, a) => x + hand[a]), controls.nudge(dt));
+    moved = flight.step(dt, controls.wish(), controls.nudge(dt), tour);
     pilot.moved(flight.lastMove, pos.F);
   } else moved = flight.step(dt, controls.wish(), controls.nudge(dt));
 
@@ -506,7 +505,7 @@ window.fw = {
         log.push({ t: i / 60, F: pos.F, phase: pilot.phase, clear: +flight.clearance.toPrecision(3), sky: +flight.sky.toPrecision(3), aim: !!pilot.target });
         if (each) await each(i / 60);
       }
-      flight.step(1 / 60, pilot.fly(1 / 60, flight, controls.speed, () => awayFrom(flight)));
+      flight.step(1 / 60, [0, 0, 0], [0, 0, 0], pilot.fly(1 / 60, flight, controls.speed, () => awayFrom(flight)));
       pilot.moved(flight.lastMove, pos.F);
     }
     return log;

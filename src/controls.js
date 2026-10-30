@@ -4,10 +4,10 @@
 // collision; the only thing scale does is set how fast we travel (see step in
 // flight.js). Which way we face is the flight's: these turn it.
 
-const WHEEL = 0.004; // clearances travelled per unit of wheel
+const WHEEL = 0.004; // paces travelled per unit of wheel (see nudge)
 const WHEEL_EASE = 0.08; // seconds over which a turn of the wheel is spent
-const GRIP = 3; // how far off, in clearances, a dragged scene is taken to be
-const PINCH = 4; // clearances travelled for spreading two fingers e times as far apart
+const GRIP = 3; // how far off, in paces, a dragged scene is taken to be
+const PINCH = 4; // paces travelled for spreading two fingers e times as far apart
 
 export class Controls {
   // flight: what these turn, and move along the way it faces.
@@ -18,7 +18,7 @@ export class Controls {
     this.speed = 1;
     this.turned = -Infinity; // when the view was last turned by hand
     this.slide = [0, 0]; // dragged sideways and up, not yet travelled (radians)
-    this.dolly = 0; // wheeled forward, not yet travelled (clearances)
+    this.dolly = 0; // wheeled forward, not yet travelled (paces)
 
     // Dragging takes hold of the scene: what is under the cursor stays under it.
     let dragging = 0;
@@ -86,8 +86,9 @@ export class Controls {
     this.speed = Math.min(8, Math.max(0.05, this.speed * k));
   }
 
-  // What the mouse has asked for since last time, as a displacement in
-  // clearances. A drag is travelled at once; the wheel is spent smoothly.
+  // What the mouse has asked for since last time, as a displacement in paces
+  // (one is as far as the way ahead is open: see Flight.step). A drag is
+  // travelled at once; the wheel is spent smoothly.
   nudge(dt) {
     const { fwd, right, up } = this.flight.basis();
     const go = this.dolly * (1 - Math.exp(-dt / WHEEL_EASE));
