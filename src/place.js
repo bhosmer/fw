@@ -54,7 +54,7 @@ export function placeWorld(hash) {
 // applyPlace).
 export function readPlace(hash, R) {
   const at = decode(hash);
-  if (!at) return { why: 'there is no place in the link' };
+  if (!at) return { why: 'it cannot be read' };
   const { world, F, frac, digits = [], yaw, pitch } = at;
   const whole = (x) => Number.isInteger(x) && Math.abs(x) <= LEVEL_MOST;
   const triple = (v, ok) => Array.isArray(v) && v.length === 3 && v.every(ok);

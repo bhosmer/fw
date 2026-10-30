@@ -199,9 +199,11 @@ function saveLocation() {
 }
 // Go to the place in the link, if it has one we can be at: whether it did.
 // (A place in another world than this one is no place here; nor is one that
-// cannot be read, which is passed over whole.)
+// cannot be read, which is passed over whole, and why said for a moment.)
+let unread = null, unreadAt = -Infinity;
 function loadLocation() {
-  const { place } = readPlace(location.hash, R);
+  const { place, why } = readPlace(location.hash, R);
+  if (!place && location.hash.length > 1) (unread = why), (unreadAt = performance.now());
   if (!place || place.world !== world.base) return false;
   applyPlace(flight, place, (shown) => (shown === 'B') !== (side === 1) && flip());
   return true;
@@ -388,7 +390,7 @@ function tick(now) {
     unsaved = 0;
   }
   const sign = pos.F > 0 ? '+' : '';
-  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 || now - flippedAt < 2000 ? `   world: ${worldLabel()}` : other ? `   ${side ? 'B' : 'A'}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}`;
+  hud.textContent = `level ${sign}${pos.F}   scale ${scaleLabel(pos.F)}   ${fps.toFixed(0)} fps${reference ? '   old stepping' : ''}${now - schemeShown < 2000 ? `   scheme: ${SCHEMES[scheme].name}` : ''}${now < 4000 || now - flippedAt < 2000 ? `   world: ${worldLabel()}` : other ? `   ${side ? 'B' : 'A'}` : ''}${pilot.on ? `   touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})` : ''}${now - unreadAt < 4000 ? `   the link's place: ${unread}` : ''}`;
   requestAnimationFrame(frame);
 }
 // Where two worlds are compared, the one not shown drawn once before the

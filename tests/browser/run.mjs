@@ -768,8 +768,9 @@ check('a place survives a reload', async () => {
 });
 
 // A link whose place cannot be read (see place.js) starts where a first
-// visit would, and draws; one changed to such a place leaves us where we
-// are. One without a facing faces the most open way, as a first visit does.
+// visit would, draws, and says why for a moment; one changed to such a place
+// leaves us where we are. One without a facing faces the most open way, as a
+// first visit does.
 check('a link whose place cannot be read still opens somewhere', async () => {
   const state = 'JSON.stringify([fw.pos.F, fw.pos.frac, fw.controls.yaw, fw.controls.pitch])';
   await load('start');
@@ -784,6 +785,18 @@ check('a link whose place cannot be read still opens somewhere', async () => {
     assert(got.at === first, `${name}: opened at ${got.at}, not where a first visit does (${first})`);
     assert(got.spread > 60, `${name}: the picture is nearly flat (spread ${got.spread})`);
   }
+  // (Running as the app runs: the legend says why, for a moment; for a link
+  // that can be read, it says nothing of the kind.)
+  const said = async (hash) => {
+    await page.goto(`${base}index.html?${++loads}${hash ? '#' + hash : ''}`, setup('alhambra', true));
+    let text = '';
+    for (const until = Date.now() + 20000; !text.includes('fps') && Date.now() < until; await new Promise((r) => setTimeout(r, 100))) text = await page.eval(`document.getElementById('hud').textContent`);
+    return text;
+  };
+  const broken = await said(at({ ...court, F: undefined }));
+  assert(broken.includes("the link's place: its level is not a whole number") && !page.errors.length, `a link that cannot be read: the legend says ${JSON.stringify(broken)}`);
+  const fine = await said(PLACES.court);
+  assert(fine.includes('fps') && !fine.includes("the link's place"), `a link that can be read: the legend says ${JSON.stringify(fine)}`);
   // (Changed to a link that cannot be read: nothing moves, and the link is
   // put back to where we are.)
   await load('court');
