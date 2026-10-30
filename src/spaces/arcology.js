@@ -1077,6 +1077,9 @@ export function makeArcology(set) {
       EGL: FACES.flatMap((F) => F.edges.map((E) => E.gl)),
       EGN: FACES.flatMap((F) => F.edges.map((E) => E.gn)),
       FLEN: FACES.map((F) => F.len),
+      // (Each face's mass's bounds, from the building's origin, in cells.)
+      FLO: FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])),
+      FHI: FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])),
       FCAPS: caps,
       FCR: at,
       FEDGE: FACES.flatMap((F) => F.edges.map((E) => [E.dl, E.al, E.be, E.sg * E.W])),
@@ -1663,17 +1666,21 @@ export function makeArcology(set) {
     const text = (lines) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), ['p', 'lo', 'hi', 'off', 'r', 'CELL.b'])) : lines.join('\n'));
     return { box: text(box), air: text(air) };
   }
-  // The relief's whole-number decisions, in either language (js: true, or
-  // GLSL), written once from its tables (RELIEF_ROWS, and the ridges' rows,
-  // RIDGE_ROWS): the rectangle of a face the point is in, and its depth's
-  // index (rectangle); a face's caps (capsAt, capAt) and a level's depths
-  // (depthOf); the row of a ridge a height is in (ridgeRow, looked up in the
-  // table, as the builder's ridgeRow made it); whether a cut comes near a
-  // ridge (nearRidge) and is no deeper than the ridge's there (underRidge);
-  // heights in twelfths (h12), terraces' heights and bands (terraceH,
-  // bandOf); and a rectangle's depth (rectDepth). (The JavaScript's, made
-  // into functions below; what the shader keeps in globals (gU0, gRY0 and
-  // the rest), in RS.)
+  // The relief, in either language (js: true, or GLSL), written once from
+  // its tables (RELIEF_ROWS, and the ridges' rows, RIDGE_ROWS): its
+  // whole-number decisions (the rectangle of a face the point is in, and its
+  // depth's index: rectangle; a face's caps, capsAt, capAt, and a level's
+  // depths, depthOf; the row of a ridge a height is in, ridgeRow, looked up
+  // in the table, as the builder's ridgeRow made it; whether a cut comes
+  // near a ridge, nearRidge, and is no deeper than the ridge's there,
+  // underRidge; heights in twelfths, h12, terraces' heights and bands,
+  // terraceH, bandOf; a rectangle's depth, rectDepth); where the point is on
+  // a face and the backs of cuts (faceAt, depthN, depthOut, heights,
+  // terraceOf, cutOf); a notch's box (notchBox); a face's pockets and
+  // notches (facePocket); the faces' asked in turn (carve); and which faces
+  // the city's pockets may reach (cityFaces). (The JavaScript's, made into
+  // functions below; what the shader keeps in globals (gU0, gRY0 and the
+  // rest), in RS.)
   function reliefPieces(js) {
     // (Where the languages differ: what twin.writer writes; the globals (or
     // RS); a vector (ivec3, or an array, also as an out parameter, set part
@@ -1684,7 +1691,7 @@ export function makeArcology(set) {
     // as GLSL has them, vectors are arrays, and whole numbers are as
     // twin.unsigned makes them.)
     // (S is the level's scale here, as in the shader: the pieces' state is PS.)
-    const { fn, decl, loop, ivec3: iv, indent: ins, struct, fade, axis, arg3, slant, ivec2, D, RAY, keep } = twin.writer(js, 'PS');
+    const { fn, decl, loop, ivec3: iv, indent: ins, struct, fade, axis, arg3, slant, ivec2, vsub, D, RAY, keep } = twin.writer(js, 'PS');
     const g = (name) => (js ? `RS.${name}` : `g${name}`);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (A vector b set to the parts xs: as GLSL assigns one, part by part in
@@ -2227,9 +2234,44 @@ export function makeArcology(set) {
       '  return d;',
       '}',
     ];
+    // - cityFaces: which faces the city's pockets may reach the point from
+    //   (from BAND_OUT, a cell, past the face's plane to BAND_IN behind it;
+    //   the mass's box, two cells past it, a looser gate before that), as a
+    //   mask of bits for carve; and how far off the rest are at least (Far).
+    const cityFaces = [
+      "// Which faces the city's pockets may reach the point from (o",
+      "// its cell's corner from the middle cell's: from a cell past each to",
+      `// BAND_IN in); and, in ${g('Far')}, how far off the rest are at least.`,
+      ...(js ? [] : ['float gFar;']),
+      fn('uint', 'cityFaces', ['ivec3 L', 'vec3 f', 'ivec3 o']),
+      ...ins([
+        decl('ivec3', `base = ${vsub('o', 'ORIGIN')}`),
+        `${g('Far')} = 1e9;`,
+        decl('uint', 'near = 0u', true),
+        js ? 'const q = add3(add3(base, L), f);' : 'vec3 q = vec3(base + L) + f;',
+        loop('k', 0, 'NF'),
+        ...ins([
+          js ? 'const off = [0, 1, 2].map((a) => max(float(FLO[k][a]) - 2.0 - q[a], q[a] - float(FHI[k][a]) - 2.0));' : 'vec3 off = max(vec3(FLO[k]) - 2.0 - q, q - vec3(FHI[k]) - 2.0);',
+          decl('float', 'away = max(max(off.x, off.y), off.z)'),
+          `if (away > 0.0) { ${g('Far')} = min(${g('Far')}, away); continue; }`,
+          decl('ivec4', 'pl = FPLANE[k]'),
+          decl('ivec3', 'm = SLANT[pl.x]'),
+          js ? 'let n;' : 'int n;',
+          ...slant('pl.x', 'n').whole,
+          decl('float', `fr = float(pl.y) * ${slant('pl.x', 'n').rest}`),
+          decl('float', 's = (float(pl.y * n + pl.y * (m.x * base.x + m.y * base.y + m.z * base.z) - pl.z) + fr) / FNS[k].x'),
+          `if (s < -BAND_IN) { ${g('Far')} = min(${g('Far')}, -s - BAND_IN); continue; }`,
+          `if (s > BAND_OUT) { ${g('Far')} = min(${g('Far')}, s - BAND_OUT); continue; }`,
+          'near |= 1u << uint(k);',
+        ]),
+        '}',
+        'return near;',
+      ]),
+      '}',
+    ];
     const text = (lines, names = ['lvp', 'c', 'w', 'E', 'city', 'cityB', 'RB']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
     const onFace = ['ht', 'sl', 'pl', 'ms', 'mn', 'base', 'x', 'L', 'f'];
-    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']), carve: text(carve) };
+    return { rect: text(rect), decide: text(decide), face: text(face, onFace), heights: text(heights, onFace), cut: text(cut, onFace), box: text(box), notch: text(notch), pocket: text(face_, ['nh']), carve: text(carve), cityFaces: text(cityFaces, ['off', 'q', 'base', 'm', 'pl']) };
   }
   // The cell's small pieces, in either language (js: true, or GLSL),
   // written once (6d-6a): what the table says of a cell (relief), the light
@@ -2399,8 +2441,8 @@ ${table('float', 'GSCALE', 'NG', glf)}
 const uint SEGMENT_SALT = ${SEGMENT_SALT}u;
 const int WIN_BITS = ${WIN_BITS};
 // Each face's mass's bounds, from the building's origin, in cells.
-const ivec3 FLO[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.lo.map((x, a) => x - ORIGIN[a])))});
-const ivec3 FHI[NF] = ivec3[NF](${ivecs(FACES.map((F) => F.solid.hi.map((x, a) => x - ORIGIN[a])))});
+${table('ivec3', 'FLO', 'NF', vrow('ivec3'), RELIEF_ROWS)}
+${table('ivec3', 'FHI', 'NF', vrow('ivec3'), RELIEF_ROWS)}
 const int NBARE = ${BARE.length};
 const ivec3 BARE_LO[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[0]))});
 const ivec3 BARE_HI[NBARE] = ivec3[NBARE](${ivecs(BARE_BOX.map((b) => b[1]))});
@@ -2469,30 +2511,7 @@ ${RELIEF_GLSL.pocket}
 
 ${RELIEF_GLSL.carve}
 
-// Which faces the city's pockets may reach the point from (o
-// its cell's corner from the middle cell's: from a cell past each to
-// BAND_IN in); and, in gFar, how far off the rest are at least.
-float gFar;
-uint cityFaces(ivec3 L, vec3 f, ivec3 o) {
-  ivec3 base = o - ORIGIN;
-  gFar = 1e9;
-  uint near = 0u;
-  vec3 q = vec3(base + L) + f;
-  for (int k = 0; k < NF; k++) {
-    vec3 off = max(vec3(FLO[k]) - 2.0 - q, q - vec3(FHI[k]) - 2.0);
-    float away = max(max(off.x, off.y), off.z);
-    if (away > 0.0) { gFar = min(gFar, away); continue; }
-    ivec4 pl = FPLANE[k];
-    ivec3 m = SLANT[pl.x];
-    int n;
-    float fr = float(pl.y) * slantAt(pl.x, n);
-    float s = (float(pl.y * n + pl.y * (m.x * base.x + m.y * base.y + m.z * base.z) - pl.z) + fr) / FNS[k].x;
-    if (s < -BAND_IN) { gFar = min(gFar, -s - BAND_IN); continue; }
-    if (s > BAND_OUT) { gFar = min(gFar, s - BAND_OUT); continue; }
-    near |= 1u << uint(k);
-  }
-  return near;
-}
+${RELIEF_GLSL.cityFaces}
 
 ${OPEN_GLSL.windowAir}
 
@@ -2710,12 +2729,12 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   // The relief's whole-number decisions in JavaScript (see reliefPieces),
   // made into functions, and what the shader keeps in globals (gU0, gRY0 and
   // the rest), RS.
-  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0, Cap: 0, S: { on: false } };
+  const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0, Cap: 0, S: { on: false }, Far: 1e9 };
   const RELIEF_JS = reliefPieces(true);
-  const { ridgeRow: ridgeRowAt, depthN, facePocket, carve } = new Function(
-    'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'CELL', 'lowBit', 'TILE_SALT', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
-    `'use strict';\nconst { S: PS, beyond, h01, airPiece, airPlane, airSpan } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b), normalize = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\n${RELIEF_JS.notch}\n${RELIEF_JS.pocket}\n${RELIEF_JS.carve}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox, facePocket, carve };\n//# sourceURL=reliefPieces.gen.js`,
-  )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, CELL, lowBit, TILE_SALT, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
+  const { ridgeRow: ridgeRowAt, depthN, carve, cityFaces } = new Function(
+    'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'CELL', 'lowBit', 'TILE_SALT', 'NF', 'BAND_IN', 'BAND_OUT', 'ORIGIN', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
+    `'use strict';\nconst { S: PS, beyond, h01, airPiece, airPlane, airSpan } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b), normalize = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\n${RELIEF_JS.notch}\n${RELIEF_JS.pocket}\n${RELIEF_JS.carve}\n${RELIEF_JS.cityFaces}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox, facePocket, carve, cityFaces };\n//# sourceURL=reliefPieces.gen.js`,
+  )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, CELL, lowBit, TILE_SALT, FACES.length, BAND_IN, BAND_OUT, ORIGIN, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
   // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
   // a whole number of its measure deep: else one would not be cut at all.)
   if (FACES.some((F, k) => [1, 2, 3].some((t) => !(depthN(k, R, [Math.floor(t / 3), t % 3]) > 0)))) throw new Error('arcology: a cut too shallow for its face');
@@ -2737,24 +2756,17 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   const pockets = (L, f, faces, d, ray) => carve(1, L, f, CELL.b.map((x) => x * R), faces, d, ray);
 
   // The city's own pockets near the point (o its cell's corner from the
-  // middle cell's): of each face it is near, from a cell past it to DMAX in;
-  // elsewhere, at least that far off. United with d, the rest of the cell's
+  // middle cell's): of each face it is near, from a cell past it to BAND_IN
+  // in (see cityFaces); elsewhere, at least that far off. United with d, the rest of the cell's
   // air, as cell has them in the shader; and for a ray, the pockets' reach
   // stopped at the solids without relief.
   function cityPockets(L, f, o, d, ray) {
     const base = o.map((x, a) => x - ORIGIN[a]);
-    let far = NONE, a = NONE;
     const q = [0, 1, 2].map((a) => base[a] + L[a] + f[a]);
     const r0 = ray ? ray.reach : -1, n0 = ray && [ray.nx, ray.ny, ray.nz];
-    FACES.forEach((F, k) => {
-      const away = Math.max(...[0, 1, 2].map((a) => Math.max(F.solid.lo[a] - ORIGIN[a] - 2 - q[a], q[a] - (F.solid.hi[a] - ORIGIN[a]) - 2)));
-      if (away > 0) return void (far = Math.min(far, away));
-      const m = SLANTS[F.plane.k], sg = F.plane.sign;
-      const s = (sg * SL.Ls[F.plane.k] + sg * (m[0] * base[0] + m[1] * base[1] + m[2] * base[2]) - F.K + sg * SL.Fs[F.plane.k]) / F.nl;
-      if (s < -BAND_IN) far = Math.min(far, -s - BAND_IN);
-      else if (s > BAND_OUT) far = Math.min(far, s - BAND_OUT);
-      else a = facePocket(0, k, L, f, base, a, ray);
-    });
+    // (The faces it is near, as the shader's: then their pockets, by carve.)
+    const faces = cityFaces(L, f, o), far = RS.Far;
+    const a = carve(0, L, f, base, faces, NONE, ray);
     // (The pockets, and how far off the rest are, stop at the solids without
     // relief: inside one they are no air; near one, a ray they take on
     // strikes it. Asked only where it could matter, as in the shader.)
