@@ -3035,12 +3035,14 @@ ${CELL_GLSL.cell}
     openings: (id, seed, level) => hallsOpenings(id, seed, level, spaceRoom),
     volume: VOLUME,
     // What fraction of a surface opens at a level (see the detail asked after
-    // in main, shaders.js):
-    // the halls' where they are; in the building's own cells, its relief (only
-    // where the surface is relief) and its openings (only where it is upright,
-    // as the faces with them are), in the surface's own shade; elsewhere there,
-    // none (and so nothing finer).
-    openAreaGlsl: `float openAreaAt(int level, ivec3 id, ivec3 up, bool skin, vec3 n) {
+    // in main, shaders.js), by where the surface is, not by the way a ray came
+    // to it: the halls' where they are; in the building's own cells, its
+    // relief (in its skin cells, this level's pockets, which may open into
+    // any surface there: drawn where they open, once sharp, and further off
+    // as their average tone) and its openings (in its plain cells, only where the
+    // surface is upright, as the faces with them are), in the surface's own
+    // shade; elsewhere there, none (and so nothing finer).
+    openAreaGlsl: `float openAreaAt(int level, ivec3 id, ivec3 up, vec3 n) {
   gOwnInk = false;
   if (level != ${CITY + 1}) return OPEN_AREA;
   uvec4 m = relief(id, up);
@@ -3050,7 +3052,7 @@ ${CELL_GLSL.cell}
   if (m.x == 0u && groundCell(${ownGlsl('id')}, up)) return -1.0;
   if (m.x == 0u || kind == ${DEEP}u) return OPEN_AREA;
   gOwnInk = true;
-  return (kind == ${SKIN}u && skin) || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;
+  return kind == ${SKIN}u || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;
 }`,
     tables: [{ name: 'uRidgeRows', ...RIDGE_ROWS }],
     // The building's planes' normals, carried exactly across levels (see

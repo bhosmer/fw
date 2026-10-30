@@ -118,7 +118,6 @@ float gX;         // how far the ray can go
 vec3 gN;          // the surface it meets there, facing the air
 bool gSkin;       // that air is only the coarser level's surface, cut back
                   // (its relief): coloured as that level's, not this one's
-bool gHitSkin;    // and the surface a ray met (or map found) is such relief
 float gIn, gOut;
 vec3 gInN;
 
@@ -206,11 +205,12 @@ float diag(int p, int sa, int sb, int ca, int cb, int k) {
 ${slantGlsl(space)}
 ${space.glsl}
 // (What fraction of a surface (its normal n) opens at a level, there: see
-// the detail asked after in main. gOwnInk:
-// what opens is the surface's own relief, seen in its shadow, not the level's
-// walls.)
+// the detail asked after in main. gOwnInk: what opens at that level there
+// is a building's own relief or openings, so it is drawn in the surface's
+// shadow, not as the level's walls: decided by where the surface is, never
+// by the way the ray came to it.)
 bool gOwnInk;
-${space.openAreaGlsl ?? 'float openAreaAt(int level, ivec3 id, ivec3 up, bool skin, vec3 n) { gOwnInk = false; return OPEN_AREA; }'}
+${space.openAreaGlsl ?? 'float openAreaAt(int level, ivec3 id, ivec3 up, vec3 n) { gOwnInk = false; return OPEN_AREA; }'}
 
 // One level at the camera-relative point v: its air distance and, for the ray
 // gDir when gRay is set, how far that goes before leaving the air it is in.
@@ -400,16 +400,13 @@ const float SLACK = ${glf(SLACK)};
 float map(vec3 v, float foot, float along, bool advance, out int slot) {
   float d = -1e20;
   slot = 0;
-  gHitSkin = false;
   if (uOuter.w >= 0.0) {
     d = dot(uOuter.xyz, v) + uOuter.w;
     slot = -1;
-    gHitSkin = false;
   }
   if (v.y + uSkyH > d) {
     d = v.y + uSkyH;
     slot = -2;
-    gHitSkin = false;
   }
   for (int i = 0; i < NLEV; i++) {
     if (i >= uN) break;
@@ -427,7 +424,7 @@ float map(vec3 v, float foot, float along, bool advance, out int slot) {
     // shrunk back flush with the wall it opens through), that is a coin toss
     // per pixel, so a finer level has to win clearly.
     if (w > d) {
-      if (w > d + foot) { slot = gSkin ? i - 1 : i; gHitSkin = gSkin; }
+      if (w > d + foot) slot = gSkin ? i - 1 : i;
       d = w;
     }
   }
@@ -458,7 +455,6 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
     vec3 v = o + dir * t;
     float best = -1.0;
     int from = slot;
-    bool fromSkin = gHitSkin;
     vec3 bn = n;
     if (uOuter.w >= 0.0) {
       float above = dot(uOuter.xyz, v) + uOuter.w;
@@ -466,7 +462,6 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
         float fall = -dot(uOuter.xyz, dir);
         best = fall > 0.0 ? above / fall : 2.0 * maxT;
         from = -1;
-        fromSkin = false;
         bn = uOuter.xyz;
       }
     }
@@ -479,7 +474,6 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
       if (e > best) {
         best = e;
         from = -2;
-        fromSkin = false;
         bn = vec3(0.0, 1.0, 0.0);
       }
     }
@@ -518,7 +512,7 @@ ${ifOpen(`      // (The open level, faded fully, stays so: its open air as it is
         if (e > best) {
           // The surface takes its colour from the level whose air we are
           // leaving; a finer level has to be clearly the one.
-          if (e > best + foot) { from = gSkin ? i - 1 : i; fromSkin = gSkin; }
+          if (e > best + foot) from = gSkin ? i - 1 : i;
           best = e;
           bn = nn;
         }
@@ -526,7 +520,6 @@ ${ifOpen(`      // (The open level, faded fully, stays so: its open air as it is
     }
     if (best < 0.0) { hit = true; break; }
     slot = from;
-    gHitSkin = fromSkin;
     n = bn;
     // Step just past the way out, so as to be inside whatever comes next.
     // (Some way, even setting out from the camera: a camera exactly on the
@@ -637,7 +630,7 @@ void main() {
 
   float t = 0.0, d = 0.0;
   int slot = 0, steps = 0;
-  bool hit = false, open = false, skin = false;
+  bool hit = false, open = false;
   vec3 n = -rd;
   // How far we see goes by the space we are in: out in the open, by how high
   // we are (uFogLen). But a ray that goes down into a cavity in the ground is
@@ -670,7 +663,7 @@ void main() {
   const int ASK_FOG = 0, ASK_SHADE = 1, ASK_DETAIL = 5, ASKS = 6; // 1 to 4: occlusion's points
   vec3 p = vec3(0.0), base = vec3(0.0);
   float foot = 0.0, seenFoot = 0.0, ao = 0.0, sunlit = 0.0;
-  bool inkSkin = false, sunTried = false;
+  bool sunTried = false;
   int phases = 1;
   for (int ph = 0; ph < phases; ph++) {
     float h = max(2.0 * foot, 0.004 * uScale), wt = 0.4;
@@ -705,12 +698,15 @@ void main() {
           // Levels too small to carve still show: their openings are drawn
           // onto the surface as texture, which the real geometry later grows
           // into. Smaller still, the texture dissolves into the average tone
-          // it would have had. (On a building's relief (skin), what opens in
-          // it is drawn in the relief's own colour, in its shadow: not in the
-          // colour of the level it opens into.) (The average is what the
-          // space says opens there, at that level: see openAreaAt; none (0),
-          // and nothing finer opens there either; less than 0, nothing of
-          // that level, but finer levels may.)
+          // it would have had. (In the colour of what it stands for: where
+          // the space says what opens at that level is a building's own relief
+          // or openings (gOwnInk: see openAreaAt), in the surface's own
+          // colour, in its shadow; elsewhere, the level's walls'. Each level
+          // as it says, wherever the surface is and however near, never by
+          // the way the ray came.) (The average is what the space says opens
+          // there, at that level: see openAreaAt; none (0), and nothing finer
+          // opens there either; less than 0, nothing of that level, but finer
+          // levels may.)
           float px = float(R) / uSig[i] / seenFoot;
           if (px < 0.5) break;
           wgt = (1.0 - smoothstep(0.75, 1.0, smoothstep(LOD_LO, LOD_HI, px))) * smoothstep(0.5, 4.0, px);
@@ -718,12 +714,11 @@ void main() {
           ivec3 I;
           vec3 f;
           ivec3 id = levelId(i, levelCell(i, v, I, f));
-          hole = openAreaAt(uLevel[i], id, gUp, inkSkin, n);
+          hole = openAreaAt(uLevel[i], id, gUp, n);
           if (hole < 0.0) continue;
           if (hole == 0.0) break;
           sharp = smoothstep(2.0, 8.0, px);
-          if (gOwnInk) inkSkin = true;
-          ink = inkSkin ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
+          ink = gOwnInk ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
           ask = sharp > 0.0;
         }
         float a = ask ? levelAir(i, v, o, sc) : 0.0;
@@ -760,7 +755,6 @@ void main() {
       gWideT = fogIn > uFogLen ? down : 1e30;
       gWideFog = fogIn;
       for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
-      gHitSkin = false;
       o = vec3(0.0); dir = rd; t0 = 0.0; far = maxT; most = STEPS;
     } else {
       ao = clamp(ao / 0.96, 0.0, 1.0);
@@ -801,7 +795,6 @@ void main() {
     slot = rs;
     n = rn;
     steps = rst;
-    skin = gHitSkin; // (before the normal's map calls below; the detail starts from it)
     if (!hit || uDebug == 1 || uDebug == 3 || uDebug == 4 || uDebug == 5) break;
     p = rd * t;
     foot = max(t * pix, 1e-5 * uScale);
@@ -817,7 +810,6 @@ void main() {
 #endif
     seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
     base = surfaceColour(slot, n);
-    inkSkin = skin;
     // (The sun's ray is not tried from too far below the ground for any to
     // come in: further than the space lets sunlight reach, and further than
     // we see from here. Going by how far we see alone, where the space is
