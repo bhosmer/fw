@@ -803,7 +803,3 @@ float cell(ivec3 L, vec3 f, ivec3 id, uint seed, int level, out float reach, out
   };
   return { space: halls, spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf };
 }
-
-// The halls as they are (and their parts, for the spaces built on them).
-export const madeHalls = makeHalls();
-export default madeHalls.space;
