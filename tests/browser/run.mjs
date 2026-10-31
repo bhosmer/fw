@@ -507,10 +507,13 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
     assert(r.ratio < 1 && r.apart === 0 && r.facing === 0 && r.compared > 3000, `${variant}: about rays they differ: ${JSON.stringify(r)}`);
   }
   // (The query names the variant, and the place in the link is where it
-  // opens.)
+  // opens: at the level it opens at without the variant, as clearance there
+  // decides.)
+  await load('inside');
+  const opens = await page.eval('fw.pos.F');
   await page.goto(`${base}index.html?${++loads}&arcology/cornice#${PLACES.inside}`, setup('alhambra'));
   const there = await page.eval(`({ world: fw.space.name, shown: document.querySelector('.world').textContent, F: fw.pos.F })`);
-  assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F === 1, `a variant's link with a place: ${JSON.stringify(there)}`);
+  assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F === opens, `a variant's link with a place: ${JSON.stringify(there)}, not at ${opens}`);
   // (Reloaded, a variant is the same variant, in the same place.)
   await page.eval(`(fw.fly(0.4, { f: 1 }), fw.saveLocation())`);
   const before = await page.eval(`({ href: location.href, F: fw.pos.F, frac: fw.pos.frac })`);
@@ -785,11 +788,13 @@ check('from above, the world is stepped through truly', async () => {
 // there the exact way sees further, never nearer.)
 // (Out on the plaza, from a first visit or elsewhere, sphere tracing runs
 // out of steps over the open floor far off, short of where the exact way
-// meets it: measured 37% and 38% of pixels, 2026-10-30. Inside, in a
-// hall, it falls short of the far walls most everywhere, 70%; and the
-// exact way sees nearer at 0.63% of pixels there, as it does elsewhere in
-// the arcology: ledger B34.)
-const STEPPING = { inside: [0.008, 0.75], plaza: [0.002, 0.42], start: [0.002, 0.42], relief: [0.015, 0.12] };
+// meets it: measured 37% and 38% of pixels, 2026-10-30. Inside, the place
+// opens at F -1 since the relief's cover (it opened at F 1 before, held two
+// levels finer by a camera on a seam's zero sheet): there 0.89% of pixels
+// disagree, and the exact way sees nearer at 1.96%, all of it ledger B34
+// (the exact way fades the hall's finer level by the slant of the face the
+// ray last crossed: with the slant held at 1, 0.00%), measured 2026-10-31.)
+const STEPPING = { inside: [0.025, 0.03], plaza: [0.002, 0.42], start: [0.002, 0.42], relief: [0.015, 0.12] };
 check('the two ways of stepping rays agree', async () => {
   for (const [place, [nearer, most]] of Object.entries(STEPPING)) {
     await load(place);
@@ -1238,11 +1243,13 @@ check('a link whose place cannot be read still opens somewhere', async () => {
   await new Promise((r) => setTimeout(r, 100));
   assert((await page.eval(state)) === was, 'a hash changed to a place that cannot be read moved us');
   assert((await page.eval('location.hash')) === link && !page.errors.length, `a hash changed to a place that cannot be read was left in the link, or failed: ${page.errors.join('\n')}`);
-  // (No facing: the place, faced the most open way along the walls.)
+  // (No facing: the place as it opens with one (its level as clearance
+  // there decides), faced the most open way along the walls.)
+  const [F0, frac0] = JSON.parse(was);
   await page.goto(`${base}index.html?${++loads}#${at({ ...here, yaw: undefined, pitch: undefined })}`, setup('alhambra'));
   const [F, frac, yaw, pitch] = JSON.parse(await page.eval(state));
   assert(!page.errors.length, `no facing: the page failed: ${page.errors.join('\n')}`);
-  assert(F === here.F && JSON.stringify(frac) === JSON.stringify(here.frac), `no facing: at ${F} ${frac}`);
+  assert(F === F0 && JSON.stringify(frac) === JSON.stringify(frac0), `no facing: at ${F} ${frac}, not ${F0} ${frac0}`);
   assert(pitch === 0 && [0, 1, 2, 3].some((k) => yaw === (k * Math.PI) / 2), `no facing: faced ${yaw}, ${pitch}`);
 });
 
