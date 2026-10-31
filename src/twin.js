@@ -350,13 +350,16 @@ export function writer(js, state = 'S') {
     // it is a sum.
     vadd: (a, b) => (js ? `add3(${a}, ${b})` : `${a} + ${term(b)}`),
     vsub: (a, b) => (js ? `sub3(${a}, ${b})` : `${a} - ${term(b)}`),
-    // Lines and terms for the shader alone: its fading with distance (fade,
-    // faded: the JavaScript's world is as it is, see pieces.js), and the
-    // rest, such as gRay's saving and restoring (shaderOnly; fade is the
-    // same, named for what it writes).
-    fade: shaderOnly,
-    faded: (term) => (js ? '' : term),
+    // Lines for the shader alone, such as gRay's saving and restoring, and
+    // its colours (gSkin).
     shaderOnly,
+    // How the level fades where it is asked (see fade in pieces.js): its air
+    // shrunk back by O, growing by A for each unit the ray goes; the point's
+    // footprint as a fraction of the level's cell, SCALE, growing by RATE.
+    O: js ? `${state}.o` : 'gO',
+    A: js ? `${state}.a` : 'gA',
+    SCALE: js ? `${state}.scale` : 'gScale',
+    RATE: js ? `${state}.rate` : 'gScaleRate',
     // An axis's normal and a vector as a call's arguments (in JavaScript,
     // three, each signed as GLSL's -EX is, -0 too); lines indented.
     axis: (a, sign = '') => (js ? [0, 1, 2].map((b) => `${sign}${b === a ? 1 : 0}`).join(', ') : `${sign}${AXES[a]}`),

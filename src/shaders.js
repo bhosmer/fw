@@ -1,4 +1,5 @@
 import { glf, slantsCut } from './util.js';
+import { LOD_LO, LOD_HI } from './pieces.js';
 import { lightGlsl } from './schemes.js';
 
 
@@ -126,8 +127,8 @@ float gO, gA;
 float gScale = 0.0, gScaleRate = 0.0;
 // (The sizes, in pixels, at which a level is carved fully and not at all:
 // see lean below.)
-const float LOD_LO = 8.0;
-const float LOD_HI = 24.0;
+const float LOD_LO = ${glf(LOD_LO)};
+const float LOD_HI = ${glf(LOD_HI)};
 const float LOD_K = 1.0 / (1.0 / LOD_LO - 1.0 / LOD_HI);
 float gX;         // how far the ray can go
 vec3 gN;          // the surface it meets there, facing the air

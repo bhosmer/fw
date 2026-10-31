@@ -112,6 +112,7 @@ export function buildRelief(ctx) {
       if (Number.isInteger(q) && q > 0 && q < c && K % q === 0 && m.every((x, a) => x * q === s * n[a])) (id = i), (c = q);
     });
     if (id < 0) throw new Error(`relief: a plane across ${n} at ${K}: no direction of the relief's it is whole along`);
+    if (fade && !Number.isFinite(fval(fbits(fz)))) throw new Error(`relief: a plane across ${n} at ${K} fades from ${fz}`);
     const row = [id | ((s < 0 ? 1 : 0) << 8) | (fade << 9), K / c, fade ? fbits(fz) : 0, 0];
     if (Math.abs(row[1]) >= 2 ** 31) throw new Error('relief: a plane too far out for 32 bits');
     const key = row.join();
@@ -419,8 +420,11 @@ export function writeRows({ lists, rows, planeRows, size: vsz }) {
 // the cell from the point, and vectors part by part.)
 export function listedCarve(js) {
   // (S is the level's scale here, as in the shader: the pieces' state is PS.)
-  const { decl, loop, indent: ins, fade, faded, shaderOnly, slant, vadd, vsub, D, RAY, keep } = twin.writer(js, 'PS');
+  const { decl, loop, indent: ins, shaderOnly, slant, vadd, vsub, D, RAY, keep, O, A } = twin.writer(js, 'PS');
   const W1 = ROW_WIDTH - 1, WB = Math.log2(ROW_WIDTH);
+  // (A plane's fz: in the shader from its row's bits; in JavaScript read as
+  // a float from the rows themselves, reliefFloat.)
+  const FZ = js ? 'reliefFloat(4 * qr + 2)' : 'intBitsToFloat(p.z)';
   // (Its right shifts are of ints, as twin.unsigned writes them in
   // JavaScript as of uints: each is masked after, so that both agree.)
   // (How far past a piece's bounds along axis a, in units one level finer.)
@@ -444,19 +448,17 @@ export function listedCarve(js) {
     "// the JavaScript's CELL).",
     js ? 'function carve(lv, L, f, base, d, ray) {' : 'float carve(int lv, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {',
     ...ins([
-      ...fade(
-        '// With distance (see the march), the relief one level finer fades by',
-        "// getting shallower: each piece's back rises by fr of its fading depth",
-        '// (fz, in its plane\'s row), growing by fg of it for each unit the ray',
-        "// goes, as a terrace's floor or ceiling grows; its other planes stay.",
-        "// (Not by the uniform shrinking of the rest of the level's air, which",
-        '// would fill in shallow relief long before deep, and leave slivers where',
-        "// pieces meet: cell() takes that out again for map.) The city's keeps the",
-        "// uniform shrinking, gO, but not its growth (B43).",
-        'float fo = gO, fa = gA, fr = lv == 1 ? gO / (CLOSE * float(R)) : 0.0, fg = lv == 1 ? gA / (CLOSE * float(R)) : 0.0;',
-        'if (lv == 1) gO = 0.0;',
-        'gA = 0.0;',
-      ),
+      '// With distance (see the march), the relief one level finer fades by',
+      "// getting shallower: each piece's back rises by fr of its fading depth",
+      '// (fz, in its plane\'s row), growing by fg of it for each unit the ray',
+      "// goes, as a terrace's floor or ceiling grows; its other planes stay.",
+      "// (Not by the uniform shrinking of the rest of the level's air, which",
+      '// would fill in shallow relief long before deep, and leave slivers where',
+      "// pieces meet: cell() takes that out again for map.) The city's keeps the",
+      "// uniform shrinking, gO, but not its growth (B43).",
+      decl('float', `fo = ${O}, fa = ${A}, fr = lv == 1 ? ${O} / (CLOSE * float(R)) : 0.0, fg = lv == 1 ? ${A} / (CLOSE * float(R)) : 0.0`),
+      `if (lv == 1) ${O} = 0.0;`,
+      `${A} = 0.0;`,
       decl('int', 'S = lv == 0 ? 1 : R'),
       decl('ivec3', `W = ${vadd('base', 'L')}`),
       "// (Its table cell: at the city's level, the one the point is in; one",
@@ -470,7 +472,7 @@ export function listedCarve(js) {
       ...ins([
         decl('ivec3', `u = ${vsub(vadd('W', 'ORIGIN'), 'VOL_LO')}`),
         js ? 'const q = [0, 1, 2].map((a) => max(-(float(u[a]) + f[a]), float(u[a] - VOL_SIZE[a]) + f[a]));' : 'vec3 q = max(-(vec3(u) + f), vec3(u - VOL_SIZE) + f);',
-        ...fade('gO = fo; gA = fa;'),
+        `${O} = fo; ${A} = fa;`,
         'return min(d, max(max(q.x, q.y), q.z));',
       ]),
       '}',
@@ -511,7 +513,8 @@ export function listedCarve(js) {
           'airPiece();',
           loop('k', 0, 'h.y'),
           ...ins([
-            decl('ivec4', 'p = reliefRow(reliefInt(h.x + k))'),
+            // (In JavaScript, the plane's row qr, to read its fz as a float.)
+            js ? 'const qr = reliefInt(h.x + k), p = reliefRow(qr);' : 'ivec4 p = reliefRow(reliefInt(h.x + k));',
             decl('ivec4', 'm = RDM[p.x & 255]'),
             ...(js ? ['let w, r;'] : ['int w;', 'float r;']),
             "// (Along an axis, the point's own; along a slant, as carried, and the",
@@ -523,19 +526,21 @@ export function listedCarve(js) {
             '}',
             decl('int', 'sg = (p.x & 256) != 0 ? -1 : 1'),
             decl('float', 'inv = RDI[p.x & 255]'),
-            decl('float', 's = (float(sg * w - p.y) + float(sg) * r) * inv', !js),
-            ...fade('int fc = (p.x >> 9) & 3;', 'if (fc == 1) s += fr * intBitsToFloat(p.z);', 'gA = fc != 0 ? fg * intBitsToFloat(p.z) : 0.0;'),
+            decl('float', 's = (float(sg * w - p.y) + float(sg) * r) * inv', true),
+            decl('int', 'fc = (p.x >> 9) & 3'),
+            `if (fc == 1) s += fr * ${FZ};`,
+            `${A} = fc != 0 ? fg * ${FZ} : 0.0;`,
             js ? 'airPlane(s, sg * m[0] * inv, sg * m[1] * inv, sg * m[2] * inv);' : 'airPlane(s, float(sg) * inv * vec3(m.xyz));',
-            `if (pass == 0 && ${D} >= d && (!ray || ${D}${faded(' + gO')} > 0.0)) break;`,
+            `if (pass == 0 && ${D} >= d && (!ray || ${D} + ${O} > 0.0)) break;`,
           ]),
           '}',
-          ...fade('gA = 0.0;'),
+          `${A} = 0.0;`,
           'if (pass == 0) {',
           ...ins([
             "// (Its distance no less than its bounds' (so that the bounds leaving it",
             "// out leaves the distance as it is): in its air, its planes' alone.)",
             `gd = max(${D}, far);`,
-            `if (!ray || gd${faded(' + gO')} > 0.0) break;`,
+            `if (!ray || gd + ${O} > 0.0) break;`,
             `${RAY} = true;`,
           ]),
           '} else {',
@@ -546,7 +551,7 @@ export function listedCarve(js) {
         'd = min(d, gd);',
       ]),
       '}',
-      ...fade('gO = fo; gA = fa;'),
+      `${O} = fo; ${A} = fa;`,
       'return d;',
     ]),
     '}',

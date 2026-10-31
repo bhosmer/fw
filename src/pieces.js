@@ -3,8 +3,11 @@
 // answers here what it answers there. For a point, a piece's distance (the
 // most of the distances outside its planes); and for a ray from the point,
 // where it leaves a piece of air it is in, or strikes a solid standing in
-// it, and the surface there. (Here the world is as it is, not shrunk back
-// with distance as drawing does: gO and gA are nothing.)
+// it, and the surface there. And, as the shader does, shrunk back by a
+// fade's state where one is given (see fade): the flight asks the world as
+// it is, and the tests may give a state as the march would, to ask it as
+// drawn. (The state is given, not worked out: the march's choice of it is
+// the shader's alone.)
 //
 // A cell's air is a union of convex pieces less some convex solids standing
 // in them. Each piece is written once, as the planes that bound it:
@@ -25,6 +28,12 @@
 //
 // The state the shader keeps in globals is kept in S, one object for all the
 // worlds, set afresh for each point asked about.
+//
+// The sizes, in pixels, at which a level is carved fully and not at all, and
+// how fast it fades between them (LOD_K: the fade's share per unit of
+// 1 / pixels), as the shader's (see lean in shaders.js): for the spaces that
+// fade at their own size.
+export const LOD_LO = 8, LOD_HI = 24, LOD_K = 1 / (1 / LOD_LO - 1 / LOD_HI);
 
 export const S = {
   ray: false, // is a ray being asked about? (gRay)
@@ -32,6 +41,11 @@ export const S = {
   d: 0, // the piece's distance (gD)
   x: 0, nx: 0, ny: 0, nz: 0, // how far the ray can go, and the surface it meets there, facing the air (gX, gN)
   in: 0, out: 0, inx: 0, iny: 0, inz: 0, // a solid's: where the ray enters and leaves it, and its face (gIn, gOut, gInN)
+  // How the level fades there (see fade): its air shrunk back by o, growing
+  // by a for each unit the ray goes (gO, gA); the point's footprint as a
+  // fraction of the level's cell, and its growth per unit (gScale,
+  // gScaleRate).
+  o: 0, a: 0, scale: 0, rate: 0,
   // The point along the diagonals (gLp, gFp, gLm, gFm: see Position.levels).
   Lp: [0, 0, 0], Fp: [0, 0, 0], Lm: [0, 0, 0], Fm: [0, 0, 0],
 };
@@ -55,12 +69,22 @@ export function at(L, f, dg, dir) {
   if (dir) (S.dx = dir[0]), (S.dy = dir[1]), (S.dz = dir[2]);
 }
 
+// How the level fades where it is asked (as the shader's levelAir and march
+// set it), { o, a, scale, rate } (see S); for a point alone, as levelAir
+// has it, nothing grows. At rest S is unfaded (NO_FADE): whoever sets a
+// state resets it after its ask (see airAt in air.js), and every part that
+// sets its own for a while restores what it saved.
+export const NO_FADE = Object.freeze({ o: 0, a: 0, scale: 0, rate: 0 });
+export function fade({ o, a, scale, rate }, ray) {
+  (S.o = o), (S.scale = scale), (S.a = ray ? a : 0), (S.rate = ray ? rate : 0);
+}
+
 // A face of a convex piece of air that the point is in: s is the point's
 // distance outside it (so not positive), n points out of the piece.
 function face(s, nx, ny, nz) {
-  const r = nx * S.dx + ny * S.dy + nz * S.dz;
+  const r = nx * S.dx + ny * S.dy + nz * S.dz + S.a;
   if (r > 0) {
-    const x = Math.max(-s, 0) / r;
+    const x = Math.max(-(s + S.o), 0) / r;
     if (x < S.x) (S.x = x), (S.nx = -nx), (S.ny = -ny), (S.nz = -nz);
   }
 }
@@ -73,12 +97,12 @@ export function solidBegin() {
   (S.in = -1e30), (S.out = 1e30);
 }
 export function solidFace(g, nx, ny, nz) {
-  const r = nx * S.dx + ny * S.dy + nz * S.dz;
+  const r = nx * S.dx + ny * S.dy + nz * S.dz - S.a, c = g - S.o;
   if (r < 0) {
-    const x = g / -r;
+    const x = c / -r;
     if (x > S.in) (S.in = x), (S.inx = nx), (S.iny = ny), (S.inz = nz);
-  } else if (r > 0) S.out = Math.min(S.out, -g / r);
-  else if (g > 0) S.out = -1;
+  } else if (r > 0) S.out = Math.min(S.out, -c / r);
+  else if (c > 0) S.out = -1;
 }
 
 export function airPiece() {
@@ -128,7 +152,7 @@ export const diag = (p, sa, sb, ca, cb, k) =>
 // asked; ask: the same piece again): asked again with the ray, it stays in
 // air to the end of whichever piece it is in for longest.
 export function through(ray, d, ask) {
-  if (!ray || d > 0) return;
+  if (!ray || d + S.o > 0) return;
   S.ray = true;
   ask();
   S.ray = false;

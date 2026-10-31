@@ -111,3 +111,63 @@ test("the relief's planes fade as its design says", () => {
   near(reliefFade(1, 2, 5, state, w).a, (0.012 / 7.2) * 5, 'a floor or ceiling only grows');
   assert.deepEqual(reliefFade(1, 0, 5, state, w), { o: 0, a: 0 });
 });
+
+// The JavaScript twin fades as the shader does (src/pieces.js: fade), as each
+// ask says, and by default not at all. At rest the pieces' state is unfaded,
+// and every part that sets its own state for a while restores what it saved:
+// asked with a state set by hand (as airAt sets it), each ask leaves it as it
+// was; and an ask after a faded one is as it would have been.
+test('every part restores the fade it saved, and an ask after a faded one is as it would have been', async () => {
+  const { makeWorld } = await import('../../src/worlds.js');
+  const { Flight } = await import('../../src/flight.js');
+  const { airAt } = await import('../../src/air.js');
+  const P = await import('../../src/pieces.js');
+  const { inside } = await import('./inside.js');
+  const { elsewhere } = await import('../../src/arrival.js');
+  const { rand } = await import('./rand.js');
+  const { CITY } = await import('../../src/spaces/arcology.js');
+  const state = { o: 0.3, a: 0.01, scale: 0.06, rate: 1e-4 };
+  for (const set of [undefined, { plaza: { fades: true } }]) {
+    const { space } = await makeWorld('arcology', set);
+    const R = space.R, rnd = rand(3), asks = [];
+    // (Places on the plaza and inside, every level round them; and the
+    // cells one level finer than the city's in the middle city cell, where
+    // its relief, openings and town are.)
+    for (let s = 0; s < 6; s++) {
+      const f = new Flight(space);
+      if (s % 2) inside(f, rnd);
+      else elsewhere(f, rnd);
+      f.sense();
+      for (const r of f.here) for (let k = 0; k < 8; k++) asks.push({ r, v: [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5].map((x) => x * Math.max(f.clearance, 1e-3)) });
+    }
+    const f = new Flight(space);
+    for (let k = 0; k < 1500; k++) {
+      Object.assign(f.pos, { F: CITY + 1, frac: [rnd(), rnd(), rnd()], digits: new Map([[CITY + 1, [0, 1, 2].map(() => Math.floor(rnd() * R))]]) });
+      const recs = f.pos.levels(CITY, CITY + 1);
+      for (const r of recs) asks.push({ r, v: [0, 0, 0] });
+    }
+    for (const q of asks) {
+      const e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], m = Math.hypot(...e);
+      q.dir = e.map((x) => x / m);
+    }
+    const ask = (fade) => asks.flatMap(({ r, v, dir }) => {
+      const ray = { dir }, a = airAt(space, r, v, null, fade), b = airAt(space, r, v, ray, fade);
+      return [a, b, ray.reach, ray.nx, ray.ny, ray.nz];
+    });
+    let unchanged = 0;
+    for (const { r, v, dir } of asks) {
+      for (const ray of [null, { dir }]) {
+        P.fade(state, ray);
+        airAt(space, r, v, ray);
+        const S = P.S, held = ray ? state : { ...state, a: 0, rate: 0 };
+        assert.ok(S.o === held.o && S.a === held.a && S.scale === held.scale && S.rate === held.rate, `the state set was not restored: ${JSON.stringify({ o: S.o, a: S.a, scale: S.scale, rate: S.rate })}, level ${r.level}`);
+        unchanged++;
+      }
+      P.fade(P.NO_FADE, null);
+    }
+    const before = ask(P.NO_FADE), faded = ask(state), after = ask(P.NO_FADE);
+    assert.ok(before.every((x, i) => Object.is(x, after[i])), 'an ask after a faded one differs');
+    assert.ok(faded.some((x, i) => !Object.is(x, before[i])), 'fading changed nothing');
+    assert.ok(unchanged > 5000, `${unchanged} asks`);
+  }
+});

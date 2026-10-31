@@ -5,13 +5,26 @@
 // tour, the view and the tests.
 import { DIAGONALS } from './position.js';
 import { levelSeed, wrapId, slantsCut } from './util.js';
+import { fade as fading, NO_FADE } from './pieces.js';
 
 // One level's air distance at the point v from the camera (level-F cells),
 // in that level's lattice units. And if ray is given ({ dir }), what the
 // world says of a ray from there along dir (see cellAir in worlds.js). Cut
 // off at the ground, as far under us as the record says (see
-// Position.levels).
-export function airAt(space, rec, v = [0, 0, 0], ray = null) {
+// Position.levels). As the level fades there (fade: { o, a, scale, rate },
+// see fade in pieces.js), as the shader draws it; by default, as it is.
+// (The fade lasts for this ask alone: at rest the pieces' state is
+// unfaded, so that what asks the cells directly asks the world as it is.)
+export function airAt(space, rec, v = [0, 0, 0], ray = null, fade = NO_FADE) {
+  if (fade === NO_FADE) return asked(space, rec, v, ray, fade);
+  fading(fade, ray);
+  try {
+    return asked(space, rec, v, ray, fade);
+  } finally {
+    fading(NO_FADE, null);
+  }
+}
+function asked(space, rec, v, ray, fade) {
   if (ray) ray.known = false; // (a world that does not say, does not know)
   const R = space.R;
   const L = [0, 0, 0], f = [0, 0, 0], id = [0, 0, 0], cell = [0, 0, 0];
@@ -52,6 +65,8 @@ export function airAt(space, rec, v = [0, 0, 0], ray = null) {
   if (!(rec.ground < Infinity)) return a;
   // Under the ground there is only solid, at every level, as levelRay in
   // shaders.js has it (h: how high v is over it, in the level's lattice units).
+  // The ground never fades: its distance is less the level's shrinking, which
+  // is taken off the whole level again where it fades.
   const h = (v[1] + rec.ground) * rec.sig;
   if (ray && ray.known) {
     if (h < 0) ray.reach = -1;
@@ -60,7 +75,7 @@ export function airAt(space, rec, v = [0, 0, 0], ray = null) {
       [ray.nx, ray.ny, ray.nz] = [0, 1, 0];
     }
   }
-  return Math.max(a, -h);
+  return Math.max(a, -h - fade.o);
 }
 
 // How f changes about the camera, along each axis: f h either way, the

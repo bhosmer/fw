@@ -1197,7 +1197,7 @@ export function makeArcology(set) {
     // the text is both's: in JavaScript float, abs, min and max are as GLSL
     // has them, points are arrays, and whole numbers are as twin.unsigned
     // makes them.)
-    const { fn, decl, loop, num, vec3Arg, ivec3, vadd, vsub, D, NOTHING, RAY, X, slant, fade, faded } = twin.writer(js);
+    const { fn, decl, loop, num, vec3Arg, ivec3, vadd, vsub, D, NOTHING, RAY, X, slant, O, A } = twin.writer(js);
     const middle = [
       '// Where the middle city cell is from this one, in lattice units.',
       fn('ivec3', 'fromMiddle', ['ivec3 id']),
@@ -1230,11 +1230,11 @@ export function makeArcology(set) {
     // part apart, as everywhere.)
     const off = (a) => `max(float(SLO[k].${a} - o.${a} - L.${a}) - f.${a}, float(L.${a} + o.${a} - SHI[k].${a}) + f.${a})`;
     const span = (x, f, lo, hi, a) => twin.planes(js, 'air', [{ span: [x, f, lo, hi, a] }])[0];
-    // (Where the plaza does not fade, its own lines: see PLAZA. In the shader,
-    // the plaza's air is asked unshrunk (gO and gA 0), its solids as the level
+    // (Where the plaza does not fade, its own lines and terms: see PLAZA. The
+    // plaza's air is asked unshrunk (gO and gA 0), its solids as the level
     // fades them, grown; and the distance less gO, which map takes off the
     // whole level again, as the town's is: see townAir.)
-    const [opened, openedFade, openedFaded] = [(...lines) => (UNFADED ? lines : []), (...lines) => (UNFADED ? fade(...lines) : []), (term) => (UNFADED ? faded(term) : '')];
+    const [opened, openedTerm] = [(...lines) => (UNFADED ? lines : []), (term) => (UNFADED ? term : '')];
     const farAxis = opened(
       '// Which way city cell o (counted from the middle one) is out past the',
       '// cells that hold anything but the plaza\'s air by more than one (see',
@@ -1268,7 +1268,7 @@ export function makeArcology(set) {
       fn('float', 'plaza', ['ivec3 L', 'vec3 f', 'ivec3 id']),
       ...[
         ...opened(decl('ivec3', 'o = fromMiddle(id)'), decl('int', `side = farAxis(${js ? 'o.map((x) => x / R)' : 'o / R'})`)),
-        ...openedFade('float fo = gO, fa = gA;', 'gO = 0.0; gA = 0.0;'),
+        ...opened(decl('float', `fo = ${O}, fa = ${A}`), `${O} = 0.0; ${A} = 0.0;`),
         'airPiece();',
         ...(UNFADED
           ? [
@@ -1291,24 +1291,24 @@ export function makeArcology(set) {
           ? span('L.y', 'f.y', `G - R * (id.y - ${ROW_ID})`, `${ROWS} * R + M - R * (id.y - ${ROW_ID})`, 1)
           : span('L.y', 'f.y', `id.y == ${ROW_ID} ? G : -M`, 'R + M', 1),
         decl('float', `box = ${D}`),
-        ...openedFade('gO = fo; gA = fa;'),
-        ...opened(`if (side >= 0) return box${openedFaded(' - gO')};`),
+        ...opened(`${O} = fo; ${A} = fa;`),
+        ...opened(`if (side >= 0) return box${openedTerm(` - ${O}`)};`),
         decl('float', `d = ${NOTHING}`, true),
         ...(UNFADED ? [] : [decl('ivec3', 'o = fromMiddle(id)')]),
         ...near,
-        `if (n < 0) return box${openedFaded(' - gO')};`,
+        `if (n < 0) return box${openedTerm(` - ${O}`)};`,
         loop('j', 'NEAR_START[n]', 'NEAR_START[n + 1]'),
         ...[
           decl('int', 'k = NEAR_BLOCKS[j]'),
           '// (A solid further off than one already found, or than a ray goes in',
           '// this piece, is not asked about.)',
-          ...openedFade('// (Grown as it fades: see GROW.)'),
+          ...opened('// (Grown as it fades: see GROW.)'),
           decl('float', `far = max(max(${off('x')}, ${off('y')}), ${off('z')})`),
-          `if (far >= d && (!${RAY} || far >= ${X}${openedFaded(` + GROW * (gO + gA * ${X})`)})) continue;`,
+          `if (far >= d && (!${RAY} || far >= ${X}${openedTerm(` + GROW * (${O} + ${A} * ${X})`)})) continue;`,
           'd = min(d, solid(k, L, f, o));',
         ].map((l) => '  ' + l),
         '}',
-        `return max(box${openedFaded(' - gO')}, -d);`,
+        `return max(box${openedTerm(` - ${O}`)}, -d);`,
       ].map((l) => '  ' + l),
       '}',
     ];
@@ -1358,12 +1358,11 @@ export function makeArcology(set) {
     // vec3, or an array: as a call's arguments, negated, of a table's row,
     // a dot product); the slots' arrays (declared, or empty); a ray's reach
     // and normal (inout, or an object, o for each slot, read back into rs
-    // and ns); a whole number divided (idiv: truncated in both); and the
-    // fade with distance, the shader's alone (the JavaScript's world is as
-    // it is: see pieces.js). Otherwise the text is both's: in JavaScript
-    // float, int, uint, ceil, min and max are as GLSL has them, vectors are
-    // arrays, and whole numbers are as twin.unsigned makes them.)
-    const { fn, decl, loop, D, RAY, fade, indent: ins, keep: keepX, arg3: arg, slant } = twin.writer(js);
+    // and ns); and a whole number divided (idiv: truncated in both).
+    // Otherwise the text is both's: in JavaScript float, int, uint, ceil,
+    // clamp, min and max are as GLSL has them, vectors are arrays, and whole
+    // numbers are as twin.unsigned makes them.)
+    const { fn, decl, loop, D, RAY, indent: ins, keep: keepX, arg3: arg, slant, O, A, SCALE, RATE } = twin.writer(js);
     const su = slant('ht.z', 'u'), sw = slant('ht.x', 'w');
     const [CELLB, OPEN, CROSS, AXIS, IN, OUT] = js ? ['CELL.b', 'CELL.open', 'CELL.cross', 'CELL.axis', 'S.in', 'S.out'] : ['gCellB', 'gCarveOpen', 'gCarveCross', 'gAxis', 'gIn', 'gOut'];
     const ZERO = js ? '[0, 0, 0]' : 'vec3(0.0)', IN_N = js ? '[S.inx, S.iny, S.inz]' : 'gInN';
@@ -1406,12 +1405,10 @@ export function makeArcology(set) {
         decl('int', 'outer = -fdiv(-K, a) + int(ceil(len))'),
         `${RAY} = false;`,
         decl('float', 'gw = 1e9, cap = 1e9', true),
-        ...fade(
-          '// (With distance an opening fades by getting shallower, as the relief',
-          '// does (see listedCarve): as its level does, or sooner, at its own size.)',
-          'float fo = gO, fa = gA;',
-          'gO = 0.0; gA = 0.0;',
-        ),
+        '// (With distance an opening fades by getting shallower, as the relief',
+        '// does (see listedCarve): as its level does, or sooner, at its own size.)',
+        decl('float', `fo = ${O}, fa = ${A}`),
+        `${O} = 0.0; ${A} = 0.0;`,
         decl('int', `pieces = ${CROSS} ? 3 : 1`),
         loop('k', 'WGR[j].x', 'WGR[j].x + WGR[j].y'),
         ...ins([
@@ -1478,13 +1475,11 @@ export function makeArcology(set) {
             ]),
             '}',
             'if (gv.x == 1 && ub - ua < fdiv(2 * g.x, gv.y)) continue;',
-            ...fade(
-              'float fz = (float(K) / float(a) - float(back)) * inv;',
-              "// (Its fade: as its level's, or at its own size, sooner (GSCALE: 1 for",
-              '// as the level); for a ray, going no slower than it may in the step.)',
-              'float own = (gScale / GSCALE[k] - 1.0 / LOD_HI) * LOD_K;',
-              'float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate / GSCALE[k] : 0.0;',
-            ),
+            decl('float', 'fz = (float(K) / float(a) - float(back)) * inv'),
+            "// (Its fade: as its level's, or at its own size, sooner (GSCALE: 1 for",
+            '// as the level); for a ray, going no slower than it may in the step.)',
+            decl('float', `own = (${SCALE} / GSCALE[k] - 1.0 / LOD_HI) * LOD_K`),
+            decl('float', `fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * ${RATE} / GSCALE[k] : 0.0`),
             js ? 'const tn = [WT[j][0] * inv, WT[j][1] * inv, WT[j][2] * inv], hn = [WH[j][0] * inv, WH[j][1] * inv, WH[j][2] * inv];' : 'vec3 tn = vec3(WT[j]) * inv, hn = vec3(WH[j]) * inv;',
             loop('p', 0, 'pieces'),
             ...ins([
@@ -1494,9 +1489,9 @@ export function makeArcology(set) {
                 'airPiece();',
                 `airPlane((float(ua - u) - fu) * inv, ${arg('tn', '-')});`,
                 `airPlane((float(u - ub) + fu) * inv, ${arg('tn')});`,
-                ...fade('gA = fq * fz;'),
-                `airPlane((float(back - w) - fw) * inv${js ? '' : ' + fp * fz'}, ${arg('hn', '-')});`,
-                ...fade('gA = 0.0;'),
+                `${A} = fq * fz;`,
+                `airPlane((float(back - w) - fw) * inv + fp * fz, ${arg('hn', '-')});`,
+                `${A} = 0.0;`,
                 `airPlane((float(w - outer) + fw) * inv, ${arg('hn')});`,
                 ...twin.planes(js, 'air', [
                   { span: ['L.y', 'f.y', `max(ya + ${GROUND * R} - base.y, openLo(1))`, `min(yb + ${GROUND * R} - base.y, openHi(1))`, 1] },
@@ -1504,7 +1499,7 @@ export function makeArcology(set) {
                   { span: ['L.z', 'f.z', 'openLo(2)', 'openHi(2)', 2] },
                 ]),
                 'if (pass == 0) {',
-                ...ins([decl('float', `gd = ${D}`), 'gw = min(gw, gd);', `if (!ray || gd${js ? '' : ' + gO'} > 0.0) break;`, `${RAY} = true;`]),
+                ...ins([decl('float', `gd = ${D}`), 'gw = min(gw, gd);', `if (!ray || gd + ${O} > 0.0) break;`, `${RAY} = true;`]),
                 '} else {',
                 ...ins([`${RAY} = false;`, keepX]),
                 '}',
@@ -1517,7 +1512,7 @@ export function makeArcology(set) {
         ]),
         '}',
         `${AXIS} = -1;`,
-        ...fade('gO = fo; gA = fa;'),
+        `${O} = fo; ${A} = fa;`,
         'return min(min(d, gw), max(cap, 0.0));',
       ]),
       '}',
@@ -1559,7 +1554,7 @@ export function makeArcology(set) {
       js ? 'function openings(L, f, m, ray) {' : 'float openings(ivec3 L, vec3 f, uvec4 m, bool ray, inout float reach, inout vec3 nrm) {',
       ...ins([
         js ? 'const base = [CELL.b[0] * R, CELL.b[1] * R, CELL.b[2] * R];' : 'ivec3 base = gCellB * R;',
-        decl('float', `a = 1e9${js ? '' : ', fo = gO, fa = gA'}`, true),
+        decl('float', `a = 1e9, fo = ${O}, fa = ${A}`, true),
         "// (Each solid's openings as they are, first.)",
         ...(js ? [`const ms = [], bs = [], rs = [], ns = [];`] : [`int ms[${WIN_AT.length}];`, `float bs[${WIN_AT.length}], rs[${WIN_AT.length}];`, `vec3 ns[${WIN_AT.length}];`]),
         loop('s', 0, WIN_AT.length),
@@ -1586,7 +1581,7 @@ export function makeArcology(set) {
           decl('vec3', `oN = ${ZERO}`, true),
           'if (rays) {',
           ...ins([
-            ...fade('gO = 0.0; gA = 0.0;'),
+            `${O} = 0.0; ${A} = 0.0;`,
             loop('k', 'SOLID_AT[me].x', 'SOLID_AT[me].x + SOLID_AT[me].y'),
             ...ins([
               decl('float', `rd = ${dot('SOLID_NRM[k]', 'gDir')}, g = planeAt(k, L, f, base)`),
@@ -1624,7 +1619,7 @@ export function makeArcology(set) {
             '}',
           ]),
           '}',
-          ...fade('gO = fo; gA = fa;'),
+          `${O} = fo; ${A} = fa;`,
           'a = min(a, b);',
           keep('r', 'rn'),
         ]),
@@ -1674,12 +1669,12 @@ export function makeArcology(set) {
     // (Where the languages differ: what twin.writer writes; a vector (the
     // point, an axis's normal, a box's lot: a vec3, or an array); a box of
     // the town (out lo and hi, or an array: see townShape in town.js); the
-    // ray's reach and normal (inout, or the ray's own object); the corner's
-    // root a half (H2 in JavaScript, as twin.planes has it); and the fade
-    // with distance, the shader's alone. Otherwise the text is both's: in
-    // JavaScript float, min and max are as GLSL has them, vectors are
-    // arrays, and whole numbers are as twin.unsigned makes them.)
-    const { fn, decl, loop, D, X, RAY, ivec3: iv, fade, indent: ins, keep, axis: E, num } = twin.writer(js);
+    // ray's reach and normal (inout, or the ray's own object); and the
+    // corner's root a half (H2 in JavaScript, as twin.planes has it).
+    // Otherwise the text is both's: in JavaScript float, clamp, min and max
+    // are as GLSL has them, vectors are arrays, and whole numbers are as
+    // twin.unsigned makes them.)
+    const { fn, decl, loop, D, X, RAY, ivec3: iv, indent: ins, keep, axis: E, num, O, A, SCALE, RATE } = twin.writer(js);
     const CB = cellB(js);
     // The point is its whole part L and the small rest f (units in the
     // cell), kept apart: where a distance is to a whole number (a side, a
@@ -1735,19 +1730,17 @@ export function makeArcology(set) {
         ...edgeAt,
         decl('uint', 'open = (w >> uint(OPEN_AT)) & 63u, corner = (w >> uint(TOWN_CORNER_AT)) & 15u'),
         decl('bool', `r0 = ${RAY}`),
-        decl('float', `t = 1e9${js ? '' : ', fo = gO, fa = gA'}`, true),
-        ...fade(
-          'gO = 0.0; gA = 0.0;',
-          'float own = (gScale - 1.0 / LOD_HI) * LOD_K;',
-          'float fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * gScaleRate : 0.0;',
-        ),
+        decl('float', `t = 1e9, fo = ${O}, fa = ${A}`, true),
+        `${O} = 0.0; ${A} = 0.0;`,
+        decl('float', `own = (${SCALE} - 1.0 / LOD_HI) * LOD_K`),
+        decl('float', `fp = clamp(own, 0.0, 1.0), fq = own < 1.0 ? LOD_K * ${RATE} : 0.0`),
         loop('pass', 0, 2),
         ...ins([
           `${RAY} = pass == 1;`,
           'airPiece();',
-          ...fade('gA = fq * float(TOWN_H);'),
-          `airPlane(${js ? '' : 'fp * float(TOWN_H) '}- float(L.y) - f.y, ${E(1, '-')});`,
-          ...fade('gA = 0.0;'),
+          `${A} = fq * float(TOWN_H);`,
+          `airPlane(fp * float(TOWN_H) - float(L.y) - f.y, ${E(1, '-')});`,
+          `${A} = 0.0;`,
           `airPlane(float(L.y - R) + f.y, ${E(1)});`,
           `airPlane(float(L.x - R) + f.x - ((open & 1u) != 0u ? TOWN_MARGIN : 0.0), ${E(0)});`,
           `airPlane(-float(L.x) - f.x - ((open & 2u) != 0u ? TOWN_MARGIN : 0.0), ${E(0, '-')});`,
@@ -1797,7 +1790,7 @@ export function makeArcology(set) {
         ]),
         '}',
         `${RAY} = r0;`,
-        ...fade('gO = fo; gA = fa;'),
+        `${O} = fo; ${A} = fa;`,
         'return t;',
       ]),
       '}',
@@ -1828,7 +1821,10 @@ export function makeArcology(set) {
     // as GLSL has them, vectors are arrays, and whole numbers are as
     // twin.unsigned makes them.)
     // (S is the level's scale here, as in the shader: the pieces' state is PS.)
-    const { fn, decl, loop, ivec3: iv, indent: ins, struct, fade, faded, axis, arg3, slant, ivec2, vadd, vsub, D, RAY, keep } = twin.writer(js, 'PS');
+    const { fn, decl, loop, ivec3: iv, indent: ins, struct, shaderOnly, axis, arg3, slant, ivec2, vadd, vsub, D, RAY, keep } = twin.writer(js, 'PS');
+    // (The depth a cut fades from, gCfz, is kept by the shader's copy alone:
+    // the listed relief has its own, fz, in its planes' rows.)
+    const shaderTerm = (term) => (js ? '' : term);
     const g = (name) => (js ? `RS.${name}` : `g${name}`);
     const idiv = (a, b) => (js ? `int(${a} / ${b})` : `${a} / ${b}`);
     // (A vector b set to the parts xs: as GLSL assigns one, part by part in
@@ -2071,7 +2067,7 @@ export function makeArcology(set) {
       ...ins([
         decl('float', 'H = float(terraceH(k, t)) * float(S) / 12.0'),
         decl('bool', 'up = FNH[k].x > 0.0'),
-        `${g('Cter')} = true; ${g('Cyin')} = up ? y1 : y0; ${g('Cyb')} = up ? -H : H; ${g('Cback')} = 0.0;${faded(' gCfz = 0.0;')}`,
+        `${g('Cter')} = true; ${g('Cyin')} = up ? y1 : y0; ${g('Cyb')} = up ? -H : H; ${g('Cback')} = 0.0;${shaderTerm(' gCfz = 0.0;')}`,
       ]),
       '}',
       fn('void', 'cutOf', ['int k', 'int lv', 'int S', 'int y0', 'int y1', 'int t', 'int fl', 'int cy0', 'int cy1']),
@@ -2080,13 +2076,13 @@ export function makeArcology(set) {
         'if (fl > 0) {',
         ...ins([
           'terraceOf(k, S, cy0, cy1, fl);',
-          `if (FNH[k].x > 0.0 ? float(y1 - ${g('Cyin')}) >= ${g('Cyb')} : float(y0 - ${g('Cyin')}) <= ${g('Cyb')}) { ${g('Cback')} = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y;${faded(' gCfz = gCback;')} return; }`,
+          `if (FNH[k].x > 0.0 ? float(y1 - ${g('Cyin')}) >= ${g('Cyb')} : float(y0 - ${g('Cyin')}) <= ${g('Cyb')}) { ${g('Cback')} = float(t - fl) / 12.0 * float(S) * FNS[k].x / FNH[k].y;${shaderTerm(' gCfz = gCback;')} return; }`,
         ]),
         '}',
         decl('int', 'x = t - fl'),
         `${g('Cter')} = false;`,
         `${g('Cdn')} = depthN(k, S, ${ivec2([idiv('x', '3'), `x - 3 * (${idiv('x', '3')})`])});`,
-        ...fade('gCfz = float(gCdn) / FNS[k].x;'),
+        ...shaderOnly('gCfz = float(gCdn) / FNS[k].x;'),
       ]),
       '}',
     ];
@@ -2104,7 +2100,7 @@ export function makeArcology(set) {
   //   has some), and a plain cell's town, its bound; a skin cell's pockets
   //   asked after once the cell is done (see cell, cellAir). (Shader only:
   //   gRay's second job (whether the cell is asked with a ray: saved and
-  //   restored), gSkin, and gO taken off; JavaScript only: the ray's state
+  //   restored), and gSkin; JavaScript only: the ray's state
   //   cleared after the deep pass, and aim where the shader starts reach
   //   and nrm.)
   // - city: a cell of the city's rows: its plaza, its pockets asked after
@@ -2116,7 +2112,7 @@ export function makeArcology(set) {
   //   see groundCell; else the halls); the halls everywhere else; then the
   //   pockets asked after once (carve, its one call), stopped, at the city's
   //   level, at the solids without relief. (Shader only: gRay's second job,
-  //   gSkin, and gO; JavaScript only: the point along the slants set where the
+  //   and gSkin; JavaScript only: the point along the slants set where the
   //   city's and the relief's pieces ask after it (setPoint), and the clips
   //   counted (SEEN.clipped). Every cell answers the ray, aimed where the
   //   shader starts reach and nrm afresh: see hallsAir.)
@@ -2133,9 +2129,9 @@ export function makeArcology(set) {
   // town's; and the halls' hallsAir (hallsCell in GLSL), the relief's carve,
   // and the city's plaza and ground, as made before it.)
   function cellPieces(js) {
-    const { fn, decl, num, vadd, vsub, RAY, X, D, REACH, READ_REACH, aim, take, fade, faded, shaderOnly, axis, NOTHING } = twin.writer(js);
+    const { fn, decl, num, vadd, vsub, RAY, X, D, REACH, READ_REACH, aim, take, shaderOnly, axis, NOTHING, O, SCALE } = twin.writer(js);
     // (Where the plaza does not fade, its own lines and terms: see PLAZA.)
-    const [opened, openedFade, openedFaded] = [(...lines) => (UNFADED ? lines : []), (...lines) => (UNFADED ? fade(...lines) : []), (term) => (UNFADED ? faded(term) : '')];
+    const [opened, openedTerm] = [(...lines) => (UNFADED ? lines : []), (term) => (UNFADED ? term : '')];
     const CB = cellB(js);
     const relief = [
       '// What the table says of the level-(CITY + 1) cell id, in a city cell',
@@ -2210,14 +2206,15 @@ export function makeArcology(set) {
       ...shaderOnly('  gRay = ray;'),
       `  if (kind == ${PLAIN}u) {`,
       `    if (((m.x >> uint(TOWN_AT)) & 1u) != 0u) a = min(a, ${js ? 'townAir(L, f, m.x, ray)' : 'townAir(L, f, m.x, ray, reach, nrm)'});`,
-      ...fade('    gSkin = ray ? reach >= 0.0 : a < 0.0;', '    // (Less gO, which map takes off the whole level again: see cell.)'),
-      `    return min(a${faded(' - gO')}, max(e, 0.0));`,
+      ...shaderOnly('    gSkin = ray ? reach >= 0.0 : a < 0.0;'),
+      '    // (Less gO, which map takes off the whole level again: see cell.)',
+      `    return min(a - ${O}, max(e, 0.0));`,
       '  }',
       '  // (Its pockets, with its openings: see cell.)',
       `  ${CARVE} = 1;`,
       `  ${BASE} = ${js ? 'CELL.b.map((x) => x * R)' : 'gCellB * R'};`,
       `  ${E} = e;`,
-      `  return a${faded(' - gO')};`,
+      `  return a - ${O};`,
       '}',
     ];
     // (Where the plaza does not fade: whether the city's level is faded fully,
@@ -2226,14 +2223,14 @@ export function makeArcology(set) {
     // grow; its pockets and the halls under the plaza are gone, as the whole
     // level would be. Asked where it is used: kept in a global,
     // set once, it took the shader's build from 2.4 s to 4.0 s.)
-    const GONE = '(gScale - 1.0 / LOD_HI) * LOD_K >= 1.0';
+    const GONE = `(${SCALE} - 1.0 / LOD_HI) * LOD_K >= 1.0`;
     const city = [
       '// A cell of the city.',
       ...opened("// (Where the plaza does not fade, a cell far out holds nothing but its air: see farAxis.)"),
       js ? 'function city(L, f, id, ray) {' : 'float city(ivec3 L, vec3 f, ivec3 id, out float reach, out vec3 nrm) {',
       ...aim('  '),
       ...shaderOnly('  bool ray = gRay;', '  gRay = false;'),
-      ...opened('  ' + decl('bool', `rest = farAxis(${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'}) < 0${openedFaded(` && !(${GONE})`)}`)),
+      ...opened('  ' + decl('bool', `rest = farAxis(${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'}) < 0${openedTerm(` && !(${GONE})`)}`)),
       '  ' + decl('float', 'p = plaza(L, f, id)'),
       ...twin.reask(js, 'p', 'plaza(L, f, id)').map((l) => '  ' + l),
       ...shaderOnly('  gRay = ray;'),
@@ -2277,7 +2274,7 @@ export function makeArcology(set) {
       ...aim('      '),
       `      return float(L.y + R * (id.y - ${ROW_ID + ROWS})) + f.y;`,
       '    }',
-      ...openedFade("    // (The city's level faded fully: none of it is left but the plaza, and", '    // the solids standing in it, grown.)', `    if (level == ${CITY} && ${GONE}) {`, ...aim('      '), `      return ${NOTHING};`, '    }'),
+      ...opened("    // (The city's level faded fully: none of it is left but the plaza, and", '    // the solids standing in it, grown.)', `    if (level == ${CITY} && ${GONE}) {`, ...aim('      '), `      return ${NOTHING};`, '    }'),
       '    // (The halls asked after in one place only: the compiler copies them out',
       '    // wherever they are asked after, and they are much the biggest part. Not',
       '    // at all in the skin and plain cells, which have none.)',
@@ -2313,13 +2310,13 @@ export function makeArcology(set) {
       `        bi = bareIn(L, f, ${BASE}, pockets);`,
       '      }',
       '      d = min(d, max(c, bi));',
-      `      if (bi${faded(' + gO')} >= 0.0) ${RESTORE}`,
+      `      if (bi + ${O} >= 0.0) ${RESTORE}`,
       `      else if (pockets && bi > -${num(BARE_NEAR)}) ${TAKE}`,
       '    }',
       '    else {',
       "      // (With the cell's openings, in d: see reliefCell.)",
-      `      d = min(d, min(a${faded(' - gO')}, max(${E}, 0.0)));`,
-      ...fade('      gSkin = ray ? reach >= 0.0 : d < 0.0;'),
+      `      d = min(d, min(a - ${O}, max(${E}, 0.0)));`,
+      ...shaderOnly('      gSkin = ray ? reach >= 0.0 : d < 0.0;'),
       '    }',
       '  }',
       '  return d;',
@@ -2469,9 +2466,9 @@ ${CELL_GLSL.cell}
   // into functions.
   const NEAR_AT = new Map(NEAR_CELLS.map((c, n) => [c.join(), n]));
   const { plaza, tableAt, groundCell, groundAir, farAxis } = new Function(
-    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE', 'NEAR_X0', 'NEAR_X1', 'NEAR_Z0', 'NEAR_Z1',
+    'P', 'SL', 'fromMiddle', 'R', 'M', 'G', 'GROW', 'SLO', 'SHI', 'NEAR_AT', 'NEAR_START', 'NEAR_BLOCKS', 'VOL_LO', 'VOL_SIZE', 'NEAR_X0', 'NEAR_X1', 'NEAR_Z0', 'NEAR_Z1',
     `'use strict';\nconst { S, airPiece, airSpan, solidPiece, solidPlane, solidDone, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\n${CITY_JS.solids}\n${CITY_JS.farAxis}\n${CITY_JS.plaza}\n${CITY_JS.table}\n${CITY_JS.ground}\nreturn { plaza, tableAt, groundCell, groundAir${UNFADED ? ', farAxis' : ''} };\n//# sourceURL=cityPieces.gen.js`,
-  )(P, SL, fromMiddle, R, M, G, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size, NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1);
+  )(P, SL, fromMiddle, R, M, G, GROW, SOLIDS.map((sd) => sd.lo), SOLIDS.map((sd) => sd.hi), NEAR_AT, NEAR_START, NEAR_BLOCKS, VOLUME.lo, VOLUME.size, NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1);
 
   // The point along the diagonals (the shared pieces', see pieces.at), and
   // along the slants (from dg, or else from L and f).
@@ -2505,7 +2502,7 @@ ${CELL_GLSL.cell}
   const OPEN_JS = openingsPieces(true);
   const { openings, bareIn } = new Function(
     'P', 'SL', 'CELL', 'R', 'hashCell', 'fdiv', 'lowBit', 'SEGMENT_SALT', 'WIN_BITS', 'SOLID_BITS', 'NBARE', ...Object.keys(OPEN_ROWS),
-    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\n${OPEN_JS.bare}\nreturn { openings, bareIn };\n//# sourceURL=openingsPieces.gen.js`,
+    `'use strict';\nconst { S, airPiece, airPlane, airSpan, solidBegin, solidFace, solidPiece, solidPlane, solidDone, LOD_HI, LOD_K } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${OPEN_JS.cell}\n${OPEN_JS.windowAir}\n${OPEN_JS.openings}\n${OPEN_JS.bare}\nreturn { openings, bareIn };\n//# sourceURL=openingsPieces.gen.js`,
   )(P, SL, CELL, R, hashCell, fdiv, lowBit, SEGMENT_SALT, WIN_BITS, SOLID_BITS, BARE.length, ...Object.values(OPEN_ROWS));
   // The relief's whole-number decisions in JavaScript (see reliefPieces),
   // made into functions, and what they keep as the shader would in globals
@@ -2555,17 +2552,31 @@ ${CELL_GLSL.cell}
           return [D[4 * i], D[4 * i + 1], D[4 * i + 2], D[4 * i + 3]];
         };
     const reliefInt = data ? (j) => data[j] : (j) => (RELIEF ?? reliefTable()).data[j];
+    // (An int of the rows read as a float, from a view of the rows themselves.)
+    const floats = (d) => (d === floats.of ? floats.view : ((floats.of = d), (floats.view = new Float32Array(d.buffer, d.byteOffset, d.length))));
+    const reliefFloat = data ? (j) => floats(data)[j] : (j) => floats((RELIEF ?? reliefTable()).data)[j];
     return new Function(
-      'P', 'SL', 'R', 'ORIGIN', 'VOL_LO', 'VOL_SIZE', 'RDM', 'RDI', 'lowBit', 'reliefRow', 'reliefInt',
+      'P', 'SL', 'R', 'CLOSE', 'ORIGIN', 'VOL_LO', 'VOL_SIZE', 'RDM', 'RDI', 'lowBit', 'reliefRow', 'reliefInt', 'reliefFloat',
       `'use strict';\nconst { S: PS, airPiece, airPlane } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\n${listedCarve(true)}\nreturn { carve };\n//# sourceURL=listedCarve.gen.js`,
-    )(P, SL, R, ORIGIN, VOLUME.lo, VOLUME.size, RELIEF_DIRS.map((d) => [...d.m, d.kind]), RELIEF_DIRS.map((d) => 1 / Math.hypot(...d.m)), lowBit, reliefRow, reliefInt).carve;
+    )(P, SL, R, CLOSE, ORIGIN, VOLUME.lo, VOLUME.size, RELIEF_DIRS.map((d) => [...d.m, d.kind]), RELIEF_DIRS.map((d) => 1 / Math.hypot(...d.m)), lowBit, reliefRow, reliefInt, reliefFloat).carve;
   };
   const carve = carveOver(null);
   // (For the checks: the relief at level lv, at L + f in the level's units
   // over the building's origin, in the table's cell whose corner is base;
-  // and for a ray ({ dir }), how far it goes in it. reliefCarve asks the
-  // world's rows, carveOver(data)'s the rows data.)
-  const asked = (c) => (lv, L, f, base, ray = null) => (ray && P.aim(ray), c(lv, L, f, base, P.NONE, ray));
+  // and for a ray ({ dir }), how far it goes in it; faded as fade says (see
+  // fade in pieces.js), by default not. reliefCarve asks the world's rows,
+  // carveOver(data)'s the rows data.)
+  // (The fade lasts for that ask alone, as airAt's: see fade in pieces.js.)
+  const asked = (c) => (lv, L, f, base, ray = null, fade = P.NO_FADE) => {
+    if (ray) P.aim(ray);
+    if (fade === P.NO_FADE) return c(lv, L, f, base, P.NONE, ray);
+    P.fade(fade, ray);
+    try {
+      return c(lv, L, f, base, P.NONE, ray);
+    } finally {
+      P.fade(P.NO_FADE, null);
+    }
+  };
   Object.assign(_V2, { listed, reliefCarve: asked(carve), carveOver: (data) => asked(carveOver(data)), setPoint, CELL });
   // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
   // a whole number of its measure deep: else one would not be cut at all.)
@@ -2578,7 +2589,7 @@ ${CELL_GLSL.cell}
   const TOWN_JS = townPieces(true);
   const { townAir } = new Function(
     'P', 'CELL', 'R', 'H2', 'hashCell', 'fdiv', 'townShape', 'TOWN_LOT', 'TOWN_PLAN_AT', 'TOWN_PICK', 'TOWN_H', 'TOWN_SALT', 'TOWN_MARGIN', 'TOWN_SHAPES', 'OPEN_AT', 'TOWN_CORNER_AT',
-    `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max;\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
+    `'use strict';\nconst { S, airPiece, airPlane, solidPiece, solidPlane, solidDone, LOD_HI, LOD_K } = P;\n${twin.AS_GLSL}\nconst min = Math.min, max = Math.max, clamp = (x, a, b) => Math.min(Math.max(x, a), b);\n${TOWN_JS.box}\n${TOWN_JS.air}\nreturn { townAir };\n//# sourceURL=townPieces.gen.js`,
   )(P, CELL, R, Math.SQRT1_2, hashCell, fdiv, townShape, TOWN_LOT, TOWN_PLAN_AT, TOWN_PICK, TOWN_H, TOWN_SALT, TOWN_MARGIN, TOWN_SHAPES, OPEN_AT, TOWN_CORNER_AT);
 
   // The cell's pieces in JavaScript (see cellPieces), made into functions,
@@ -2587,7 +2598,7 @@ ${CELL_GLSL.cell}
   const CELL_JS = cellPieces(true);
   const { relief, cellAir } = new Function(
     'P', 'SEEN', 'RS', 'setPoint', 'plaza', 'farAxis', 'tableAt', 'groundCell', 'groundAir', 'hallsAir', 'carve', 'bareIn', 'openings', 'townAir', 'OPEN_AT', 'CROSS_AT', 'TOWN_AT', 'CELL', 'R', 'fromMiddle', 'ownOf', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
-    `'use strict';\nconst { S, airPiece, airPlane, aim, through, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst NO_ENTRY = [0, 0, 0, 0];\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\n${CELL_JS.city}\n${CELL_JS.cell}\nreturn { relief, cellAir };\n//# sourceURL=cellPieces.gen.js`,
+    `'use strict';\nconst { S, airPiece, airPlane, aim, through, NONE, LOD_HI, LOD_K } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst NO_ENTRY = [0, 0, 0, 0];\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\n${CELL_JS.city}\n${CELL_JS.cell}\nreturn { relief, cellAir };\n//# sourceURL=cellPieces.gen.js`,
   )(P, SEEN, RS, setPoint, plaza, farAxis, tableAt, groundCell, groundAir, hallsAir, carve, bareIn, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, CELL, R, fromMiddle, ownOf, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
 
   // Where a first visit starts, in the middle city cell (lattice units): on
