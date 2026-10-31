@@ -342,12 +342,31 @@ function pieces(js, levels, salt) {
     ...(none ? [`if (t < ${num(list[0].to)}) return ${none};`] : []),
     ...(none ? list.slice(1) : list).flatMap((k, i) => [`${i ? '} else ' : ''}${k.to === null ? '{' : `if (t < ${num(k.to)}) {`}`, ...give(k).map((l) => '  ' + l), ...(k.to === null ? ['}'] : [])]),
   ].map((l) => '  ' + l);
-  // (What write(kinds) writes, for the level asked at: each level's own,
-  // where its kinds write other lines than the rest, else the default's.)
+  // (What write(kinds) writes, for the level asked at. Where the levels'
+  // kinds write the same lines but for some of their numbers (a share, say,
+  // moving the thresholds after it), one text, each such number chosen by the
+  // level, as built() chooses its share: the compiler copies a rule out
+  // wherever it is asked, so a level's own copy of it would cost as much as
+  // the rule. Otherwise each level's own lines, where they differ from the
+  // rest, else the default's. A number is chosen only where it stands alone:
+  // never a divisor, a modulus or a shift count, which stay constants written
+  // inline (ledger B20).)
+  const WORDS = /\d+(?:\.\d+)?(?:e[-+]?\d+)?|[A-Za-z_]\w*|\s+|>>|<<|./g, NUMBER = /^\d/;
   const atLevel = (write) => {
     const base = write(levels.get(null));
     const own = [...levels].filter(([l]) => l !== null).map(([l, kinds]) => [l, write(kinds)]).filter(([, lines]) => lines.join('\n') !== base.join('\n'));
     if (!own.length) return base;
+    const words = (lines) => lines.join('\n').match(WORDS);
+    const at = words(base), theirs = own.map(([l, lines]) => [l, words(lines)]);
+    // (What the number at i is an operand of: the word before it, past
+    // spaces and opening parentheses.)
+    const after = (i) => {
+      for (let k = i - 1; k >= 0; k--) if (!/^\s+$/.test(at[k]) && at[k] !== '(') return at[k];
+      return '';
+    };
+    const chosen = (i) => !['/', '%', '>>', '<<'].includes(after(i));
+    if (theirs.every(([, w]) => w.length === at.length && w.every((x, i) => x === at[i] || (NUMBER.test(x) && NUMBER.test(at[i]) && chosen(i)))))
+      return at.map((x, i) => (theirs.every(([, w]) => w[i] === x) ? x : `(${theirs.map(([l, w]) => `level == ${l} ? ${w[i]} : `).join('')}${x})`)).join('').split('\n');
     return [...own.flatMap(([l, lines], i) => [`  ${i ? '} else ' : ''}if (level == ${l}) {`, ...lines.map((x) => '  ' + x)]), '  } else {', ...base.map((x) => '  ' + x), '  }'];
   };
   const out = [];

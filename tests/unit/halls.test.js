@@ -177,8 +177,10 @@ test('the halls by level change only their level', () => {
   }
   assert.equal(differ, 0, `${differ} answers not as their level's halls`);
   assert.ok(changed > 500, `the change made little difference (${changed}): the test sees too little`);
-  // (Its shader: one copy of the cell, the level's own kinds where they differ.)
-  assert.match(by.glsl, /if \(level == -1\) \{/);
+  // (Its shader: one copy of the cell, and of each rule, the level's own
+  // numbers chosen by the level where they differ.)
+  assert.match(by.glsl, /level == -1 \? /);
+  assert.doesNotMatch(by.glsl, /if \(level == -1\) \{/);
   assert.equal(by.glsl.match(/float hallsCellIn\(/g).length, 1);
   // (A level's changes are to the halls as defined, with their own changes.)
   const both = makeHalls({ solid: 0.5, rooms: { low: { share: 0.2 } }, byLevel: { '-1': { furniture: { none: { share: 0.1 } } } } }).spec.byLevel['-1'];
