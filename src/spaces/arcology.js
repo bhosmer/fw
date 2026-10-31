@@ -298,27 +298,38 @@ export function makeArcology(set) {
   const ownGlsl = (id) => `${id} - R * ivec3(floor((vec3(${id}) + 0.5) / float(R)))`;
   const ownOf = (id) => id.map((x) => x - R * Math.floor((x + 0.5) / R));
 
-  // Where the plaza does not fade (see PLAZA), the solids standing in it are
-  // grown as their level fades, by up to a whole fade (CLOSE R: see plaza):
-  // how far out along any axis a solid then reaches, for each unit its planes
-  // are moved out, at most (GROW), from their corners. (Each extent is
-  // concave in the growth, so the most is for the least: asked at a small
-  // one.) And how far that is at a whole fade (GROWN), by which the solids'
-  // bounds are taken out where the plaza's pieces are listed (NEAR).
-  const reach = (s, g) => {
-    const ps = planesOf(s).map((p) => ({ n: p.n, K: p.K + g * Math.hypot(...p.n) })), at = [];
+  // The solids standing in the plaza grow as their level fades (each plane
+  // moved out by g, up to a whole fade, CLOSE R: see plaza), and their bounds
+  // with them: each of a solid's extents by GROW g at most, GROW being
+  // the most that any solid's extent along an axis grows for each unit its
+  // planes are moved out. An extent is at a corner, and a corner moves at
+  // a steady rate as the planes do, with three of the planes through it (of
+  // more, any three whose corner, moving, the rest still hold inside), until
+  // corners merge or part; each extent is concave in g, so the rate at
+  // which it starts to grow is the most it ever grows at. (In the lattice's
+  // measure, as the planes are; rounded up to single precision, past the
+  // doubles' error in working it out, so that both twins take a rate no
+  // less than the true one.) The plaza's lists (NEAR) take the solids'
+  // bounds grown by a whole fade; its culls, by as far as they are grown
+  // there (see plaza).
+  const above = (x) => (Math.fround(x) >= x ? Math.fround(x) : Math.fround(x * (1 + 2 ** -23)));
+  const GROW = above(Math.max(...SOLIDS.map((s) => {
+    const ps = planesOf(s), on = (p, X) => Math.abs(dot(p.n, X) - p.K) <= 1e-6 * p.len, corners = [];
     for (let i = 0; i < ps.length; i++)
       for (let j = i + 1; j < ps.length; j++)
         for (let k = j + 1; k < ps.length; k++) {
-          const X = solve3([ps[i].n, ps[j].n, ps[k].n], [ps[i].K, ps[j].K, ps[k].K]);
-          if (X.every(Number.isFinite) && ps.every((p) => dot(p.n, X) <= p.K + 1e-6 * Math.hypot(...p.n))) at.push(X);
+          const ns = [ps[i].n, ps[j].n, ps[k].n], X = solve3(ns, [ps[i].K, ps[j].K, ps[k].K]);
+          if (!X.every(Number.isFinite) || !ps.every((p) => dot(p.n, X) <= p.K + 1e-6 * p.len)) continue;
+          // (Its way as the three planes move out at unit speed; a corner
+          // still, if every other plane through it moves out at least as fast.)
+          const v = solve3(ns, [ps[i].len, ps[j].len, ps[k].len]);
+          if (ps.every((p) => !on(p, X) || dot(p.n, v) <= p.len * (1 + 1e-9))) corners.push({ X, v });
         }
-    return [0, 1, 2].flatMap((a) => [Math.min(...at.map((X) => X[a])), Math.max(...at.map((X) => X[a]))]);
-  };
-  const GROW = UNFADED ? Math.max(...SOLIDS.flatMap((s) => {
-    const r0 = reach(s, 0), g = 1e-3;
-    return reach(s, g).map((x, i) => (i % 2 ? x - r0[i] : r0[i] - x) / g);
-  })) : 0;
+    return Math.max(...[0, 1, 2].flatMap((a) => [-1, 1].map((e) => {
+      const most = Math.max(...corners.map(({ X }) => e * X[a]));
+      return Math.max(...corners.filter(({ X }) => e * X[a] >= most - 1e-6).map(({ v }) => e * v[a]));
+    })));
+  })) * (1 + 1e-9));
   const GROWN = GROW * CLOSE * R;
 
   // For each city cell (across from the middle one) with any solid near it,
@@ -326,7 +337,7 @@ export function makeArcology(set) {
   // plaza): only those are asked about.
   const NEAR = new Map();
   SOLIDS.forEach(({ lo, hi }, k) => {
-    // (Grown, where the plaza does not fade: see GROWN.)
+    // (Grown by a whole fade: see GROW.)
     const [x0, y0, z0] = lo.map((x) => x - GROWN), [x1, y1, z1] = hi.map((x) => x + GROWN);
     for (let a = Math.floor((x0 - 2 * R) / R); a <= Math.floor((x1 + R) / R); a++)
       for (let b = UNFADED ? 0 : Math.floor((y0 - R - M) / R); b <= (UNFADED ? ROWS - 1 : Math.floor((y1 + M) / R)); b++)
@@ -906,7 +917,7 @@ export function makeArcology(set) {
   // (For the checks: how many rays the solids without relief have stopped
   // in the city's pockets: see the pockets' block in cellAir.)
   const SEEN = { clipped: 0 };
-  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BARE_BOX, SEEN, TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, TOWN_SALT, townTypes: def.town.types, townShape, boxDist, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BOUNDS: SOLIDS.map((s) => [s.lo, s.hi]), BARE_BOX, SEEN, TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, TOWN_SALT, townTypes: def.town.types, townShape, boxDist, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
   const VOLUME = (() => {
     const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
     const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -1300,11 +1311,12 @@ export function makeArcology(set) {
         loop('j', 'NEAR_START[n]', 'NEAR_START[n + 1]'),
         ...[
           decl('int', 'k = NEAR_BLOCKS[j]'),
-          '// (A solid further off than one already found, or than a ray goes in',
-          '// this piece, is not asked about.)',
-          ...opened('// (Grown as it fades: see GROW.)'),
+          '// (A solid further off than one already found, and for a ray, than it',
+          '// goes in this piece, is not asked about: how far off, by its bounds',
+          '// grown as far as it is (see GROW), at the point; and for the ray, at',
+          '// the end of its way, the most it is grown along it.)',
           decl('float', `far = max(max(${off('x')}, ${off('y')}), ${off('z')})`),
-          `if (far >= d && (!${RAY} || far >= ${X}${openedTerm(` + GROW * (${O} + ${A} * ${X})`)})) continue;`,
+          `if (far - GROW * ${O} >= d - ${O} && (!${RAY} || far - GROW * (${O} + ${A} * ${X}) >= ${X})) continue;`,
           'd = min(d, solid(k, L, f, o));',
         ].map((l) => '  ' + l),
         '}',
@@ -2336,10 +2348,10 @@ const int NNEAR = ${NEAR_CELLS.length};
 const ivec3 NEAR_CELLS[NNEAR] = ivec3[NNEAR](${ivecs(NEAR_CELLS)});
 const int NEAR_START[NNEAR + 1] = int[NNEAR + 1](${NEAR_START.join(', ')});
 const int NEAR_BLOCKS[${NEAR_BLOCKS.length}] = int[${NEAR_BLOCKS.length}](${NEAR_BLOCKS.join(', ')});
-${UNFADED ? `// The city cells that hold anything but the plaza's air (see farAxis), and
-// how far out a solid reaches for each unit it is grown (see plaza).
-const int NEAR_X0 = ${NEAR_X0}, NEAR_X1 = ${NEAR_X1}, NEAR_Z0 = ${NEAR_Z0}, NEAR_Z1 = ${NEAR_Z1};
+// How far out a solid's bounds reach for each unit it is grown (see plaza).
 const float GROW = ${glf(GROW)};
+${UNFADED ? `// The city cells that hold anything but the plaza's air (see farAxis).
+const int NEAR_X0 = ${NEAR_X0}, NEAR_X1 = ${NEAR_X1}, NEAR_Z0 = ${NEAR_Z0}, NEAR_Z1 = ${NEAR_Z1};
 ${CITY_GLSL.farAxis}
 ` : ''}
 const ivec3 VOL_LO = ivec3(${VOLUME.lo.join(', ')});

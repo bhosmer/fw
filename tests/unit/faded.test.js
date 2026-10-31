@@ -8,14 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWorld } from '../../src/worlds.js';
-import arcology, { makeArcology, ARCOLOGY, CITY, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
+import arcology, { makeArcology, ARCOLOGY, CITY, ROWS, G, VOLUME, _V2 } from '../../src/spaces/arcology.js';
+import { M } from '../../src/spaces/halls.js';
+import { airAt } from '../../src/air.js';
 import { Flight } from '../../src/flight.js';
 import { rand } from './rand.js';
 import { places } from './places.js';
 import { fadedRayHolds } from './rays.js';
 import { FADE_GRID, fadeAt } from './fade.js';
 import { clippedRays } from './clipped.js';
-import { known } from './known.js';
 
 const R = arcology.R, P = R * R;
 const s = Math.SQRT1_2;
@@ -56,14 +57,13 @@ const cityAsk = (flight, space) => (x, e, g) => {
 
 // In the plaza's air round the buildings, toward them and every way, and up
 // into the sky, where the plaza fades and where it does not (its air then
-// unshrunk, its solids grown as the level fades). Known to fail (ledger
-// B52): among the plaza's solids, the distance passes over a solid whose
-// bounds are no nearer than the nearest found so far, though a slanted
-// solid's planes can be nearer, and grown they reach the point; and where
-// the plaza fades, a ray passes over a solid as if it did not grow. Every
-// ray is asked before the failures are told, so that none hides another.
+// unshrunk, its solids grown as the level fades). Among the plaza's solids
+// (ledger B52): a slanted solid's planes can be nearer than its bounds, and
+// grown, reach the point; and a ray is held back by a solid grown, wherever
+// the plaza is. Every ray is asked before the failures are told, so that none
+// hides another.
 for (const fades of [true, false]) {
-  test(`what the city says of a faded ray holds, where the plaza ${fades ? 'fades' : 'does not fade'}`, (t) => known(t, 'B52', () => {
+  test(`what the city says of a faded ray holds, where the plaza ${fades ? 'fades' : 'does not fade'}`, () => {
     const { arcology: space } = fades === ARCOLOGY.plaza.fades ? { arcology } : makeArcology({ plaza: { fades } });
     const rnd = rand(29), { lo, size } = VOLUME, middle = lo.map((x, a) => x + size[a] / 2);
     const ask = cityAsk(new Flight(space), space), failed = [];
@@ -86,8 +86,66 @@ for (const fades of [true, false]) {
     }
     for (let k = 0; k < 200; k++) sky += tried([middle[0] + (2 * rnd() - 1) * 2 * R, (ROWS - rnd() * 0.5) * R, middle[2] + (2 * rnd() - 1) * 2 * R], [rnd() - 0.5, 1, rnd() - 0.5]);
     assert.ok(plaza > 300 && sky > 100, `rays in air: plaza ${plaza}, sky ${sky}: the test reaches what it means to`);
-    if (failed.length) throw new Error(`B52: ${failed.length} faded rays fail in the plaza's air; the first: ${failed[0]}`);
-  }));
+    assert.equal(failed.length, 0, `${failed.length} faded rays fail in the plaza's air; the first: ${failed[0]}`);
+  });
+}
+
+// Where the plaza fades, its pieces of air shrink as the level fades and
+// the solids standing in them grow, a slanted solid's corners faster than
+// the air shrinks: so a solid reaches into pieces that its bounds miss
+// (ledger B52). From each city cell round each solid, rays toward the point
+// of the solid, grown by a whole fade, deepest in the cell's piece (a cell
+// past its sides across, M past its row up and down (the bottom row's from
+// the floor, G), shrunk as much: see
+// plaza in arcology.js), found on a grid from the solid's own planes
+// (SOLID_PI, from the building's origin, one level finer), at a fade all
+// but whole there: none goes past that point while it is inside the solid
+// as grown where the ray meets it. (Where the plaza does not fade, its
+// pieces hold those; the rays held there too.)
+for (const [{ space }, fades] of [[MADE[0], false], [MADE[1], true]]) {
+  test(`a ray stops at a solid grown into its piece of the plaza's air, where the plaza ${fades ? 'fades' : 'does not fade'}`, () => {
+    const whole = space.close * R, rnd = rand(5), flight = new Flight(space);
+    assert.ok(_V2.GROW < 3.5, `GROW ${_V2.GROW}: the search below keeps within 3.5 whole fades of the bounds`);
+    // (How far outside solid s, grown by g, x is (lattice units over the
+    // middle city cell's corner): the most of its planes'.)
+    const outside = (s, x, g) => Math.max(..._V2.SOLID_PI[s].map((p) => (p[0] * (x[0] - _V2.ORIGIN[0]) + p[1] * (x[1] - _V2.ORIGIN[1]) + p[2] * (x[2] - _V2.ORIGIN[2]) - p[3] / R) / Math.hypot(p[0], p[1], p[2]))) - g;
+    let targets = 0, inAir = 0;
+    _V2.BOUNDS.forEach(([lo, hi], s) => {
+      for (let a = Math.floor(lo[0] / R) - 2; a <= Math.floor(hi[0] / R) + 2; a++)
+        for (let b = 0; b < ROWS; b++)
+          for (let c = Math.floor(lo[2] / R) - 2; c <= Math.floor(hi[2] / R) + 2; c++) {
+            // (The piece shrunk, and within the bounds grown as far as any
+            // solid's can be: GROW is under 3.5.)
+            const plo = [a * R - R, b === 0 ? G : b * R - M, c * R - R].map((x, q) => Math.max(x + whole, lo[q] - 3.5 * whole));
+            const phi = [a * R + 2 * R, b * R + R + M, c * R + 2 * R].map((x, q) => Math.min(x - whole, hi[q] + 3.5 * whole));
+            if (!plo.every((x, q) => x < phi[q])) continue;
+            let deepest = 0, at = null;
+            for (let i = 0; i <= 16; i++) for (let j = 0; j <= 16; j++) for (let k = 0; k <= 16; k++) {
+              const x = [i, j, k].map((n, q) => plo[q] + ((phi[q] - plo[q]) * n) / 16), o = outside(s, x, whole);
+              if (o < deepest) (deepest = o), (at = x);
+            }
+            if (!at) continue;
+            targets++;
+            for (let k = 0; k < 16; k++) {
+              const x = [(a + rnd()) * R, (b + rnd()) * R, (c + rnd()) * R], t = Math.hypot(...at.map((v, q) => v - x[q]));
+              Object.assign(flight.pos, { F: CITY - 1, frac: x.map((v) => (12 + v / R) / R), digits: new Map() });
+              flight.sense();
+              const r = flight.pos.levels(CITY, Math.max(CITY, flight.pos.F)).find((q) => q.level === CITY);
+              // (Faded nine tenths of the way, and wholly at the end of a
+              // span reaching the point, but not twice as far.)
+              let fade = null;
+              for (let pix = 0.064; pix >= 1e-4; pix /= 2) if ((fade = fadeAt(r, space, { rel: 0.9, slant: 1, pix })).span >= t) break;
+              if (t > fade.span || !(outside(s, at, fade.o + fade.a * t) < 0)) continue;
+              const ray = { dir: unit(at.map((v, q) => v - x[q])) };
+              airAt(space, r, [0, 0, 0], ray, fade);
+              if (!(ray.reach >= 0)) continue;
+              inAir++;
+              assert.ok(ray.reach <= t + 1e-9, `solid ${s} grown in cell ${[a, b, c]}'s piece: a ray from ${x} goes ${ray.reach}, past it at ${t} (inside it by ${-outside(s, at, fade.o + fade.a * t)})`);
+            }
+          }
+    });
+    assert.ok(targets > 200 && inAir > 1000, `${targets} points, ${inAir} rays in air: the test reaches what it means to`);
+  });
 }
 
 // In the city's pockets round the buildings' skin (every way, and toward the

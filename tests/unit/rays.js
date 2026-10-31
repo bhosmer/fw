@@ -80,7 +80,9 @@ export function rayHolds(flight, r, v, dir, at = '') {
 // less far than its faded distance allows; and it hands over just past its
 // end (that air faded further: solid there, or the level's own ray goes on,
 // where its distance says air too). And it is in air there just when the
-// distance, faded, says so, and the surface it meets faces back along it.
+// distance, faded, says so, and the surface it meets faces back along it
+// (or away by less than a: a surface the ray goes away from more slowly than
+// the fade brings it on is met too).
 // (A faded level's air is where its distance and its shrinking are not more
 // than 0: see levelAir in shaders.js.) Says whether it was known, and in air.
 export function fadedRayHolds(flight, r, v, dir, fade, { uniform = false, at = '' } = {}) {
@@ -91,7 +93,7 @@ export function fadedRayHolds(flight, r, v, dir, fade, { uniform = false, at = '
   assert.ok(Object.is(d, airAt(space, r, v, null, fade)), `the distance is the same, asked with a ray or not, ${where}`);
   if (Math.abs(d + o) > 1e-9 * (1 + o)) assert.equal(ray.reach >= 0, d + o <= 0, `faded, in air (${d + o}) but reach ${ray.reach}, ${where}`);
   if (ray.reach < 0) return { known: true, inAir: false };
-  assert.ok(Math.abs(Math.hypot(ray.nx, ray.ny, ray.nz) - 1) < 1e-9 && ray.nx * dir[0] + ray.ny * dir[1] + ray.nz * dir[2] <= 1e-12, `faded, normal ${[ray.nx, ray.ny, ray.nz]}, ${where}`);
+  assert.ok(Math.abs(Math.hypot(ray.nx, ray.ny, ray.nz) - 1) < 1e-9 && ray.nx * dir[0] + ray.ny * dir[1] + ray.nz * dir[2] <= a + 1e-12, `faded, normal ${[ray.nx, ray.ny, ray.nz]}, ${where}`);
   if (uniform) assert.ok(ray.reach >= -(d + o) / (1 + a) - 1e-9 * (1 + o), `faded, reach ${ray.reach} less than the faded distance allows (${-(d + o) / (1 + a)}), ${where}`);
   const cellOf = (u) => [0, 1, 2].map((q) => Math.floor((r.L[q] + r.f[q] + u[q] * r.sig) / R)).join(), home = cellOf(v);
   const along = (t) => v.map((x, i) => x + (dir[i] * t) / r.sig);
