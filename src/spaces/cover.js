@@ -77,6 +77,13 @@ function vertices(fp, box, tol = 1e-7) {
   for (const s of fp) for (const X of onPlane(s, fp, box, tol)) out.push(X);
   return out;
 }
+// Which of a convex piece's planes fp touch it, within box (bounds that
+// hold it): those whose side's polygon is not empty, as onPlane makes it,
+// with its margin (a plane that touches only at an edge or a corner is kept,
+// and one within the margin: the rest may go, and the piece stays the same).
+export function touching(fp, box) {
+  return fp.map((s) => onPlane(s, fp, box).length > 0);
+}
 function aabb(vs) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (const v of vs) for (let a = 0; a < 3; a++) (lo[a] = Math.min(lo[a], v[a])), (hi[a] = Math.max(hi[a], v[a]));
@@ -119,9 +126,9 @@ function onLine(s1, s2, fp, tol = 1e-7) {
 // The cover of the pieces members (see the head of this file), R a level's
 // cell in the finer level's units; bare, the boxes of the solids without
 // relief (cells from the building's origin). Each cover piece: { lv,
-// planes, fp, box, members (ids), cross (of both levels), dropped (its
-// seams: the planes it was made by dropping) }; and how many connectors
-// could not be made.
+// planes, fp, box, vs (its corners), members (ids), cross (of both levels),
+// dropped (its seams: the planes it was made by dropping) }; and how many
+// connectors could not be made.
 export function coverOf(members, { R, bare = [] }) {
   // (A plane's key, at level lv: its normal and K at that level reduced by
   // their gcd, its sign by the first part not 0, and the side apart; and
@@ -199,7 +206,7 @@ export function coverOf(members, { R, bare = [] }) {
     }
     const uniq = uniqAt(ps, lv), fp = floatPlanes(uniq, lv), vs = vertices(fp, hull([c.P, c.Q], lv));
     if (vs.length < 4 || rank(vs) < 3) continue;
-    cover.push({ lv, planes: uniq, fp, box: aabb(vs), members: [c.P.id, c.Q.id], cross: c.P.lv !== c.Q.lv, dropped: [c.P.planes[c.i]] });
+    cover.push({ lv, planes: uniq, fp, box: aabb(vs), vs, members: [c.P.id, c.Q.id], cross: c.P.lv !== c.Q.lv, dropped: [c.P.planes[c.i]] });
   }
 
   // Junctions: for a piece P and two of its contacts on planes that meet (not
@@ -230,7 +237,7 @@ export function coverOf(members, { R, bare = [] }) {
     const uniq = uniqAt(ps, lv), fpc = floatPlanes(uniq, lv), vs = vertices(fpc, hull(H, lv));
     if (vs.length < 4 || rank(vs) < 3 || !(dist(fpc, X.map((x) => x / R ** (1 - lv))) < -1e-9) || !certify(fpc, vs, H, [...shared], lv, floatPlanes)) return void failed++;
     const dropped = [...shared].map((k) => { for (const Y of H) { const i = Y.keys.findIndex((kk) => kk.k === k); if (i >= 0) return Y.planes[i]; } return null; });
-    const con = { lv, planes: uniq, fp: fpc, box: aabb(vs), members: H.map((x) => x.id), cross: new Set(H.map((x) => x.lv)).size > 1, dropped };
+    const con = { lv, planes: uniq, fp: fpc, box: aabb(vs), vs, members: H.map((x) => x.id), cross: new Set(H.map((x) => x.lv)).size > 1, dropped };
     cover.push(con);
     return con;
   };
@@ -337,7 +344,7 @@ export function coverOf(members, { R, bare = [] }) {
               const n = [0, 0, 0];
               n[a] = past < 0 ? 1 : -1;
               const planes = [...p.planes, { n, K: past < 0 ? lo[a] : -hi[a], lv: 1, fade: 0 }], fp = floatPlanes(planes, 1), vs = vertices(fp, p.box);
-              if (vs.length >= 4 && rank(vs) === 3) next.push({ ...p, planes, fp, box: aabb(vs) });
+              if (vs.length >= 4 && rank(vs) === 3) next.push({ ...p, planes, fp, box: aabb(vs), vs });
             }
         }
         parts = next;
@@ -379,4 +386,4 @@ function certify(fp, vs, mem, sk, lv, floatPlanes) {
 
 // (What the cover is built by, for the key the relief's rows are kept by:
 // see builtBy in relief.js.)
-export const coverBuiltBy = () => [coverOf, certify, cutPolygon, onPlane, onLine, meet3, vertices, aabb, dist, rank, dot, gcd, cross3, hyp, JSON.stringify(AXES)].map(String);
+export const coverBuiltBy = () => [coverOf, touching, certify, cutPolygon, onPlane, onLine, meet3, vertices, aabb, dist, rank, dot, gcd, cross3, hyp, JSON.stringify(AXES)].map(String);

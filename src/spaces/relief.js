@@ -63,7 +63,7 @@
 // The directions (an id into DIRS): each an axis (0 to 2) or a slant
 // (3 on), with its whole-number m; a plane's n is sign m.
 import * as twin from '../twin.js';
-import { coverOf, coverBuiltBy } from './cover.js';
+import { coverOf, coverBuiltBy, touching } from './cover.js';
 
 export const ROW_WIDTH = 1024;
 // What the rows are built by, for the key they are kept by (see stored in
@@ -129,7 +129,9 @@ export function buildRelief(ctx) {
       if (Number.isInteger(q) && q > 0 && q < c && K % q === 0 && m.every((x, a) => x * q === s * n[a])) (id = i), (c = q);
     });
     if (id < 0) throw new Error(`relief: a plane across ${n} at ${K}: no direction of the relief's it is whole along`);
-    if (fade && !Number.isFinite(fval(fbits(fz)))) throw new Error(`relief: a plane across ${n} at ${K} fades from ${fz}`);
+    // (A back only rises as the level fades, so that a piece only shrinks:
+    // the planes a piece goes without rely on it, see buildRelief.)
+    if (fade && !(fval(fbits(fz)) >= 0 && Number.isFinite(fval(fbits(fz))))) throw new Error(`relief: a plane across ${n} at ${K} fades from ${fz}`);
     const row = [id | ((s < 0 ? 1 : 0) << 8) | (fade << 9), K / c, fade ? fbits(fz) : 0, 0];
     if (Math.abs(row[1]) >= 2 ** 31) throw new Error('relief: a plane too far out for 32 bits');
     const key = row.join();
@@ -281,7 +283,7 @@ export function buildRelief(ctx) {
     if (bb.some(([a, c]) => !(c - a > 1e-9))) continue;
     // (Source: face, level, kind and the rectangle's corner or the ridge's row.)
     const src = (((b.k * 2 + b.lv) * 2 + b.kind) << 24) ^ (b.kind ? (b.e << 20) ^ (b.y0 & 0xfffff) : hashCell([b.A, b.y0, b.k], 0x9e3779b9) & 0xffffff);
-    pieces.push({ b, pl, fp, bb, src });
+    pieces.push({ b, pl, fp, bb, src, vs });
   }
 
   // --- Lists. A finer piece in the skin cells of its face it meets (its
@@ -296,8 +298,8 @@ export function buildRelief(ctx) {
     return true;
   };
   const lists = [Array.from({ length: NC }, () => []), Array.from({ length: NC }, () => [])];
-  const rows = []; // (pieces as listed: { pl, bb, lv, src, seams, cross })
-  const listed = (p, pl = p.pl, bb = p.bb) => rows.push({ pl, bb, lv: p.b.lv, src: p.src, seams: p.seams ?? [], cross: !!p.cross }) - 1;
+  const rows = []; // (pieces as listed: { pl, bb, lv, src, seams, cross }, and its corners, vs, where it is not cut)
+  const listed = (p, pl = p.pl, bb = p.bb, vs = p.vs) => rows.push({ pl, bb, lv: p.b.lv, src: p.src, seams: p.seams ?? [], cross: !!p.cross, vs }) - 1;
   // (Whether piece p may be in table cell ci one level finer: a skin cell
   // of its face, or of all its members' faces.)
   const mayBe = (b, ci) => (b.k >= 0 ? skinOf[b.k].has(ci) : (word(ci) & 3) === BITS.SKIN && ((word(ci) >> BITS.FACE_AT) & b.faces) === b.faces);
@@ -341,7 +343,9 @@ export function buildRelief(ctx) {
         for (let a = 0; a < 3; a++) { const e = [0, 0, 0]; e[a] = 1; pl.push(plane(e, box[a][1]), plane(e.map((x) => -x), -box[a][0])); }
         const cb = p.bb.map(([lo, hi], a) => [Math.max(lo, box[a][0]), Math.min(hi, box[a][1])]);
         if (cb.some(([lo, hi]) => !(hi > lo))) continue;
-        lists[1][ci].push(listed(p, pl, cb));
+        // (Nothing left of it: none of its planes touches it.)
+        if (!touching(pl.map((pi) => floatOf(pi, 1)), cb.map(([lo, hi]) => [lo - 1, hi + 1])).some(Boolean)) continue;
+        lists[1][ci].push(listed(p, pl, cb, null));
       }
     }
   };
@@ -368,8 +372,26 @@ export function buildRelief(ctx) {
     const pl = c.planes.map((q) => plane(q.n, lift(q), q.fade ?? 0, q.fz ?? 0));
     const seams = c.cross ? [] : c.dropped.map((q) => plane(q.n, lift(q)));
     const sc = c.lv === 0 ? R : 1, faces = c.members.reduce((m, id) => m | (rows[id].lv === c.lv ? 1 << faceOf(rows[id]) : 0), 0);
-    list({ b: { lv: c.lv, k: -1, faces }, pl, fp: pl.map((pi) => floatOf(pi, c.lv)), bb: c.box.map(([a, d]) => [a * sc, d * sc]), src: COVER_SRC + i, seams, cross: c.cross });
+    list({ b: { lv: c.lv, k: -1, faces }, pl, fp: pl.map((pi) => floatOf(pi, c.lv)), bb: c.box.map(([a, d]) => [a * sc, d * sc]), vs: c.vs.map((X) => X.map((x) => x * sc)), src: COVER_SRC + i, seams, cross: c.cross });
   });
+  // Each piece's planes but those that do not touch it (a member's far from
+  // a join's slab, a cut's beyond what is left, a box's beyond its notch):
+  // the same piece, and the same answers inside it; outside, a distance no
+  // more than it was (each plane left still holds the piece, so it is still
+  // no more than the true one), asked at fewer planes. As it fades it stays
+  // the same piece: its backs, which move, are kept; the rest stay, or at the
+  // city's level all move in alike (which takes the same from the piece
+  // with them or without them).
+  // (Whether a plane touches the piece: from its corners where it has them,
+  // as made (a plane on which none of them is, within a margin, does not);
+  // else, cut, from each side's polygon: see touching in cover.js.)
+  for (const r of rows) {
+    const fp = r.pl.map((pi) => floatOf(pi, r.lv));
+    const on = r.vs ? fp.map((q) => { const l = Math.hypot(...q.a); return r.vs.some((X) => Math.abs(q.a[0] * X[0] + q.a[1] * X[1] + q.a[2] * X[2] - q.b) <= 1e-6 * l); }) : touching(fp, r.bb.map(([lo, hi]) => [lo - 1, hi + 1]));
+    const keep = on.map((t, m) => t || planeRows[r.pl[m]][0] >> 9 !== 0);
+    if (keep.filter(Boolean).length >= 4) (r.gone = r.pl.filter((_, m) => !keep[m])), (r.pl = r.pl.filter((_, m) => keep[m]));
+    delete r.vs;
+  }
   // Each piece's planes in the order that ends its asking soonest (carve
   // stops at the first plane the point is past by the clearance found so
   // far): of the points of a grid over its bounds (4 to a side) outside
@@ -407,7 +429,7 @@ export function buildRelief(ctx) {
     data, size, at, dirs: DIRS,
     stats: { boxes: boxes.length, pieces: pieces.length, cover: cover.length, coverFailed, rows: rows.length, planes: planeRows.length, deafCut, refs: [lists[0].reduce((s, l) => s + l.length, 0), lists[1].reduce((s, l) => s + l.length, 0)], ms: Math.round(ms) },
     // (For the checks: each listed piece's planes and bounds, and the lists.)
-    _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, cover: r.src >= COVER_SRC, cross: r.cross, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb })), _lists: lists, fval,
+    _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, cover: r.src >= COVER_SRC, cross: r.cross, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb, gone: (r.gone ?? []).map((pi) => floatOf(pi, r.lv)) })), _lists: lists, fval,
     // (And what the rows are written from, so that the checks can write them
     // again from the same air divided otherwise: see writeRows.)
     _built: { lists, rows, planeRows, size: vsz },
@@ -623,8 +645,9 @@ export function listedCarve(js) {
       '// Its list, then each seam group whose seam is near: within the clearance',
       "// found so far, or for a ray, crossed within its reach (a little over: where",
       '// the ray leaves a member through the seam, the two are one). Elsewhere a',
-      "// group's pieces are no nearer than their members, nor take a ray further",
-      '// (see cover.js).',
+      "// group's pieces take a ray no further than their members, nor, in air,",
+      '// are they nearer (see cover.js); in solid (d not below 0) none is asked',
+      '// but on its seam.',
       decl('ivec4', `g = reliefRow(${js ? 'VOL_SIZE[0] * VOL_SIZE[1] * VOL_SIZE[2]' : 'VOL_SIZE.x * VOL_SIZE.y * VOL_SIZE.z'} + v.x + VOL_SIZE.x * (v.y + VOL_SIZE.y * v.z))`),
       "// (A cell's groups' lists follow its own, in turn: gl, the next group's.)",
       decl('int', 'gi = lv == 0 ? g.x : g.z, gn = lv == 0 ? g.y : g.w, at = first, left = count, gl = first + count', true),

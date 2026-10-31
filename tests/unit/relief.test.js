@@ -372,21 +372,32 @@ test('where pieces of air meet, one holds the point: no sheet at either level, n
 
 // The cover's seam groups (see listedCarve) are asked only where their seam
 // is near: the relief answers as it would with every cover piece asked,
-// distance, reach and surface, unfaded and faded (the city's level shrunk,
-// and one level finer its backs risen, both growing as a ray goes). And no
+// distance in air, reach and surface (in solid, as with none of the groups'
+// pieces), unfaded and faded (the city's level shrunk, and one level finer
+// its backs risen, both growing as a ray goes). And no
 // cover piece holds air its members do not, faded or not: a point in one is
 // in a physical piece of its own level, or of the city's (a piece joining
 // the levels: the city's level does not fade while the finer is drawn), and
 // not inside a solid without relief.
 test("the cover's seam groups, asked only near their seams, answer as the whole cover", () => {
+  // (Every cover piece asked always; and none of the groups' at all.)
   const all = _V2.carveOver(writeRows({ ...BUILT, rows: BUILT.rows.map((r) => ({ ...r, seams: [] })) }).data);
+  const grouped = new Set(BUILT.rows.flatMap((r, i) => (r.seams.length ? [i] : [])));
+  const none = _V2.carveOver(writeRows({ ...BUILT, lists: BUILT.lists.map((ls) => ls.map((l) => l.filter((i) => !grouped.has(i)))) }).data);
   const fades = [undefined, { o: 0.1, a: 0, scale: 0, rate: 0 }, { o: 0.4, a: 0.02, scale: 0, rate: 0 }];
-  let rays = 0, faded = 0;
+  let rays = 0, faded = 0, solid = 0;
   const at = [0, 0];
   SAMPLES.forEach(({ lv, X }, i) => {
     const fade = fades[i % 3], e = [Math.sin(5 * i), Math.cos(i), Math.sin(3 * i)], m = Math.hypot(...e), dir = e.map((x) => x / m);
+    // (In solid, as with none of the groups' pieces: no group is asked where
+    // the clearance is not below 0 (but on its seam). There a cover piece,
+    // with only the planes that touch it, may say less than its members,
+    // which say no more than is so; with every piece asked, so may the
+    // relief.)
     const a = carveAt(lv, X, null, _V2.reliefCarve, fade), b = carveAt(lv, X, null, all, fade);
-    assert.ok(Object.is(a, b), `level ${lv} at ${X}, faded ${JSON.stringify(fade)}: ${a}, every piece asked ${b}`);
+    const c = a < 0 || b < 0 ? b : carveAt(lv, X, null, none, fade);
+    assert.ok(Object.is(a, c), `level ${lv} at ${X}, faded ${JSON.stringify(fade)}: ${a}, ${a < 0 || b < 0 ? 'every piece' : "none of the groups' pieces"} asked ${c}`);
+    solid += !(a < 0 || b < 0) && Number.isFinite(a);
     const ra = { dir }, rb = { dir };
     carveAt(lv, X, ra, _V2.reliefCarve, fade), carveAt(lv, X, rb, all, fade);
     assert.ok(Object.is(ra.reach, rb.reach) && ra.nx === rb.nx && ra.ny === rb.ny && ra.nz === rb.nz, `level ${lv} at ${X} along ${dir}, faded ${JSON.stringify(fade)}: reach ${ra.reach}, every piece asked ${rb.reach}`);
@@ -394,7 +405,52 @@ test("the cover's seam groups, asked only near their seams, answer as the whole 
     faded += !!fade && ra.reach >= 0;
     at[lv] += ra.reach >= 0;
   });
-  assert.ok(at[0] > 2000 && at[1] > 2000 && faded > 2000, `${at} rays in air at each level, ${faded} of them faded`);
+  assert.ok(at[0] > 2000 && at[1] > 2000 && faded > 2000 && solid > 2000, `${at} rays in air at each level, ${faded} of them faded; ${solid} points in solid`);
+});
+
+// Each piece has only the planes that touch it (see buildRelief): the
+// planes it was made with but went hold every corner of what is left
+// within its bounds as carve has them (a whole unit out), so it is the same
+// piece (and its distance, the most of fewer planes each holding it, no
+// more than it was, nor than is so). Every piece; and the check's own
+// check: a piece without the plane most of its corners are on is not the
+// same. A corner: where three planes meet, within the rest.
+test('a piece without the planes that do not touch it is the same piece', () => {
+  const unit = (q) => { const l = Math.hypot(...q.a); return { a: q.a.map((x) => x / l), b: q.b / l }; };
+  const x3 = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  const past = (q, X) => q.a[0] * X[0] + q.a[1] * X[1] + q.a[2] * X[2] - q.b;
+  const corners = (ps) => {
+    const out = [];
+    for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) for (let k = j + 1; k < ps.length; k++) {
+      const [A, B, C] = [ps[i].a, ps[j].a, ps[k].a], bc = x3(B, C), D = A[0] * bc[0] + A[1] * bc[1] + A[2] * bc[2];
+      if (Math.abs(D) < 1e-9) continue;
+      const ca = x3(C, A), ab = x3(A, B);
+      const X = [0, 1, 2].map((a) => (ps[i].b * bc[a] + ps[j].b * ca[a] + ps[k].b * ab[a]) / D);
+      if (ps.every((q) => past(q, X) <= 1e-7)) out.push(X);
+    }
+    return out;
+  };
+  let n = 0, gone = 0, joins = 0, caught = 0, asked = 0;
+  pieces.forEach((p, i) => {
+    // (Its bounds as its row has them: see writeRows.)
+    const box = [];
+    p.bb.forEach(([lo, hi], a) => { const e = [0, 0, 0]; e[a] = 1; box.push({ a: e, b: Math.ceil(hi) + 1 }, { a: e.map((x) => -x), b: -Math.floor(lo - 1) }); });
+    const kept = p.planes.map(unit), vs = corners([...kept, ...box]);
+    assert.ok(vs.length >= 4, `piece ${i}: ${vs.length} corners`);
+    for (const q of p.gone.map(unit)) assert.ok(vs.every((X) => past(q, X) <= 1e-7), `piece ${i}: a plane gone that cuts it: ${q.a} ${q.b}`);
+    n++, (gone += p.gone.length), (joins += p.cross && p.gone.length > 0);
+    if (i % 25) return;
+    // (Without the plane most of its corners are on, and that is not also
+    // another of its planes or a side of its bounds: some corner is past it.)
+    const same = (q, e) => e !== q && e.a.every((x, a) => Math.abs(x - q.a[a]) < 1e-9) && Math.abs(e.b - q.b) < 1e-7;
+    const on = kept.map((q) => ([...kept, ...box].some((e) => same(q, e)) ? -1 : vs.filter((X) => Math.abs(past(q, X)) <= 1e-7).length));
+    const m = on.indexOf(Math.max(...on));
+    if (on[m] < 3) return;
+    asked++;
+    caught += corners([...kept.filter((_, k) => k !== m), ...box]).some((X) => past(kept[m], X) > 1e-7);
+  });
+  assert.ok(n === pieces.length && gone > 20000 && joins > 3000, `${n} pieces, ${gone} planes gone, from ${joins} joining the levels`);
+  assert.ok(asked > 1000 && caught === asked, `losing a plane that touches: ${caught} of ${asked} caught`);
 });
 
 test('no cover piece holds air its members do not, faded or not', () => {
@@ -428,9 +484,9 @@ test('no cover piece holds air its members do not, faded or not', () => {
 // the city's level none (the level shrinks as a whole); one level finer,
 // in each physical piece just one, its back (facing into the building, from
 // its face: square to the face, or for a terrace's, to the face's level
-// part), and in each cover piece only its members' backs; never a plane
-// across y (a floor or ceiling, a row's top or bottom), and no fade but 0
-// (none) or 1 (a back).
+// part), and in each cover piece only its members' backs, each rising as
+// the level fades (its fz not below 0); never a plane across y (a floor or
+// ceiling, a row's top or bottom), and no fade but 0 (none) or 1 (a back).
 test('the planes that fade are the backs one level finer, and only those', () => {
   const backOf = (F, a) => { const l = Math.hypot(...a); return [F.n, [F.n[0], 0, F.n[2]]].some((n) => { const m = Math.hypot(...n); return a.every((x, i) => Math.abs(x / l + n[i] / m) < 1e-12); }); };
   let backs = 0;
@@ -441,6 +497,7 @@ test('the planes that fade are the backs one level finer, and only those', () =>
     p.planes.forEach((q, k) => {
       if (!codes[k]) return;
       assert.ok(q.a[0] !== 0 || q.a[2] !== 0, 'a plane across y that fades');
+      assert.ok(L.fval(p.rows[k][2]) >= 0, 'a back that sinks as the level fades');
       assert.ok(p.cover ? FACES.some((F) => backOf(F, q.a)) : backOf(FACES[faceOf(p)], q.a), `a plane that fades, not a back: ${q.a}`);
       backs++;
     });
