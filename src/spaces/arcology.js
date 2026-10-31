@@ -4,10 +4,10 @@
 // cells, running on in every direction to the horizon, is a plaza open to
 // the sky, and in the middle of it stands a building. It is solid at the
 // city's level, so the halls one level finer are its rooms (each of which is
-// a great hall of the halls one level finer still). Under the plaza are more
-// halls, whose light wells open up through its floor. Above the city's row
-// there is only sky, and the levels coarser than the city's are solid
-// throughout (as air, they would swallow parts of it).
+// a great hall of the halls one level finer still). Under the plaza's floor
+// is the ground: nothing but solid, at every level (see ground in the space
+// below). Above the city's row there is only sky, and the levels coarser than
+// the city's are solid throughout (as air, they would swallow parts of it).
 //
 // A building is a list of convex solids, each bounded by planes of any
 // orientation (see hexahedron.js, the one building so far). A plane is
@@ -80,9 +80,8 @@ const TOWN_DEF = {
 // Whether the plaza's air fades with distance as the rest of its level does
 // (fades), or, being open at every distance, never does (see openAir in
 // halls.js, and plaza): the rest of the level (the building's masses, the
-// light wells, the city's pockets, the halls under the plaza) fades either
-// way. (Basil chose the open plaza, 2026-10-30: ledger B33; plaza.fades=true
-// is the plaza as it was, fading.)
+// city's pockets) fades either way. (Basil chose the open plaza, 2026-10-30:
+// ledger B33; plaza.fades=true is the plaza as it was, fading.)
 const PLAZA = { fades: false };
 // The arcology's definition: its building (see hexahedron.js), the halls it
 // is built of (see HALLS in halls.js), its relief, its town and its plaza.
@@ -186,7 +185,7 @@ export function makeArcology(set) {
   const def = check(frozen(define(ARCOLOGY, set)));
   // (Whether the plaza's air is open at every distance: see PLAZA.)
   const UNFADED = !def.plaza.fades;
-  const { spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf } = makeHalls(def.halls);
+  const { spec: HALLS, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings } = makeHalls(def.halls);
   // The building, its solids' planes moved to the city's lattice: from the
   // middle city cell's corner, its axis at the middle of that cell, the
   // lower's apex a cell under the plaza's floor (see GROUND).
@@ -915,7 +914,7 @@ export function makeArcology(set) {
   // (For the checks: how many rays the solids without relief have stopped
   // in the city's pockets: see the pockets' block in cellAir.)
   const SEEN = { clipped: 0 };
-  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BARE_BOX, SEEN, wellOf: (...a) => wellOf(...a), TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, TOWN_SALT, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
+  const _V2 = { FACES, RIDGES, DMAX, WINDOWS, ORIGIN, SOLID_PI, BITS: { WORDS, OPEN_AT, WIN_AT, WIN_BITS, SOLID_BITS, CROSS_AT, TOWN_AT, DEEP, SKIN, PLAIN }, relief: (...a) => relief(...a), MID, NEAR, NEAR_BOX: [NEAR_X0, NEAR_X1, NEAR_Z0, NEAR_Z1], GROW, BARE_BOX, SEEN, TOWN, TOWN_PLANS, TOWN_SHAPES, TOWN_DENSITY, TOWN_SALT, townTypes: def.town.types, townShape, boxDist, BUILT_CELLS, ridgeRows: { built: (r, lv, y) => ridgeRow(RIDGES[r], lv, y), looked: (r, lv, y) => rowOf(r, lv, y), from: RR_FROM, n: RR_N } };
   const VOLUME = (() => {
     const lo = [0, 1, 2].map((a) => Math.min(...SOLIDS.map((s) => s.lo[a])) - 2);
     const hi = [0, 1, 2].map((a) => Math.max(...SOLIDS.map((s) => s.hi[a])) + 2);
@@ -2136,9 +2135,6 @@ export function makeArcology(set) {
   // The cell's small pieces, in either language (js: true, or GLSL),
   // written once (6d-6a, 6d-6d, 6d-6e):
   // - relief: what the table says of a cell;
-  // - well: the light well under the plaza (in JavaScript also wellOf, for
-  //   the checks: whether there is one, its hash and half width, from the
-  //   same gate);
   // - bareNear: whether a point is near a solid without relief;
   // - reliefCell: a table's cell. Deep: the halls cut off at the sides they
   //   may not run on across (both passes: the distance, then a ray, kept
@@ -2149,8 +2145,8 @@ export function makeArcology(set) {
   //   restored), gSkin, and gO taken off; JavaScript only: the ray's state
   //   cleared after the deep pass, and aim where the shader starts reach
   //   and nrm.)
-  // - city: a cell of the city's rows: its plaza and its well, the further
-  //   of them for a ray, its pockets asked after once the cell is done;
+  // - city: a cell of the city's rows: its plaza, its pockets asked after
+  //   once the cell is done;
   // - cell (in JavaScript cellAir): a cell of any level, in one order: the
   //   city's cells, the sky over them; one level finer, the cells the table
   //   has an entry for (the halls only in its deep ones) and those it has
@@ -2193,23 +2189,6 @@ export function makeArcology(set) {
       `  ${CB} = ${vsub(vadd('v', 'VOL_LO'), 'ORIGIN')};`,
       '  return texelFetch(uVolume, v, 0);',
       '}',
-    ];
-    // (Whether the cell has a well, none being nothing: the gate.)
-    const gate = (nothing) => [
-      '  ' + decl('ivec3', `below = wrapId(${vsub('id', 'ivec3(0, 1, 0)')})`),
-      `  if (!(${['below', 'id'].map((c) => (js ? `built(${c}, seed, ${CITY}, spaceRoom)` : `built(${c}, seed, ${CITY})`)).join(' || ')})) return ${nothing};`,
-      `  if (offBuilt(${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'}) == 0) return ${nothing};`,
-    ];
-    const slab = `hashCell(below, seed ^ ${hexu(HALLS.salt.slab)})`;
-    const well = [
-      '// The light well, if any, that the hall below opens up through the plaza:',
-      "// the halls' own opening through its ceiling (their slabHole, at the city's",
-      '// level), carried on up to the plaza.',
-      fn('float', 'well', ['ivec3 L', 'vec3 f', 'ivec3 id', 'uint seed']),
-      ...gate('1e9'),
-      `  return slabHole(L, f, -M, G + 1, ${slab}, ${CITY});`,
-      '}',
-      ...(js ? ['// (Whether it has one: its hash and half width, or null.)', 'function wellOf(id, seed) {', ...gate('null'), `  const h = ${slab}, w = slabHalf(h, ${CITY});`, '  return w === null ? null : { h, w };', '}'] : []),
     ];
     const bareNear = [
       '// Whether the point, its whole part W and the rest f (units from the',
@@ -2283,25 +2262,24 @@ export function makeArcology(set) {
     // (Where the plaza does not fade: whether the city's level is faded fully,
     // as the cell being asked about is seen (see gScale). Then all there is of
     // it is the plaza, and the solids standing in it, grown as far as they
-    // grow; its wells, its pockets and the halls under the plaza are gone, as
-    // the whole level would be. Asked where it is used: kept in a global,
+    // grow; its pockets and the halls under the plaza are gone, as the whole
+    // level would be. Asked where it is used: kept in a global,
     // set once, it took the shader's build from 2.4 s to 4.0 s.)
     const GONE = '(gScale - 1.0 / LOD_HI) * LOD_K >= 1.0';
     const city = [
       '// A cell of the city.',
       ...opened("// (Where the plaza does not fade, a cell far out holds nothing but its air: see farAxis.)"),
-      js ? 'function city(L, f, id, seed, ray) {' : 'float city(ivec3 L, vec3 f, ivec3 id, uint seed, out float reach, out vec3 nrm) {',
+      js ? 'function city(L, f, id, ray) {' : 'float city(ivec3 L, vec3 f, ivec3 id, out float reach, out vec3 nrm) {',
       ...aim('  '),
       ...shaderOnly('  bool ray = gRay;', '  gRay = false;'),
       ...opened('  ' + decl('bool', `rest = farAxis(${js ? 'fromMiddle(id).map((x) => x / R)' : 'fromMiddle(id) / R'}) < 0${openedFaded(` && !(${GONE})`)}`)),
-      '  ' + decl('float', `w = id.y == ${ROW_ID}${UNFADED ? ' && rest' : ''} ? well(L, f, id, seed) : ${NOTHING}`),
       '  ' + decl('float', 'p = plaza(L, f, id)'),
-      ...[...twin.reask(js, 'p', 'plaza(L, f, id)'), ...twin.reask(js, 'w', 'well(L, f, id, seed)')].map((l) => '  ' + l),
+      ...twin.reask(js, 'p', 'plaza(L, f, id)').map((l) => '  ' + l),
       ...shaderOnly('  gRay = ray;'),
       '  // (Its pockets: see cell.)',
       UNFADED ? `  ${CARVE} = rest ? 0 : -1;` : `  ${CARVE} = 0;`,
       `  ${BASE} = ${vsub('fromMiddle(id)', 'ORIGIN')};`,
-      '  return min(p, w);',
+      '  return p;',
       '}',
     ];
     // (The cell's parent's id (the shader's caller's gUp, the JavaScript's
@@ -2330,7 +2308,7 @@ export function makeArcology(set) {
       '  }',
       `  ${CARVE} = -1;`,
       '  ' + decl('float', `d = ${NOTHING}`, true),
-      `  if (level == ${CITY} && id.y >= ${ROW_ID} && id.y < ${ROW_ID + ROWS}) d = ${js ? '(setPoint(L, f, dg), city(L, f, id, seed, ray))' : 'city(L, f, id, seed, reach, nrm)'};`,
+      `  if (level == ${CITY} && id.y >= ${ROW_ID} && id.y < ${ROW_ID + ROWS}) d = ${js ? '(setPoint(L, f, dg), city(L, f, id, ray))' : 'city(L, f, id, reach, nrm)'};`,
       '  else {',
       "    // Over the city there is only sky, and the city's air comes right up to",
       '    // the cells above it: all a cell up there can say is how far down it is.',
@@ -2387,7 +2365,7 @@ export function makeArcology(set) {
       '}',
     ];
     const text = (lines, names = ['up', 'o']) => (js ? twin.unsigned(twin.arrays(lines.join('\n'), names)) : lines.join('\n'));
-    return { relief: text(relief), well: text(well), bareNear: text(bareNear), reliefCell: text(reliefCell, ['m', 'L', 'f']), city: text(city, ['id']), cell: text(cell, ['m', 'L', 'f', 'id']) };
+    return { relief: text(relief), bareNear: text(bareNear), reliefCell: text(reliefCell, ['m', 'L', 'f']), city: text(city, ['id']), cell: text(cell, ['m', 'L', 'f', 'id']) };
   }
   const CITY_GLSL = cityPieces(false), OPEN_GLSL = openingsPieces(false), TOWN_GLSL = townPieces(false), CELL_GLSL = cellPieces(false);
 
@@ -2512,8 +2490,6 @@ ${TOWN_GLSL.box}
 ${TOWN_GLSL.air}
 
 ${CELL_GLSL.reliefCell}
-
-${CELL_GLSL.well}
 
 ${CITY_GLSL.solids}
 
@@ -2640,10 +2616,10 @@ ${CELL_GLSL.cell}
   // the cell of any level (cellAir) among them; the table read as the
   // shader's texelFetch reads its texture.
   const CELL_JS = cellPieces(true);
-  const { relief, wellOf, cellAir } = new Function(
-    'P', 'SEEN', 'RS', 'setPoint', 'plaza', 'farAxis', 'tableAt', 'groundCell', 'groundAir', 'hallsAir', 'carve', 'bareIn', 'openings', 'townAir', 'OPEN_AT', 'CROSS_AT', 'TOWN_AT', 'CELL', 'R', 'M', 'G', 'fromMiddle', 'offBuilt', 'ownOf', 'wrapId', 'built', 'spaceRoom', 'hashCell', 'slabHole', 'slabHalf', 'NBUILT', 'BUILT_CELLS', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
-    `'use strict';\nconst { S, airPiece, airPlane, aim, through, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst NO_ENTRY = [0, 0, 0, 0];\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.well}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\n${CELL_JS.city}\n${CELL_JS.cell}\nreturn { relief, wellOf, cellAir };\n//# sourceURL=cellPieces.gen.js`,
-  )(P, SEEN, RS, setPoint, plaza, farAxis, tableAt, groundCell, groundAir, hallsAir, carve, bareIn, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, CELL, R, M, G, fromMiddle, offBuilt, ownOf, wrapId, built, spaceRoom, hashCell, slabHole, slabHalf, BUILT_CELLS.length, BUILT_CELLS, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
+  const { relief, cellAir } = new Function(
+    'P', 'SEEN', 'RS', 'setPoint', 'plaza', 'farAxis', 'tableAt', 'groundCell', 'groundAir', 'hallsAir', 'carve', 'bareIn', 'openings', 'townAir', 'OPEN_AT', 'CROSS_AT', 'TOWN_AT', 'CELL', 'R', 'fromMiddle', 'ownOf', 'spaceRoom', 'NBARE', 'BARE_LO', 'BARE_HI', 'VOL_LO', 'VOL_SIZE', 'ORIGIN', 'uVolume',
+    `'use strict';\nconst { S, airPiece, airPlane, aim, through, NONE } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst NO_ENTRY = [0, 0, 0, 0];\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\n${CELL_JS.city}\n${CELL_JS.cell}\nreturn { relief, cellAir };\n//# sourceURL=cellPieces.gen.js`,
+  )(P, SEEN, RS, setPoint, plaza, farAxis, tableAt, groundCell, groundAir, hallsAir, carve, bareIn, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, CELL, R, fromMiddle, ownOf, spaceRoom, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
 
   // Where a first visit starts, in the middle city cell (lattice units): on
   // the plaza, near the building, wherever nothing stands.

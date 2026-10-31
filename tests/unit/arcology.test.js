@@ -45,31 +45,6 @@ test('the city never changes faster than the point moves', () => {
   assert.ok(worst > 0.5, 'the test moves through enough surfaces to mean something');
 });
 
-// Where a city cell meets the hall under it, the two say the same about
-// what is air (the light wells go through), and neither says air is further
-// off than the other finds it. (Half of them in the ring of city cells
-// round the building's: light wells, and halls under the ground, are only
-// there.)
-test('the city and the halls under it agree where they meet', () => {
-  const rnd = rand(8);
-  let wells = 0;
-  for (let n = 0; n < 20000; n++) {
-    // (The ring of city cells round the building's own, _V2.BUILT_CELLS.)
-    const near = () => {
-      const [a, b] = _V2.BUILT_CELLS[Math.floor(rnd() * _V2.BUILT_CELLS.length)], ring = [-1, 0, 1].flatMap((x) => [-1, 0, 1].map((z) => [a + x, b + z])).filter(([x, z]) => !_V2.BUILT_CELLS.some(([p, q]) => p === x && q === z));
-      const [x, z] = ring.length ? ring[Math.floor(rnd() * ring.length)] : [a + 2, b];
-      return wrapId([R * (R / 2) + R / 2 + x, ROW_ID, R * (R / 2) + R / 2 + z]);
-    };
-    const id = n % 2 ? near() : anywhere(rnd, ROW_ID);
-    const below = wrapId([id[0], id[1] - 1, id[2]]);
-    const x = 0.6 + rnd() * (R - 1.2), z = 0.6 + rnd() * (R - 1.2);
-    const up = air([x, 0.01, z], id), down = air([x, R - 0.01, z], below);
-    if (up < -0.03 || down < -0.03) wells++;
-    assert.ok(Math.abs(up - down) <= 0.02 + 1e-9, `at ${x}, ${z} in ${id}: ${up} above, ${down} below`);
-  }
-  assert.ok(wells > 100, `the test meets light wells (${wells} times)`);
-});
-
 // Above the city there is only sky: a cell there says how far down the city
 // is, which is never more than how far down its air is.
 test('over the city, a cell says no more than how far down it is', () => {
@@ -431,8 +406,8 @@ test('what the openings and the town say of a ray holds', () => {
 // Rays at the city's level (see city and cell in the shader): from points
 // in the plaza's air round the buildings (both rows), along the axes and
 // diagonals and toward the buildings' middle; in the city's pockets in the
-// faces; and up from the top row into the sky. (The light wells are under
-// the ground: no air.) What a level says of a ray holds (see rayHolds).
+// faces; and up from the top row into the sky. What a level says of a ray
+// holds (see rayHolds).
 // (Where the plaza does not fade, too: its pieces are then the whole height
 // of the city's rows, and far out one piece: see plaza.)
 for (const fades of [true, false]) {
@@ -533,22 +508,6 @@ test("the relief's heights at the city's level: the slant's form is the true hei
     }
   }
   assert.ok(n > 100000, `${n} asked`);
-});
-
-// Every opening the halls make up out of the row under the plaza is carried
-// on up through it by a light well: none ends in the plaza's floor (a pit
-// whose air would run on through it: ledger B2). Over the plaza's cells by
-// the building, where the halls may have rooms.
-test('every opening up from under the plaza is carried on up by a light well', () => {
-  const seed = levelSeed(CITY), MID = 12 + 24 * 12, seen = [];
-  for (let x = -3; x <= 3; x++)
-    for (let z = -3; z <= 3; z++) {
-      const above = [MID + x, ROW_ID, MID + z], below = [MID + x, ROW_ID - 1, MID + z];
-      if (!arcology.openings(below, seed, CITY).some((o) => o.e[1] === 1)) continue;
-      seen.push([x, z]);
-      assert.ok(_V2.wellOf(above, seed), `the opening up out of [${below}] ends in the plaza's floor (city cell [${x}, ${z}] across from the middle)`);
-    }
-  assert.ok(seen.length >= 2, `only ${seen.length} openings up from under the plaza: the test reaches none`);
 });
 
 // Where the plaza does not fade (plaza.fades false: ledger B33), a city cell
@@ -676,11 +635,10 @@ test('under the ground there is no air, at any level', () => {
     const d = [rnd() - 0.5, -0.2 - rnd(), rnd() - 0.5], l = Math.hypot(...d);
     dirs.push(d.map((x) => x / l));
   }
-  // (And over the light wells there were, by the building: city cells across
-  // from the middle one, each well a square of 3 units each way round its
-  // cell's middle.)
+  // (And over the light wells there were, by the building, until the ground
+  // (ledger F2): city cells across from the middle one, each well a square of
+  // 3 units each way round its cell's middle.)
   const WELLS = [[-2, 0], [-2, 1], [2, -1]];
-  for (const [a, c] of WELLS) assert.ok(_V2.wellOf([_V2.MID + a, ROW_ID, _V2.MID + c], seed), `no well at ${a}, ${c}`);
   let asked = 0, rays = 0, wells = 0;
   for (let n = 0; n < 390; n++) {
     const well = n >= 300 ? WELLS[n % 3] : null, F = well ? CITY + (n % 3) : CITY + (n % 6), far = n % 3 === 0;
