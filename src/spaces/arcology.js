@@ -2951,6 +2951,9 @@ ${CELL_GLSL.cell}
   // along the slants (from dg, or else from L and f).
   function setPoint(L, f, dg) {
     P.at(L, f, dg);
+    // (A record of a level without slants (see slantLevels) has none: none
+    // of its cells may ask after them.)
+    if (dg && dg.Ls === null) throw new Error('arcology: the slants asked after at a level without them');
     if (dg?.Ls) (SL.Ls = dg.Ls), (SL.Fs = dg.fs);
     else {
       // (Split again, as levelRay does: a whole number and the rest, at most a half.)
@@ -3059,6 +3062,11 @@ ${CELL_GLSL.cell}
     // Position.levels): the city's level asks after them for its solids, the
     // next for its pockets.
     slants: SLANTS,
+    // (The levels they cut: the city's and the next, by the solids, the
+    // openings, the town and the relief. Coarser there is nothing at all to
+    // cut (see cell); finer, the halls' planes are the axes and the
+    // diagonals.)
+    slantLevels: [CITY, CITY + 1],
     // A plaza's air reaches up out of its cell, and its longest way runs
     // corner to corner across the cells either side. (Where the plaza does not
     // fade, its pieces are bigger, as its air is: the shader does not hold the
@@ -3096,9 +3104,6 @@ ${CELL_GLSL.cell}
     // (The city's levels: the relief's surfaces are not all carried exactly
     // (ledger B49), nor yet are the openings' and the town's (B44).)
     nearOnly: [CITY, CITY + 1],
-    // (Only the city's levels are cut by the slants: finer, the halls are
-    // all axes and diagonals.)
-    slanted: (level) => level <= CITY + 1,
     entrances: { level: CITY + 1, list: ENTRANCES },
     // Nothing stands higher than the building (in level-0 cells).
     skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),

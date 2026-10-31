@@ -9,6 +9,10 @@ export function hash32(x) {
   return x >>> 0;
 }
 
+// Whether a space's slants cut a level's cells (see slantLevels in
+// worlds.js): only there are they planes of the level, and asked after.
+export const slantsCut = (space, level) => !space.slantLevels || (level >= space.slantLevels[0] && level <= space.slantLevels[1]);
+
 // HSV (all 0..1, hue wraps) to linear RGB.
 export function hsv(h, s, v) {
   h = ((h % 1) + 1) % 1;

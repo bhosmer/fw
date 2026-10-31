@@ -1,4 +1,4 @@
-import { PROBE_POINTS, probeFrag, viewFrag, slantCount4 } from './shaders.js';
+import { PROBE_POINTS, probeFrag, viewFrag, slantCount4, slantSlots } from './shaders.js';
 import { levelSeed } from './util.js';
 import { begin, finish, link, bindSampler } from './gl.js';
 import { Frame } from './frame.js';
@@ -164,13 +164,17 @@ export class Renderer {
     gl.uniform1f(p.u.uGroundH, Math.min(recs[0]?.ground ?? Infinity, 1e30));
     const k4 = slantCount4(this.space);
     if (k4) {
-      const Ls = new Int32Array(n * k4 * 4), Fs = new Float32Array(n * k4 * 4);
+      // (Only the levels that ask after slants have theirs: see slantLevels in worlds.js.)
+      const sl = this.space.slantLevels, slots = sl ? sl[1] - sl[0] + 1 : n, at = slantSlots(this.space, recs.map((r) => r.level));
+      const Ls = new Int32Array(slots * k4 * 4), Fs = new Float32Array(slots * k4 * 4);
       recs.forEach((r, i) => {
-        Ls.set(r.Ls, i * k4 * 4);
-        Fs.set(r.fs, i * k4 * 4);
+        if (at[i] < 0) return;
+        Ls.set(r.Ls, at[i] * k4 * 4);
+        Fs.set(r.fs, at[i] * k4 * 4);
       });
       gl.uniform4iv(p.u.uLs, Ls);
       gl.uniform4fv(p.u.uFs, Fs);
+      if (sl) gl.uniform1iv(p.u.uSlantSlot, Int32Array.from({ length: n }, (_, i) => at[i] ?? -1));
     }
   }
 

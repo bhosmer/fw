@@ -8,7 +8,7 @@ import { zoomed } from './position.js';
 import { gradient } from './air.js';
 import { SLACK } from './shaders.js';
 import { SCHEMES } from './schemes.js';
-import { define, frozen } from './util.js';
+import { define, frozen, slantsCut } from './util.js';
 
 // The most levels coarser than the one we work at that a level can be and
 // still be drawn as it is: in the shader's single precision, a level's
@@ -85,7 +85,7 @@ export function visible(flight, maxT, n, fit = FIT, reach = Infinity) {
   for (const { rec, air } of all) {
     if (drawn(rec.level)) recs.push({ ...rec, near: Math.max(0, (air - SLACK) / rec.sig) });
     else if (zoom(rec.level) && air < 0) {
-      const z = zoomed(rec, space.slants ?? [], Math.pow(flight.R, pos.F - fit - rec.level), reach, { least: -air / rec.sig, slanted: space.slanted?.(rec.level) ?? true });
+      const z = zoomed(rec, space.slants ?? [], Math.pow(flight.R, pos.F - fit - rec.level), reach, { least: -air / rec.sig, slanted: slantsCut(space, rec.level) });
       if (z.valid > 0) (valid = z.valid), recs.push({ ...z.rec, near: 0 });
     }
   }

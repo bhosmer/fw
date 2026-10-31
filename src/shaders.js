@@ -1,11 +1,11 @@
-import { glf } from './util.js';
+import { glf, slantsCut } from './util.js';
 import { lightGlsl } from './schemes.js';
 
 
 // Lattice units of margin on "this level is solid for at least this far"
 // (here, and in how far off view.js says each level's air is).
 export const SLACK = 0.05;
-export { slantCount4 };
+export { slantCount4, slantSlots };
 
 export const VERT = /* glsl */ `#version 300 es
 void main() {
@@ -13,15 +13,23 @@ void main() {
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-// A space's slants (see Position.levels): for each level, each slant's
+// A space's slants (see Position.levels): for each level that asks after
+// them (the space's slantLevels; else every level drawn), each slant's
 // m . (L + f) as a lattice number and a small offset, four to a uniform.
 const slantCount4 = (space) => Math.ceil((space.slants?.length ?? 0) / 4);
+// (Which slot of uLs and uFs a level's slants go in, or -1: by its place
+// among the space's slantLevels, else by its slot among the n levels drawn.)
+const slantSlots = (space, levels) => (space.slantLevels ? levels.map((l) => (slantsCut(space, l) ? l - space.slantLevels[0] : -1)) : levels.map((_, i) => i));
 function slantUniforms(space) {
   if (!space.slants?.length) return '';
+  const [lo, hi] = space.slantLevels ?? [];
   return `#define NSL ${space.slants.length}
 #define NSL4 ${slantCount4(space)}
-uniform ivec4 uLs[NLEV * NSL4];
-uniform vec4 uFs[NLEV * NSL4];`;
+${space.slantLevels ? `#define NSLV ${hi - lo + 1}
+uniform ivec4 uLs[NSLV * NSL4];
+uniform vec4 uFs[NSLV * NSL4];
+uniform int uSlantSlot[NLEV]; // (each level drawn: its slants' slot, or -1)` : `uniform ivec4 uLs[NLEV * NSL4];
+uniform vec4 uFs[NLEV * NSL4];`}`;
 }
 // The point being asked about, along the slants (set by levelRay), and the
 // signed distance numerator of a plane across slant k: m . X - c, for X in
@@ -37,9 +45,10 @@ vec3 gSv;
 ivec3 gSc;
 float slantAt(int k, out int n) {
   ivec3 m = SLANT[k];
-  float s = uFs[gSi * NSL4 + k / 4][k % 4] + dot(vec3(m), gSv) * uSig[gSi];
+  int at = ${space.slantLevels ? 'uSlantSlot[gSi]' : 'gSi'} * NSL4 + k / 4;
+  float s = uFs[at][k % 4] + dot(vec3(m), gSv) * uSig[gSi];
   float r = floor(s + 0.5);
-  n = uLs[gSi * NSL4 + k / 4][k % 4] + int(r) - (m.x * gSc.x + m.y * gSc.y + m.z * gSc.z) * R;
+  n = uLs[at][k % 4] + int(r) - (m.x * gSc.x + m.y * gSc.y + m.z * gSc.z) * R;
   return s - r;
 }
 `;

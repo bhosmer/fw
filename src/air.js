@@ -4,7 +4,7 @@
 // on the GPU: the flight asks it (Flight.airAt), and through the flight the
 // tour, the view and the tests.
 import { DIAGONALS } from './position.js';
-import { levelSeed, wrapId } from './util.js';
+import { levelSeed, wrapId, slantsCut } from './util.js';
 
 // One level's air distance at the point v from the camera (level-F cells),
 // in that level's lattice units. And if ray is given ({ dir }), what the
@@ -36,10 +36,11 @@ export function airAt(space, rec, v = [0, 0, 0], ray = null) {
     dg.Lp[p] = rec.Lp[p] + rp - (cell[a] + cell[b]) * R;
     dg.Lm[p] = rec.Lm[p] + rm - (cell[a] - cell[b]) * R;
   });
-  // And along the space's slants.
-  dg.Ls = [];
-  dg.fs = [];
-  (space.slants ?? []).forEach((m, k) => {
+  // And along the space's slants, where they cut its cells (see slantsCut):
+  // elsewhere there are none to ask after.
+  dg.Ls = slantsCut(space, rec.level) ? [] : null;
+  dg.fs = dg.Ls && [];
+  if (dg.Ls) (space.slants ?? []).forEach((m, k) => {
     const s = rec.fs[k] + (m[0] * v[0] + m[1] * v[1] + m[2] * v[2]) * rec.sig;
     const r = Math.floor(s + 0.5);
     dg.fs[k] = s - r;

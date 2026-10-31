@@ -5,6 +5,7 @@ import { Flight } from '../../src/flight.js';
 import { into } from './corner.js';
 import arcology from '../../src/spaces/arcology.js';
 import { rand } from './rand.js';
+import { slantsCut } from '../../src/util.js';
 
 const R = arcology.R;
 const fresh = (frac) => new Position(R, (j) => arcology.ancestorDigit(j), frac);
@@ -126,7 +127,7 @@ test('a level zoomed about the corner of it we are near is as it is, out to wher
       for (let seed = 1; !got && seed <= 12; seed++) got = into(new Flight(arcology), { seed, gap, to });
       assert.ok(got, `no place ${gap} levels below a room's ${to}`);
       const { flight, room } = got, rec = flight.airs.find((a) => a.rec.level === room).rec;
-      const z = zoomed(rec, arcology.slants, Math.pow(R, flight.pos.F - room - 24), 1e21, { slanted: arcology.slanted(room) });
+      const z = zoomed(rec, arcology.slants, Math.pow(R, flight.pos.F - room - 24), 1e21, { slanted: slantsCut(arcology, room) });
       assert.equal(z.valid, 1e21, `${to}, ${gap} up: it holds only ${z.valid}`);
       const rnd = rand(3);
       for (let i = 0; i < 200; i++) {
