@@ -58,7 +58,7 @@ export const ROW_WIDTH = 1024;
 // util.js): the builder's own text, and the format's, which changes by hand
 // with anything else the rows depend on that the key does not name.
 export const RELIEF_FORMAT = 1;
-export const builtBy = () => [String(RELIEF_FORMAT), String(ROW_WIDTH), buildRelief.toString(), reliefDirections.toString(), edgeDirection.toString()];
+export const builtBy = () => [String(RELIEF_FORMAT), String(ROW_WIDTH), buildRelief.toString(), writeRows.toString(), reliefDirections.toString(), edgeDirection.toString()];
 
 // The relief's directions, from its faces alone (so that they are known
 // before anything is built): the axes; 4 y and 12 y (the city's heights in
@@ -325,6 +325,26 @@ export function buildRelief(ctx) {
   }
   // (Each list in a stable order: by source.)
   for (const ls of lists) for (const l of ls) l.sort((i, j) => rows[i].src - rows[j].src || i - j);
+  const { data, size, at } = writeRows({ lists, rows, planeRows, size: vsz });
+  const ms = typeof performance === 'undefined' ? 0 : performance.now() - t0;
+  return {
+    data, size, at, dirs: DIRS,
+    stats: { boxes: boxes.length, pieces: pieces.length, rows: rows.length, planes: planeRows.length, deafCut, refs: [lists[0].reduce((s, l) => s + l.length, 0), lists[1].reduce((s, l) => s + l.length, 0)], ms: Math.round(ms) },
+    // (For the checks: each listed piece's planes and bounds, and the lists.)
+    _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb })), _lists: lists, fval,
+    // (And what the rows are written from, so that the checks can write them
+    // again from the same air divided otherwise: see writeRows.)
+    _built: { lists, rows, planeRows, size: vsz },
+  };
+}
+
+// The rows (see the head of this file), from the pieces as listed (rows: each
+// { pl, bb, lv, src }, pl its planes' rows), the planes' rows, and each
+// level's lists for the table's cells (size: the table's, in cells): the
+// cells', the lists', the pieces', their planes' ints and the planes', and
+// what a city cell's list leaves out, from which cells have lists.
+export function writeRows({ lists, rows, planeRows, size: vsz }) {
+  const NC = vsz[0] * vsz[1] * vsz[2];
   // What a city cell's list leaves out (see the head of this file): n,
   // the cells to the nearest with a list (Chebyshev; as if every cell past
   // the table were one past a list, the table's bounds being where the
@@ -363,7 +383,7 @@ export function buildRelief(ctx) {
   const at = {}, nRows = (n) => Math.ceil(n / 4);
   let nList = 0, nRun = 0;
   for (const ls of lists) for (const l of ls) nList += l.length;
-  for (const r of rows) (r.first = nRun), (nRun += r.pl.length);
+  const firsts = rows.map((r) => ((nRun += r.pl.length), nRun - r.pl.length));
   at.LIST0 = NC;
   at.PIECE0 = at.LIST0 + nRows(nList);
   at.RUN0 = at.PIECE0 + 2 * rows.length;
@@ -381,19 +401,13 @@ export function buildRelief(ctx) {
   const e16 = (v) => { const x = Math.floor(v) + 32768; if (x < 0 || x > 65535) throw new Error('relief: bounds beyond 16 bits'); return x; };
   rows.forEach((r, i) => {
     const o = 4 * (at.PIECE0 + 2 * i);
-    data.set([4 * at.RUN0 + r.first, r.pl.length, r.lv, r.src], o);
+    data.set([4 * at.RUN0 + firsts[i], r.pl.length, r.lv, r.src], o);
     for (let a = 0; a < 3; a++) data[o + 4 + a] = e16(r.bb[a][0] - 1) | (e16(Math.ceil(r.bb[a][1]) + 1) << 16);
-    r.pl.forEach((pi, k) => (data[4 * at.RUN0 + r.first + k] = at.PLANE0 + pi));
+    r.pl.forEach((pi, k) => (data[4 * at.RUN0 + firsts[i] + k] = at.PLANE0 + pi));
   });
   planeRows.forEach((r, i) => data.set(r, 4 * (at.PLANE0 + i)));
   if (4 * total >= 2 ** 31) throw new Error('relief: too many rows');
-  const ms = typeof performance === 'undefined' ? 0 : performance.now() - t0;
-  return {
-    data, size: [ROW_WIDTH, H], at, dirs: DIRS,
-    stats: { boxes: boxes.length, pieces: pieces.length, rows: rows.length, planes: planeRows.length, deafCut, refs: [lists[0].reduce((s, l) => s + l.length, 0), lists[1].reduce((s, l) => s + l.length, 0)], ms: Math.round(ms) },
-    // (For the checks: each listed piece's planes and bounds, and the lists.)
-    _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb })), _lists: lists, fval,
-  };
+  return { data, size: [ROW_WIDTH, H], at };
 }
 
 // The relief at level lv where the point is, from its table cell's list, in

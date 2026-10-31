@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { _V2, VOLUME } from '../../src/spaces/arcology.js';
+import { writeRows } from '../../src/spaces/relief.js';
 import { rand } from './rand.js';
 import { reliefSamples } from './relief-samples.js';
 
@@ -26,13 +27,14 @@ const cellOf = (X) => cellIndex(X.map((x) => Math.floor(x / R)));
 const listedAt = (lv, X) => { const ci = cellOf(X); let d = Infinity; if (ci >= 0) for (const i of L._lists[lv][ci]) d = Math.min(d, dist(pieces[i], X)); return d; };
 // The JavaScript's carve at X (finer units) at level lv, as the city's cell
 // or the table's skin cell asks it (in the level's units); one level finer,
-// only in a skin cell.
-function carveAt(lv, X) {
+// only in a skin cell. (And for a ray ({ dir }), how far it goes in it; from
+// the world's rows, or carve's: see carveOver.)
+function carveAt(lv, X, ray = null, carve = _V2.reliefCarve) {
   const Xl = lv === 0 ? X.map((x) => x / R) : X;
   const c = Xl.map((x) => Math.floor(x / R)), q = Xl.map((x, a) => x - R * c[a]), W = q.map(Math.round), f = q.map((x, a) => x - W[a]);
   if (lv === 1) { const ci = cellIndex(c); if (ci < 0 || (word(ci, 0) & 3) !== _V2.BITS.SKIN) return Infinity; }
   _V2.setPoint(W, f);
-  return _V2.reliefCarve(lv, W, f, c.map((x) => x * R));
+  return carve(lv, W, f, c.map((x) => x * R), ray);
 }
 // Where the listed relief is declared to differ (plan 2.2):
 // - at the city's level, past BAND_OUT in front of a face but short of its
@@ -160,4 +162,131 @@ test('the listed relief is built within its time and room', () => {
   // plan, .claude/design/relief-cover.md: about 0.4 s and 2 MB here.)
   assert.ok(L.data.byteLength < 4e6, `${L.data.byteLength} bytes`);
   assert.ok(L.stats.ms < 3000, `${L.stats.ms} ms`);
+});
+
+// The same air divided otherwise (.claude/design/test-oracles.md, C8): the
+// rows written again from the pieces and lists as built say what they said;
+// with every list in another order, the relief answers just as it did; and
+// with every piece cut in two halves that overlap, a ray through it ends
+// where it did, on the same surface, and no point is in more air.
+const BUILT = L._built;
+// (A ray from X (finer units) along dir through the relief at level lv
+// alone, asked again just past each way out, until it is in none: where it
+// ends (finer units), the surface there, and how many asks it took. Each
+// step stops at its table cell's side, if sooner, to ask the next cell's
+// list there: a piece may run on into a cell that does not list it, where
+// the world's coarser air takes the ray on, so that a step past the side
+// could land where the relief alone has no air, and its pieces otherwise
+// divided, not.)
+function through(lv, X, dir, carve) {
+  const unit = lv === 0 ? R : 1;
+  let t = 0, n = null;
+  for (let k = 0; k < 64; k++) {
+    const Y = X.map((x, a) => x + dir[a] * t), ray = { dir }, d = carveAt(lv, Y, ray, carve);
+    if (d === Infinity || !(ray.reach >= 0)) return { t, n, k };
+    const side = Math.min(...[0, 1, 2].map((a) => (dir[a] === 0 ? Infinity : ((Math.floor(Y[a] / R) + (dir[a] > 0 ? 1 : 0)) * R - Y[a]) / dir[a])));
+    if (ray.reach * unit < side) (t += ray.reach * unit), (n = [ray.nx, ray.ny, ray.nz]);
+    else (t += side), (n = null);
+    t += 1e-9 * Math.max(t, unit);
+  }
+  return { t, n, k: 64 };
+}
+// (Rays from points in the pieces' air, as the every-piece test finds them.)
+const throughRays = (() => {
+  const rnd = rand(31), out = [];
+  for (const p of pieces) for (let k = 0; k < 3; k++) {
+    const X = p.bb.map(([lo, hi]) => lo + rnd() * (hi - lo));
+    if (!(dist(p, X) < -1e-6)) continue;
+    const e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], m = Math.hypot(...e);
+    out.push({ lv: p.lv, X, dir: e.map((x) => x / m) });
+  }
+  return out;
+})();
+// (Compared: each ray's end and surface, by the rows given against the
+// world's; ties, where two ways out are equally far, may take either surface.)
+function sameRays(carve) {
+  const out = { rays: 0, inAir: 0, onSurface: 0, moved: [], turned: 0, capped: 0 };
+  for (const { lv, X, dir } of throughRays) {
+    const a = through(lv, X, dir, _V2.reliefCarve), b = through(lv, X, dir, carve);
+    out.rays++;
+    out.inAir += a.t > 0;
+    out.capped += a.k === 64 || b.k === 64;
+    out.onSurface += a.n !== null;
+    if (Math.abs(a.t - b.t) > 1e-6 * (1 + a.t)) { if (out.moved.length < 5) out.moved.push({ lv, X, dir, a, b }); continue; }
+    if ((a.n === null) !== (b.n === null) || (a.n && b.n && a.n.some((x, i) => Math.abs(x - b.n[i]) > 1e-12))) out.turned++;
+  }
+  return out;
+}
+
+test('the rows written again from what they were built from are the rows', () => {
+  const again = writeRows(BUILT);
+  assert.deepEqual(again.size, L.size);
+  assert.deepEqual(again.at, L.at);
+  assert.ok(again.data.length === L.data.length && again.data.every((x, i) => Object.is(x, L.data[i])));
+});
+
+test('with every list in another order, the relief answers as it did', () => {
+  const rnd = rand(41);
+  const shuffled = BUILT.lists.map((ls) => ls.map((l) => { const c = l.slice(); for (let i = c.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [c[i], c[j]] = [c[j], c[i]]; } return c; }));
+  const carve = _V2.carveOver(writeRows({ ...BUILT, lists: shuffled }).data);
+  // (Distances, and a ray's reach, exactly; its surface but where two ways
+  // out are equally far.)
+  let n = 0, ties = 0;
+  SAMPLES.forEach(({ lv, X }, i) => {
+    if (i % 3) return;
+    const e = [Math.sin(i), Math.cos(3 * i), Math.sin(7 * i)], m = Math.hypot(...e), dir = e.map((x) => x / m);
+    const ra = { dir }, rb = { dir };
+    const a = carveAt(lv, X, ra), b = carveAt(lv, X, rb, carve);
+    assert.ok(Object.is(a, b), `level ${lv} at ${X}: ${a}, reordered ${b}`);
+    assert.ok(Object.is(ra.reach, rb.reach), `level ${lv} at ${X} along ${dir}: reach ${ra.reach}, reordered ${rb.reach}`);
+    if (ra.reach >= 0) n++;
+    if (ra.nx !== rb.nx || ra.ny !== rb.ny || ra.nz !== rb.nz) ties++;
+  });
+  const r = sameRays(carve);
+  assert.ok(n > 2000 && r.inAir > 10000 && r.onSurface > 0.6 * r.rays, `${n} sampled rays in air; ${r.inAir} rays through, ${r.onSurface} ending on a surface`);
+  assert.deepEqual(r.moved, []);
+  assert.ok(ties === 0 && r.turned === 0 && r.capped < 0.001 * r.rays, `${ties} ties of surface, ${r.turned} rays ending on another, ${r.capped} of ${r.rays} not ended in 64 asks`);
+});
+
+// Every piece cut across y (else x, else z) at a whole K of its level's
+// units, its halves overlapping by a unit: { lists, rows, planeRows } to
+// write rows from, and how many were cut. (The halves keep the whole
+// piece's bounds, and are listed in its cells. Which piece wins a single
+// ask, as the list's order has it, is the reordering's check: here, where a
+// ray through the relief ends.)
+function split() {
+  const planeRows = BUILT.planeRows.slice(), rows = [], to = [];
+  // (A plane across axis a, sg X_a <= K, as a row: the axes are the first
+  // three directions.)
+  const row = (a, sg, K) => planeRows.push([a | ((sg < 0 ? 1 : 0) << 8), K, 0, 0]) - 1;
+  let cut = 0;
+  BUILT.rows.forEach((r, i) => {
+    const unit = r.lv === 0 ? R : 1;
+    const a = [1, 0, 2].find((a) => Math.ceil(r.bb[a][0] / unit) + 2 < Math.floor(r.bb[a][1] / unit));
+    if (a === undefined) return void to.push([rows.push(r) - 1]);
+    const K = Math.floor((r.bb[a][0] + r.bb[a][1]) / 2 / unit);
+    cut++;
+    to.push([rows.push({ ...r, pl: [...r.pl, row(a, 1, K + 1)] }) - 1, rows.push({ ...r, pl: [...r.pl, row(a, -1, -K)] }) - 1]);
+  });
+  const lists = BUILT.lists.map((ls) => ls.map((l) => l.flatMap((i) => to[i])));
+  return { built: { ...BUILT, lists, rows, planeRows }, cut };
+}
+
+test('with every piece cut in two halves that overlap, rays end where they did, on the same surface, and no point is in more air', () => {
+  const { built, cut } = split();
+  const carve = _V2.carveOver(writeRows(built).data);
+  assert.ok(cut > 0.3 * BUILT.rows.length, `only ${cut} of ${BUILT.rows.length} pieces cut`);
+  // (Distances: air where there was air, and never further into it.)
+  let air = 0;
+  SAMPLES.forEach(({ lv, X }, i) => {
+    if (i % 3) return;
+    const a = carveAt(lv, X), b = carveAt(lv, X, null, carve);
+    if (Math.abs(a) > 1e-9) assert.equal(b < 0, a < 0, `level ${lv} at ${X}: ${a}, cut ${b}`);
+    assert.ok(b >= a - 1e-9, `level ${lv} at ${X}: more air cut (${b}) than whole (${a})`);
+    air += a < 0;
+  });
+  const r = sameRays(carve);
+  assert.ok(air > 2000 && r.inAir > 10000 && r.onSurface > 0.6 * r.rays, `${air} points in air; ${r.inAir} rays through, ${r.onSurface} ending on a surface`);
+  assert.deepEqual(r.moved, []);
+  assert.ok(r.turned === 0 && r.capped < 0.001 * r.rays, `${r.turned} rays ending on another surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
 });

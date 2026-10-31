@@ -2544,17 +2544,29 @@ ${CELL_GLSL.cell}
   async function prepare() {
     RELIEF ??= await stored(reliefKey(), () => (({ data, size }) => ({ data, size }))(listed()));
   }
-  const reliefRow = (i) => {
-    const D = (RELIEF ?? reliefTable()).data;
-    return [D[4 * i], D[4 * i + 1], D[4 * i + 2], D[4 * i + 3]];
+  // The relief at a level where the point is, in JavaScript (see listedCarve),
+  // made into a function reading its rows from data: rows the checks give,
+  // or, given none, the world's own.
+  const carveOver = (data) => {
+    const reliefRow = data
+      ? (i) => [data[4 * i], data[4 * i + 1], data[4 * i + 2], data[4 * i + 3]]
+      : (i) => {
+          const D = (RELIEF ?? reliefTable()).data;
+          return [D[4 * i], D[4 * i + 1], D[4 * i + 2], D[4 * i + 3]];
+        };
+    const reliefInt = data ? (j) => data[j] : (j) => (RELIEF ?? reliefTable()).data[j];
+    return new Function(
+      'P', 'SL', 'R', 'ORIGIN', 'VOL_LO', 'VOL_SIZE', 'RDM', 'RDI', 'lowBit', 'reliefRow', 'reliefInt',
+      `'use strict';\nconst { S: PS, airPiece, airPlane } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\n${listedCarve(true)}\nreturn { carve };\n//# sourceURL=listedCarve.gen.js`,
+    )(P, SL, R, ORIGIN, VOLUME.lo, VOLUME.size, RELIEF_DIRS.map((d) => [...d.m, d.kind]), RELIEF_DIRS.map((d) => 1 / Math.hypot(...d.m)), lowBit, reliefRow, reliefInt).carve;
   };
-  const reliefInt = (j) => (RELIEF ?? reliefTable()).data[j];
-  // The relief at a level where the point is, in JavaScript (see listedCarve), made into a function.
-  const { carve } = new Function(
-    'P', 'SL', 'R', 'ORIGIN', 'VOL_LO', 'VOL_SIZE', 'RDM', 'RDI', 'lowBit', 'reliefRow', 'reliefInt',
-    `'use strict';\nconst { S: PS, airPiece, airPlane } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\n${listedCarve(true)}\nreturn { carve };\n//# sourceURL=listedCarve.gen.js`,
-  )(P, SL, R, ORIGIN, VOLUME.lo, VOLUME.size, RELIEF_DIRS.map((d) => [...d.m, d.kind]), RELIEF_DIRS.map((d) => 1 / Math.hypot(...d.m)), lowBit, reliefRow, reliefInt);
-  Object.assign(_V2, { listed, reliefCarve: (lv, L, f, base) => carve(lv, L, f, base, P.NONE, null), setPoint, CELL });
+  const carve = carveOver(null);
+  // (For the checks: the relief at level lv, at L + f in the level's units
+  // over the building's origin, in the table's cell whose corner is base;
+  // and for a ray ({ dir }), how far it goes in it. reliefCarve asks the
+  // world's rows, carveOver(data)'s the rows data.)
+  const asked = (c) => (lv, L, f, base, ray = null) => (ray && P.aim(ray), c(lv, L, f, base, P.NONE, ray));
+  Object.assign(_V2, { listed, reliefCarve: asked(carve), carveOver: (data) => asked(carveOver(data)), setPoint, CELL });
   // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
   // a whole number of its measure deep: else one would not be cut at all.)
   if (FACES.some((F, k) => [1, 2, 3].some((t) => !(depthN(k, R, [Math.floor(t / 3), t % 3]) > 0)))) throw new Error('arcology: a cut too shallow for its face');
