@@ -33,8 +33,10 @@ export class Renderer {
     // frame the GPU takes longer over than the display allows is shown late,
     // which nothing on this side can see.
     this.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
-    this.timing = []; // queries not yet answered
+    this.timing = []; // frames' queries not yet answered: { q, disturbed }
     this.timingPaused = false;
+    this.benching = new Set(); // timings by time() not yet answered: { disturbed }
+    this.dropped = 0; // frames' timings dropped as disturbed
 
     this.probeTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.probeTex);
@@ -212,22 +214,40 @@ export class Renderer {
     if (timed) {
       const q = gl.createQuery();
       gl.beginQuery(this.timer.TIME_ELAPSED_EXT, q);
-      this.timing.push(q);
+      this.timing.push({ q, disturbed: false });
     }
-    this.drawFrame(recs, view);
-    if (timed) gl.endQuery(this.timer.TIME_ELAPSED_EXT);
+    try {
+      this.drawFrame(recs, view);
+    } finally {
+      if (timed) gl.endQuery(this.timer.TIME_ELAPSED_EXT);
+    }
+  }
+
+  // Whether the GPU says timings were disturbed (by a change of clock or of
+  // power, say) since it was last asked. Asking clears it, and any timing not
+  // yet answered may be one disturbed, so all of those are marked: the
+  // frames' and time()'s alike, whoever asks.
+  disturbed() {
+    if (!this.gl.getParameter(this.timer.GPU_DISJOINT_EXT)) return false;
+    for (const t of this.timing) t.disturbed = true;
+    for (const t of this.benching) t.disturbed = true;
+    return true;
   }
 
   // GPU milliseconds for each frame timed since last asked whose time has
-  // come back, oldest first. (When the GPU reports that timings were
-  // disturbed, those are dropped.)
+  // come back, oldest first. (Those the GPU says were disturbed are dropped,
+  // and counted. It is asked after the answers are seen to be back, so that
+  // whatever disturbed them has been told.)
   timed() {
     const gl = this.gl, done = [];
-    while (this.timing.length && gl.getQueryParameter(this.timing[0], gl.QUERY_RESULT_AVAILABLE)) {
-      const q = this.timing.shift();
-      const ns = gl.getQueryParameter(q, gl.QUERY_RESULT);
+    let back = 0;
+    while (back < this.timing.length && gl.getQueryParameter(this.timing[back].q, gl.QUERY_RESULT_AVAILABLE)) back++;
+    if (!back) return done;
+    this.disturbed();
+    for (const { q, disturbed } of this.timing.splice(0, back)) {
+      if (disturbed) this.dropped++;
+      else done.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
       gl.deleteQuery(q);
-      if (!gl.getParameter(this.timer.GPU_DISJOINT_EXT)) done.push(ns / 1e6);
     }
     return done;
   }
@@ -329,23 +349,39 @@ export class Renderer {
     return p;
   }
 
-  // GPU milliseconds taken by whatever fn draws (null if it cannot be timed).
+  // How long the GPU takes over whatever fn draws: { ms }, or, where there is
+  // no timing to be had, { why } and no ms: 'no timer' (the browser offers
+  // none), 'unanswered' (the GPU had not answered after 8 s) or 'disturbed'
+  // (the GPU says the timing was disturbed, whether it says so here or to the
+  // frames' timings, or another time(), while this one waits). A caller takes
+  // another or does without; it never takes these for a time.
   async time(fn) {
     const gl = this.gl;
     const ext = this.timer;
-    if (!ext) return null;
-    const q = gl.createQuery();
-    this.timingPaused = true; // (only one timing at a time)
-    gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
-    fn();
-    gl.endQuery(ext.TIME_ELAPSED_EXT);
-    this.timingPaused = false;
-    gl.flush();
-    for (let i = 0; i < 500 && !gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE); i++) {
-      await new Promise((r) => setTimeout(r, 4));
+    if (!ext) return { why: 'no timer' };
+    const q = gl.createQuery(), mine = { disturbed: false };
+    try {
+      this.disturbed(); // (what was disturbed before this does not count against it)
+      this.benching.add(mine);
+      this.timingPaused = true; // (only one query at a time)
+      gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
+      try {
+        fn();
+      } finally {
+        gl.endQuery(ext.TIME_ELAPSED_EXT);
+        this.timingPaused = false;
+      }
+      gl.flush();
+      const until = performance.now() + 8000;
+      while (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) {
+        if (performance.now() > until) return { why: 'unanswered' };
+        await new Promise((r) => setTimeout(r, 4));
+      }
+      if (this.disturbed() || mine.disturbed) return { why: 'disturbed' };
+      return { ms: gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 };
+    } finally {
+      this.benching.delete(mine);
+      gl.deleteQuery(q);
     }
-    const ns = gl.getQueryParameter(q, gl.QUERY_RESULT);
-    gl.deleteQuery(q);
-    return ns / 1e6;
   }
 }

@@ -602,7 +602,7 @@ vec3 openSky(vec3 col, vec3 rd) {
     vec3 c = rd * 260.0;
     float h = fract(sin(dot(floor(c), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
     float b = max(h - 0.993, 0.0) / 0.007;
-    col += uStars * (0.3 + b) * step(0.993, h) * smoothstep(0.5, 0.15, length(fract(c) - 0.5)) * smoothstep(0.0, 0.12, rd.y);
+    col += uStars * (0.3 + b) * step(0.993, h) * (1.0 - smoothstep(0.15, 0.5, length(fract(c) - 0.5))) * smoothstep(0.0, 0.12, rd.y);
   }
 
   // Clouds: a layer overhead, thinning out toward the horizon, lit by the

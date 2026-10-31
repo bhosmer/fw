@@ -452,7 +452,7 @@ window.fw = {
   },
   get state() {
     const { sky, clearance, scale, pace, opened, fog, sensed } = flight;
-    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale: showing.upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale: showing.upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), gpuDropped: renderer.dropped, levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = flight.basis();
@@ -523,14 +523,15 @@ window.fw = {
     for (let i = 0; i < Math.abs(seconds) * 60; i++) flight.retrace(1 / 60, seconds > 0 ? -1 : 1, controls.boost());
     return this.state;
   },
-  // GPU milliseconds per frame for the current view, at one pixel per CSS pixel.
+  // GPU milliseconds per frame for the current view, at one pixel per CSS
+  // pixel: { ms }, or { why } where it could not be timed (see Renderer.time).
   async bench(n = 4) {
     showing.upscale = 1;
     resize();
     flight.sense();
-    const ms = await renderer.time(() => {
+    const t = await renderer.time(() => {
       for (let i = 0; i < n; i++) levelsDrawn = draw().recs.length;
     });
-    return ms / n;
+    return 'ms' in t ? { ms: t.ms / n } : t;
   },
 };

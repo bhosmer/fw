@@ -43,4 +43,4 @@ Two planes are the world's, not any level's, and are handled where levels are as
 
 - `tests/unit/*.test.js` (`node --test`): the world's properties, from first visits and from inside the building (distances never overstate, rays stay in air), the halls' catalogue on its own (`halls.test.js`), the variants and links, the town's catalogue, and more.
 - `tests/browser/run.mjs` (headless Chrome): the shader against the JavaScript, pictures against goldens, flights, comparing.
-- `bench/`: `cold.mjs` (a first visit's shader build), `warm.mjs` (build a link's shaders before it is opened), `bench.mjs`, `views.mjs`, `shoot.mjs`.
+- `bench/`: `cold.mjs` (a first visit's shader build), `warm.mjs` (build a link's shaders before it is opened), `bench.mjs` (with `timing.mjs`: GPU timings from fw.bench, those the GPU does not give taken again and counted), `views.mjs`, `shoot.mjs`.

@@ -9,7 +9,9 @@
 //
 // The GPU is shared: while anyone is looking at the app, the numbers mean
 // little. Views are hashes as the app writes them into its URL (see VIEWS).
+// Timings the GPU does not give are taken again, and counted (see timing.mjs).
 import { launch, serve } from '../tests/browser/chrome.mjs';
+import { prepare, bench, missed, report } from './timing.mjs';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,22 +43,28 @@ for (const t of trees) t.server = await serve(t.root);
 const chrome = await launch();
 const page = await chrome.page();
 let loads = 0;
+for (const t of trees) t.miss = missed(); // (timings not given, tree by tree)
 async function measure(t, view) {
   const setup = `window.requestAnimationFrame = () => 0;
     localStorage.setItem('fw.scheme', 'alhambra'); localStorage.setItem('fw.world', ${JSON.stringify(view.world)});`;
   await page.goto(`${t.server.url}index.html?${++loads}${view.hash ? '#' + view.hash : ''}`, setup);
   const err = await page.eval(`document.getElementById('help').classList.contains('error') ? document.getElementById('help').textContent : null`);
   if (err) throw new Error(`${t.name}: the page failed to start:\n${err}`);
-  await page.eval('fw.bench(4)'); // compile and warm
-  return page.eval('fw.bench(24)');
+  t.timer = await prepare(page);
+  await bench(page, 4, t.miss); // compile and warm
+  return bench(page, 24, t.miss);
 }
 const views = Object.entries(VIEWS).filter(([n]) => !only.length || only.some((o) => n.includes(o)));
 const best = Object.fromEntries(views.map(([n]) => [n, trees.map(() => Infinity)]));
 for (let r = 0; r < rounds; r++)
   for (const [name, view] of views) {
     const order = r % 2 ? [1, 0] : [0, 1];
-    for (const i of order) best[name][i] = Math.min(best[name][i], await measure(trees[i], view));
+    for (const i of order) {
+      const ms = await measure(trees[i], view);
+      if (Number.isFinite(ms)) best[name][i] = Math.min(best[name][i], ms);
+    }
   }
+for (const t of trees) console.log(`${report(t.miss, t.name)} (its timer: ${t.timer})`);
 console.log(`view          this (ms)  ${trees[1].name} (ms)  ratio   (least of ${rounds} interleaved rounds)`);
 for (const [name] of views) {
   const [a, b] = best[name];
