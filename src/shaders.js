@@ -361,6 +361,7 @@ uniform vec2 uJitter;      // where in its pixel this frame's ray goes (see TAAU
 uniform mat3 uCam;
 uniform float uTan;        // tan(fov / 2)
 uniform float uScale;      // our clearance, smoothed
+uniform float uRoom;       // the size of the space we are in (see room in view.js)
 uniform float uFogLen;
 uniform float uMaxT;
 uniform float uFogK;       // how far we see inside a level's air, over its uSig
@@ -652,7 +653,7 @@ vec3 surfaceColour(int slot, vec3 n) {
 vec3 litBy(vec3 base, vec3 n, vec3 rd, float t, float ao, float sunlit) {
   float hemi = 0.5 + 0.5 * n.y;
   float key = max(dot(n, uSunDir), 0.0);
-  float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uLampReach * uScale), 2.0));
+  float lamp = max(dot(n, -rd), 0.0) / (1.0 + pow(t / (uLampReach * uRoom), 2.0));
   vec3 light = (0.15 + 0.85 * ao) * (uSky * uAmbient * mix(0.55, 1.05, hemi) + vec3(1.0, 0.93, 0.8) * key * uFill)
              + vec3(1.0, 0.9, 0.75) * lamp * uLamp
              + uSunCol * uSun * key * sunlit;

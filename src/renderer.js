@@ -322,6 +322,7 @@ export class Renderer {
     gl.uniformMatrix3fv(p.u.uCam, false, view.cam);
     gl.uniform1f(p.u.uTan, view.tan);
     gl.uniform1f(p.u.uScale, view.scale);
+    gl.uniform1f(p.u.uRoom, view.room);
     gl.uniform1f(p.u.uFogLen, view.fogLen);
     gl.uniform1f(p.u.uMaxT, view.maxT);
     gl.uniform1f(p.u.uFogK, view.fogK);

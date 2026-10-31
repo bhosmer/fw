@@ -17,9 +17,11 @@ export const SCHEME = {
   sunDir: { is: [0.4657, 0.8279, 0.3105], light: 'vec3' },
   // How much light comes from the sky (the haze) all round.
   ambient: { is: 1, light: 'float' },
-  // A soft light carried with us, falling off lampReach clearances out.
+  // A soft light carried with us, falling off lampReach times the size of
+  // the space we are in out (the room's, not how near its walls are: so it
+  // keeps steady as we go about a room and through its doors).
   lamp: { is: 0.35, light: 'float' },
-  lampReach: { is: 8, light: 'float' },
+  lampReach: { is: 1.4, light: 'float' },
   // How bright the sun's disc is in the sky; how much cloud; how bright the
   // stars are.
   disc: { is: 1, light: 'float' },
@@ -68,7 +70,7 @@ export const SCHEMES = [
     sunDir: [-0.5, 0.75, 0.45],
     ambient: 0.12,
     lamp: 1.2,
-    lampReach: 2.5,
+    lampReach: 0.45,
     fog: 0.7,
     sky: [0.035, 0.045, 0.1],
     zenith: [0.01, 0.015, 0.05],

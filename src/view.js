@@ -169,6 +169,10 @@ export function makeView(flight, s) {
     tan: FOV_TAN,
     lodH: s.lodH,
     scale: flight.scale,
+    // (The size of the space we are in, level-F cells: the cell whose air we
+    // float in, as visibility goes by it (see sense in flight.js), or out in
+    // the open, as far in proportion to how high we are.)
+    room: flight.fog / space.fogK,
     fogLen,
     maxT,
     fogK,
