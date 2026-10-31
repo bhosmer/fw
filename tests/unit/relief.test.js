@@ -99,8 +99,8 @@ test("every piece's air is air by its cell's list, and by carve, wherever the pi
 
 test('the rows say what the pieces and lists say', () => {
   // (Read as the shader reads them: from a cell's row, its list's ints and
-  // its seam groups' (each its seam plane's row and its pieces' ints), each
-  // its piece's rows (its bounds, and its planes' ints), each its plane's row.)
+  // its seam groups' (each its seam plane and its pieces' ints), each its
+  // piece's row (its planes' ints and its bounds), each its plane's row.)
   const D = L.data, row = (i) => D.subarray(4 * i, 4 * i + 4);
   let n = 0, listedCells = 0, grouped = 0;
   SAMPLES.forEach(({ X }, s) => {
@@ -117,24 +117,24 @@ test('the rows say what the pieces and lists say', () => {
       for (let g = 0; g < gr[2 * lv + 1]; g++) {
         const [dir, K, gn] = row(gr[2 * lv] + g);
         for (let j = 0; j < gn; j++, gf++) {
-          const pr = D[gf], i = (pr - L.at.PIECE0) / 2;
+          const pr = D[gf], i = pr - L.at.PIECE0;
           assert.ok(L._built.rows[i].seams.some((pi) => L._built.planeRows[pi][0] === dir && L._built.planeRows[pi][1] === K), `a piece in the group of a plane not its seam`);
           read.push(pr);
           grouped++;
         }
       }
-      const listed = new Set(L._lists[lv][ci].map((i) => L.at.PIECE0 + 2 * i));
+      const listed = new Set(L._lists[lv][ci].map((i) => L.at.PIECE0 + i));
       assert.ok(read.every((pr) => listed.has(pr)) && [...listed].every((pr) => read.includes(pr)), `level ${lv}, cell ${ci}: what the rows list is the list`);
       if (lv === 0) assert.ok((((cr[1] >> 16) & 15) === 0) === listed.size > 0);
       let d = Infinity;
       for (const pr of read) {
-        const h = row(pr), b = row(pr + 1), p = pieces[(pr - L.at.PIECE0) / 2];
-        assert.ok(h[1] === p.planes.length && h[2] === p.lv && h[3] === p.src);
+        const h = row(pr), p = pieces[pr - L.at.PIECE0], first = h[0] & 16777215, np = h[0] >>> 24;
+        assert.ok(np === p.planes.length);
         // (Its bounds hold it.)
-        for (let a = 0; a < 3; a++) assert.ok((b[a] & 65535) - 32768 <= p.bb[a][0] && ((b[a] >>> 16) & 65535) - 32768 >= p.bb[a][1]);
+        for (let a = 0; a < 3; a++) assert.ok((h[1 + a] & 65535) - 32768 <= p.bb[a][0] && ((h[1 + a] >>> 16) & 65535) - 32768 >= p.bb[a][1]);
         let g = -Infinity;
-        for (let k = 0; k < h[1]; k++) {
-          const q = row(D[h[0] + k]), m = L.dirs[q[0] & 255].m, sg = q[0] & 256 ? -1 : 1, K = q[1] * (lv === 0 ? R : 1);
+        for (let k = 0; k < np; k++) {
+          const q = row(D[first + k]), m = L.dirs[q[0] & 255].m, sg = q[0] & 256 ? -1 : 1, K = q[1] * (lv === 0 ? R : 1);
           // (Its plane: a sign times a direction's m, K at its level, and its fade.)
           assert.ok(m.every((x, a) => sg * x === p.planes[k].a[a]) && K === p.planes[k].b && (q[0] >> 9) === (p.rows[k][0] >> 9));
           g = Math.max(g, (sg * (m[0] * X[0] + m[1] * X[1] + m[2] * X[2]) - K) / Math.hypot(...m));

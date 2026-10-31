@@ -51,9 +51,9 @@
 //   a cell's groups' lists after its own, in turn;
 // - per seam group a row: (its seam plane's direction | sign << 8 and K,
 //   as the plane's row has them, its list's length, 0);
-// - per piece two rows: (its first plane's int, how many, its level, its
-//   source) and its bounds, in finer units from the building's origin,
-//   +32768, low and high halves of x, y, z;
+// - per piece a row: (its first plane's int | how many << 24, and its
+//   bounds, in finer units from the building's origin, +32768, low and high
+//   halves of x, y, z);
 // - the pieces' planes, ints: each plane's row;
 // - per plane (direction | sign << 8 | fade << 9, K at the piece's level,
 //   fz's bits, 0): fade 0 none, 1 a back (it rises by fr fz as the finer
@@ -386,10 +386,11 @@ export function buildRelief(ctx) {
 }
 
 // The rows (see the head of this file), from the pieces as listed (rows: each
-// { pl, bb, lv, src }, pl its planes' rows), the planes' rows, and each
-// level's lists for the table's cells (size: the table's, in cells): the
-// cells', the lists', the pieces', their planes' ints and the planes', and
-// what a city cell's list leaves out, from which cells have lists.
+// { pl, bb, seams }, pl its planes' rows, seams its seam planes'), the
+// planes' rows, and each level's lists for the table's cells (size: the
+// table's, in cells): the cells', the lists', the pieces', their planes'
+// ints and the planes', and what a city cell's list leaves out, from which
+// cells have lists.
 export function writeRows({ lists, rows, planeRows, size: vsz }) {
   const NC = vsz[0] * vsz[1] * vsz[2];
   // What a city cell's list leaves out (see the head of this file): n,
@@ -452,7 +453,7 @@ export function writeRows({ lists, rows, planeRows, size: vsz }) {
   at.LIST0 = 2 * NC;
   at.GROUP0 = at.LIST0 + nRows(nList);
   at.PIECE0 = at.GROUP0 + nGroup;
-  at.RUN0 = at.PIECE0 + 2 * rows.length;
+  at.RUN0 = at.PIECE0 + rows.length;
   at.PLANE0 = at.RUN0 + nRows(nRun);
   const total = at.PLANE0 + planeRows.length, H = Math.ceil(total / ROW_WIDTH);
   const data = new Int32Array(ROW_WIDTH * H * 4);
@@ -463,20 +464,21 @@ export function writeRows({ lists, rows, planeRows, size: vsz }) {
       data[4 * ci + 2 * lv] = li;
       if (l.length > 65535) throw new Error('relief: a list too long');
       data[4 * ci + 2 * lv + 1] = l.length | (lv ? (lower[ci] >>> 12) << 16 : (n0[ci] << 16) | ((lower[ci] & 4095) << 20));
-      for (const i of l) data[li++] = at.PIECE0 + 2 * i;
+      for (const i of l) data[li++] = at.PIECE0 + i;
       data[4 * (at.GCELL0 + ci) + 2 * lv] = gi;
       data[4 * (at.GCELL0 + ci) + 2 * lv + 1] = gs.length;
       for (const [pi, items] of gs) {
         if (planeRows[pi][0] >> 9) throw new Error('relief: a seam that fades');
         data.set([planeRows[pi][0], planeRows[pi][1], items.length, 0], 4 * gi++);
-        for (const i of items) data[li++] = at.PIECE0 + 2 * i;
+        for (const i of items) data[li++] = at.PIECE0 + i;
       }
     }
   const e16 = (v) => { const x = Math.floor(v) + 32768; if (x < 0 || x > 65535) throw new Error('relief: bounds beyond 16 bits'); return x; };
   rows.forEach((r, i) => {
-    const o = 4 * (at.PIECE0 + 2 * i);
-    data.set([4 * at.RUN0 + firsts[i], r.pl.length, r.lv, r.src], o);
-    for (let a = 0; a < 3; a++) data[o + 4 + a] = e16(r.bb[a][0] - 1) | (e16(Math.ceil(r.bb[a][1]) + 1) << 16);
+    const o = 4 * (at.PIECE0 + i), first = 4 * at.RUN0 + firsts[i];
+    if (first >= 1 << 24 || r.pl.length >= 128) throw new Error('relief: a piece\'s planes beyond its row');
+    data[o] = first | (r.pl.length << 24);
+    for (let a = 0; a < 3; a++) data[o + 1 + a] = e16(r.bb[a][0] - 1) | (e16(Math.ceil(r.bb[a][1]) + 1) << 16);
     r.pl.forEach((pi, k) => (data[4 * at.RUN0 + firsts[i] + k] = at.PLANE0 + pi));
   });
   planeRows.forEach((r, i) => data.set(r, 4 * (at.PLANE0 + i)));
@@ -518,7 +520,7 @@ export function listedCarve(js) {
   // (Its right shifts are of ints, as twin.unsigned writes them in
   // JavaScript as of uints: each is masked after, so that both agree.)
   // (How far past a piece's bounds along axis a, in units one level finer.)
-  const past = (a) => `max(float((b.${a} & 65535) - 32768) - X.${a}, X.${a} - float(((b.${a} >> 16) & 65535) - 32768))`;
+  const past = (a, b) => `max(float((h.${b} & 65535) - 32768) - X.${a}, X.${a} - float(((h.${b} >> 16) & 65535) - 32768))`;
   const lines = [
     ...shaderOnly(
       '// The relief\'s rows (see relief.js): row i, and the j-th int from the first.',
@@ -627,19 +629,20 @@ export function listedCarve(js) {
         decl('int', 'pr = reliefInt(at)'),
         'at++;',
         'left--;',
-        decl('ivec4', 'h = reliefRow(pr), b = reliefRow(pr + 1)'),
+        decl('ivec4', 'h = reliefRow(pr)'),
+        decl('int', 'pf = h.x & 16777215, pn = (h.x >> 24) & 255'),
         "// (Past its bounds by d or more, it is no nearer; a ray, only from inside them.)",
-        decl('float', `far = max(max(${past('x')}, ${past('y')}), ${past('z')}) * bs`),
+        decl('float', `far = max(max(${past('x', 'y')}, ${past('y', 'z')}), ${past('z', 'w')}) * bs`),
         'if (far >= d && (!ray || far > 0.0)) continue;',
         `${RAY} = false;`,
         decl('float', 'gd = 1e9', true),
         loop('pass', 0, 2),
         ...ins([
           'airPiece();',
-          loop('k', 0, 'h.y'),
+          loop('k', 0, 'pn'),
           ...ins([
             // (In JavaScript, the plane's row qr, to read its fz as a float.)
-            js ? 'const qr = reliefInt(h.x + k), p = reliefRow(qr);' : 'ivec4 p = reliefRow(reliefInt(h.x + k));',
+            js ? 'const qr = reliefInt(pf + k), p = reliefRow(qr);' : 'ivec4 p = reliefRow(reliefInt(pf + k));',
             ...across({ p: 'p', m: 'm', w: 'w', r: 'r', sg: 'sg', inv: 'inv', s: 's', changing: true }),
             decl('int', 'fc = (p.x >> 9) & 3'),
             `if (fc == 1) s += fr * ${FZ};`,
@@ -671,5 +674,5 @@ export function listedCarve(js) {
     '}',
   ];
   const text = lines.join('\n');
-  return js ? twin.unsigned(twin.arrays(text, ['c', 'g', 'gr', 'v', 'q', 'Y', 'X', 'W', 'f', 'h', 'b', 'p', 'm', 'mq', 'base', 'VOL_SIZE'])) : text;
+  return js ? twin.unsigned(twin.arrays(text, ['c', 'g', 'gr', 'v', 'q', 'Y', 'X', 'W', 'f', 'h', 'p', 'm', 'mq', 'base', 'VOL_SIZE'])) : text;
 }
