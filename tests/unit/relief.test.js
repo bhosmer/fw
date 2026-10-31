@@ -8,6 +8,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { _V2, VOLUME } from '../../src/spaces/arcology.js';
 import { writeRows } from '../../src/spaces/relief.js';
+import arcology from '../../src/spaces/arcology.js';
+import { unionExit, reliefFade, fadeAt } from './fade.js';
+import { known } from './known.js';
 import { rand } from './rand.js';
 import { reliefSamples } from './relief-samples.js';
 
@@ -28,13 +31,13 @@ const listedAt = (lv, X) => { const ci = cellOf(X); let d = Infinity; if (ci >= 
 // The JavaScript's carve at X (finer units) at level lv, as the city's cell
 // or the table's skin cell asks it (in the level's units); one level finer,
 // only in a skin cell. (And for a ray ({ dir }), how far it goes in it; from
-// the world's rows, or carve's: see carveOver.)
-function carveAt(lv, X, ray = null, carve = _V2.reliefCarve) {
+// the world's rows, or carve's: see carveOver; faded as fade says.)
+function carveAt(lv, X, ray = null, carve = _V2.reliefCarve, fade = undefined) {
   const Xl = lv === 0 ? X.map((x) => x / R) : X;
   const c = Xl.map((x) => Math.floor(x / R)), q = Xl.map((x, a) => x - R * c[a]), W = q.map(Math.round), f = q.map((x, a) => x - W[a]);
   if (lv === 1) { const ci = cellIndex(c); if (ci < 0 || (word(ci, 0) & 3) !== _V2.BITS.SKIN) return Infinity; }
   _V2.setPoint(W, f);
-  return carve(lv, W, f, c.map((x) => x * R), ray);
+  return carve(lv, W, f, c.map((x) => x * R), ray, fade);
 }
 // Where the listed relief is declared to differ (plan 2.2):
 // - at the city's level, past BAND_OUT in front of a face but short of its
@@ -178,11 +181,13 @@ const BUILT = L._built;
 // the world's coarser air takes the ray on, so that a step past the side
 // could land where the relief alone has no air, and its pieces otherwise
 // divided, not.)
-function through(lv, X, dir, carve) {
+function through(lv, X, dir, carve, fade = null) {
   const unit = lv === 0 ? R : 1;
   let t = 0, n = null;
   for (let k = 0; k < 64; k++) {
-    const Y = X.map((x, a) => x + dir[a] * t), ray = { dir }, d = carveAt(lv, Y, ray, carve);
+    // (Faded, the fade grown by the way come, in the level's units.)
+    const g = t / unit, at = fade ? { o: fade.o + fade.a * g, a: fade.a, scale: fade.scale + fade.rate * g, rate: fade.rate } : undefined;
+    const Y = X.map((x, a) => x + dir[a] * t), ray = { dir }, d = carveAt(lv, Y, ray, carve, at);
     if (d === Infinity || !(ray.reach >= 0)) return { t, n, k };
     const side = Math.min(...[0, 1, 2].map((a) => (dir[a] === 0 ? Infinity : ((Math.floor(Y[a] / R) + (dir[a] > 0 ? 1 : 0)) * R - Y[a]) / dir[a])));
     if (ray.reach * unit < side) (t += ray.reach * unit), (n = [ray.nx, ray.ny, ray.nz]);
@@ -203,11 +208,15 @@ const throughRays = (() => {
   return out;
 })();
 // (Compared: each ray's end and surface, by the rows given against the
-// world's; ties, where two ways out are equally far, may take either surface.)
-function sameRays(carve) {
+// world's; ties, where two ways out are equally far, may take either surface.
+// only: at that level alone, faded as the march would fade it, each ray at
+// one of FADES.)
+function sameRays(carve, only = null) {
   const out = { rays: 0, inAir: 0, onSurface: 0, moved: [], turned: 0, capped: 0 };
-  for (const { lv, X, dir } of throughRays) {
-    const a = through(lv, X, dir, _V2.reliefCarve), b = through(lv, X, dir, carve);
+  for (const [i, { lv, X, dir }] of throughRays.entries()) {
+    if (only !== null && lv !== only) continue;
+    const fade = only === null ? null : FADES[i % FADES.length];
+    const a = through(lv, X, dir, _V2.reliefCarve, fade), b = through(lv, X, dir, carve, fade);
     out.rays++;
     out.inAir += a.t > 0;
     out.capped += a.k === 64 || b.k === 64;
@@ -290,3 +299,77 @@ test('with every piece cut in two halves that overlap, rays end where they did, 
   assert.deepEqual(r.moved, []);
   assert.ok(r.turned === 0 && r.capped < 0.001 * r.rays, `${r.turned} rays ending on another surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
 });
+
+// Faded as the march fades the relief (fade.js): fade states for the
+// relief's levels, a little, half way and nearly fully, aslant or face on.
+const FADES = [0.01, 0.05, 0.2, 0.5, 0.9].flatMap((rel) => [0.6, 1].flatMap((slant) => [2e-3, 5e-3].map((pix) => fadeAt({ sig: R }, arcology, { rel, slant, pix }))));
+// The relief at level lv faded, against the fading oracle (fade.js): from
+// points in each listed piece, each at one of FADES, how far a ray goes in
+// the faded air of its cell's list as each plane's fade rule says
+// (reliefFade), and whether it is in air at all, by the carve and by the
+// oracle (by the distance the ray ends off the plane it meets: |Δx| |n . d|);
+// and along the way, within the cell (at 31 points), the carve's own faded
+// distance says air (at the city's level, less its shrinking: see levelAir
+// in shaders.js). (The oracle shares the builder's lists, and each plane's
+// fade code and fz, with the carve: it checks how the carve fades what it
+// is given, not what it is given.)
+function fadedRelief(lv) {
+  const rnd = rand(7), unit = lv === 0 ? R : 1, out = { rays: 0, inAir: 0, apart: 0, off: 0, worst: 0, solid: 0, first: null };
+  const oracle = (X, dir, fade) => {
+    const ci = cellOf(X);
+    return ci < 0 ? null : unionExit(L._lists[lv][ci].map((i) => ({ planes: pieces[i].planes.map((q, k) => {
+      const m = Math.hypot(...q.a);
+      return { s: (q.a[0] * X[0] + q.a[1] * X[1] + q.a[2] * X[2] - q.b) / m / unit, n: q.a.map((x) => x / m), ...reliefFade(lv, (pieces[i].rows[k][0] >> 9) & 3, L.fval(pieces[i].rows[k][2]), { gO: fade.o, gA: fade.a }, { close: arcology.close, R }) };
+    }) })), dir);
+  };
+  pieces.forEach((p, i) => {
+    if (p.lv !== lv) return;
+    for (let k = 0; k < 2; k++) {
+      const X = p.bb.map(([lo, hi]) => lo + rnd() * (hi - lo)), e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], m = Math.hypot(...e), dir = e.map((x) => x / m);
+      const fade = FADES[(2 * i + k) % FADES.length], ray = { dir };
+      if (carveAt(lv, X, ray, undefined, fade) === Infinity) continue;
+      const ex = oracle(X, dir, fade);
+      out.rays++;
+      if ((ray.reach >= 0) !== !!ex) { out.apart++; out.first ??= { X, dir, fade, reach: ray.reach, oracle: ex }; continue; }
+      if (!ex) continue;
+      out.inAir++;
+      const nd = Math.abs(ex.n[0] * dir[0] + ex.n[1] * dir[1] + ex.n[2] * dir[2]), err = (Math.abs(ray.reach - ex.x) * nd) / (1 + ex.x);
+      out.worst = Math.max(out.worst, err);
+      if (err > 1e-9) { out.off++; out.first ??= { X, dir, fade, reach: ray.reach, oracle: ex.x }; }
+      const home = cellOf(X);
+      for (let j = 1; j < 32; j++) {
+        const t = (ray.reach * j) / 32, Y = X.map((q, a) => q + dir[a] * t * unit);
+        if (cellOf(Y) !== home) break;
+        const o = fade.o + fade.a * t, d = carveAt(lv, Y, null, undefined, { o, a: 0, scale: 0, rate: 0 });
+        if ((lv === 0 ? d + o : d) > 1e-9 * (1 + o)) { out.solid++; out.first ??= { X, dir, fade, reach: ray.reach, solidAt: t }; break; }
+      }
+    }
+  });
+  return out;
+}
+const fadedHolds = (lv) => {
+  const r = fadedRelief(lv);
+  assert.ok(r.rays > 2000 && r.inAir > 200, `level ${lv}: ${r.rays} rays, ${r.inAir} in air: the test reaches what it means to`);
+  assert.ok(r.apart === 0 && r.off === 0 && r.solid === 0, `level ${lv}: ${r.apart} rays in air by one and not the other, ${r.off} ending elsewhere (worst ${r.worst}), ${r.solid} going through faded solid, of ${r.inAir}: ${JSON.stringify(r.first)}`);
+};
+test('one level finer than the city, the relief fades as its planes say', () => fadedHolds(1));
+// (The city's pockets are meant to shrink as the rest of the level does,
+// growing as the ray goes; the carve keeps the shrinking but drops the
+// growth: ledger B43.)
+test("at the city's level, the relief fades as its planes say", (t) => known(t, 'B43', () => fadedHolds(0)));
+
+// And faded, the same air divided otherwise ends rays where it did: one
+// level finer, where the planes that cut the pieces do not move; and at the
+// city's level, where every plane shrinks alike, the cut's too (the pieces'
+// planes have no kind to say which are only cuts: relief-cover.md 2.1, 3.6),
+// but the halves overlap by a whole unit (the least whole one), and no city
+// piece has a point more than half a unit inside it: shrunk by half a unit,
+// where the overlap would close, it is gone too.
+const fadedSplit = (lv) => {
+  const carve = _V2.carveOver(writeRows(split().built).data), r = sameRays(carve, lv);
+  assert.ok(r.inAir > (lv ? 1000 : 300) && r.onSurface > 0.5 * r.inAir, `level ${lv}: ${r.inAir} rays through, ${r.onSurface} ending on a surface`);
+  assert.deepEqual(r.moved, []);
+  assert.ok(r.turned === 0 && r.capped < 0.001 * r.rays, `level ${lv}: ${r.turned} rays ending on another surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
+};
+test('faded, one level finer, with every piece cut in two, rays end where they did', () => fadedSplit(1));
+test("faded, at the city's level, with every piece cut in two, rays end where they did", () => fadedSplit(0));

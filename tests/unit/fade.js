@@ -116,3 +116,17 @@ export function reliefFade(lv, code, fz, { gO, gA }, { close, R }) {
 }
 
 const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+
+// A fade state for level rec as the march would give it where the level is
+// faded rel of the way (0 to 1; under 0, not yet, where what fades at its
+// own, finer size may have begun to), seen at slant, the footprint growing by pix
+// per unit of distance (see marchState), for the world { R, close }: as an
+// ask takes it ({ o, a, scale, rate }: see fade in src/pieces.js), and how
+// far a ray may go in the level's lattice units before the fade changes
+// pace (span: the march's step goes no further).
+export const FADE_GRID = [-0.2, 0.05, 0.5, 0.95].flatMap((rel) => [0.6, 1].flatMap((slant) => [2e-3, 5e-3].map((pix) => ({ rel, slant, pix }))));
+export function fadeAt(rec, { R, close }, { rel, slant, pix }) {
+  const cell = R / rec.sig, foot = (rel / LOD_K + 1 / LOD_HI) * slant * cell;
+  const s = marchState({ foot, cell, pix, slant, close, R });
+  return { o: s.gO, a: s.gA, scale: s.gScale, rate: s.gScaleRate, span: (s.turn - foot / pix) * rec.sig };
+}

@@ -2,38 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWorld } from '../../src/worlds.js';
 import { Flight } from '../../src/flight.js';
-import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
-import { inside } from './inside.js';
+import { places } from './places.js';
 import { M } from '../../src/spaces/halls.js';
 
 // What every world must be, whatever its arrangement: asked of each in turn
 // as the flight asks it (every level around places it might be), so that a
 // new world, or a new arrangement of one, is held to them without new tests.
-
-// Places in a world: first visits (out on the plaza), or (within) places
-// inside the building, in its halls; and where short flights from them lead.
-function places(space, seed, n = 8, within = false) {
-  const rnd = rand(seed);
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    let flight = new Flight(space);
-    if (within) inside(flight, rnd);
-    else elsewhere(flight, rnd);
-    for (let k = 0; k < 4; k++) {
-      flight.sense();
-      out.push(flight);
-      const next = new Flight(space);
-      Object.assign(next.pos, { F: flight.pos.F, frac: flight.pos.frac.slice(), digits: new Map([...flight.pos.digits].map(([j, d]) => [j, d.slice()])) });
-      next.begin();
-      const dir = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
-      for (let s = 0; s < 40; s++) next.step(1 / 30, dir.map((x) => x * 4));
-      flight = next;
-    }
-  }
-  return out;
-}
 
 // (And the arcology whose plaza fades, as it did: see PLAZA in
 // spaces/arcology.js.)
