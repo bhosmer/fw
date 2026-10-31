@@ -513,7 +513,7 @@ test('the ridges\' rows looked up are the rows as made', () => {
 });
 
 // At the city's level, the relief's height planes are worked out from 4y
-// along the FOUR slant (see heights): its whole part and the rest as
+// along the FOUR slant (see boxPlanes in relief.js): its whole part and the rest as
 // Position.levels carries them. They are the very numbers the true height
 // gives, so the shader's form and the plain one agree exactly.
 test("the relief's heights at the city's level: the slant's form is the true height's", () => {

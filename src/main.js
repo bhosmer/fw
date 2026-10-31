@@ -1,7 +1,7 @@
 import { Renderer } from './renderer.js';
 import { TAA_N } from './frame.js';
 import { Controls } from './controls.js';
-import { makeWorld, fromLink, makeSettings, ADDED } from './worlds.js';
+import { makeWorld, fromLink, makeSettings, ADDED, dataDigest } from './worlds.js';
 import { SCHEMES, loadScheme, saveScheme } from './schemes.js';
 import { Pilot, awayFrom, outward } from './pilot.js';
 import { Planner } from './planner.js';
@@ -45,11 +45,12 @@ try {
     if (other.space.R !== world.space.R) throw new Error(`vs: ${link.vs.name} is not on ${name}'s lattice: they cannot be compared`);
     // (The same world, as the link changes them, is the same program: drawn
     // with the first's, flown with its own settings. The same world is taken
-    // to be one with the same program and the same numbers and colours
-    // besides; its tables and volume, and its default digits, change only
-    // with its program (review123).)
+    // to be one with the same program, the same data besides (its volume and
+    // tables, which may change without the program: see dataDigest) and the
+    // same numbers and colours; its default digits change only with its
+    // program (review123).)
     const besides = (s) => JSON.stringify([Object.entries(s).filter(([k, v]) => typeof v !== 'function' && !['name', 'glsl', 'tables', 'volume'].includes(k)), [-4, -3, -2, -1, 0, 1, 2, 3, 4].map((l) => s.palette(l))]);
-    if (other.space.glsl === world.space.glsl && besides(other.space) === besides(world.space)) {
+    if (other.space.glsl === world.space.glsl && besides(other.space) === besides(world.space) && dataDigest(other.space) === dataDigest(world.space)) {
       if (JSON.stringify(other.settings) === JSON.stringify(world.settings)) throw new Error(`vs: ${link.vs.name} is the same world as ${name}, as the link changes them, with the same settings`);
       other.space = world.space;
     }

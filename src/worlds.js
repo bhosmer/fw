@@ -30,7 +30,12 @@
 //   tables         more tables, 2D: [{ name, size, data }] (or none), data
 //                  an Int32Array of four numbers for each of size[0] *
 //                  size[1], x fastest; in the shader, the isampler2D of that
-//                  name (declared for it)
+//                  name (declared for it). Their size and data may be made
+//                  when first asked for
+//   prepare        optionally, async: makes ready what the space would
+//                  otherwise make when first asked for (its tables, say:
+//                  from what the browser keeps, where it can), before it is
+//                  drawn or flown
 //   openAreaGlsl   float openAreaAt(int level, ivec3 id, ivec3 up, vec3 n):
 //                  what fraction of a surface opens at a level, where it is
 //                  (see the detail asked after in main, shaders.js), and
@@ -98,7 +103,13 @@
 import { HEXAHEDRON } from './spaces/hexahedron.js';
 import { FLIGHT, flightSettings } from './flight.js';
 import { VIEW, viewSettings } from './view.js';
-import { byPaths, merge, define, frozen } from './util.js';
+import { byPaths, merge, define, frozen, digest } from './util.js';
+
+// What a space's shader reads besides its text: its volume's data and its
+// tables' (see volume and tables above), as one digest. Two spaces with the
+// same program may differ in these alone (a variant of the relief's depths
+// changes the table of cells and the relief's rows, not the program).
+export const dataDigest = (space) => digest([space.volume.data, ...space.tables.map((t) => [t.name, ...t.size, t.data])]);
 
 // (With the changes set, or as it is. The first is the world a link that
 // names none opens.)
@@ -123,8 +134,9 @@ export const VARIANTS = Object.fromEntries(
 export async function makeWorld(name, changes) {
   const v = Object.hasOwn(VARIANTS, name) ? VARIANTS[name] : Object.hasOwn(BASES, name) ? { base: name } : null;
   if (!v) throw new Error(`there is no world ${name} (there are ${[...WORLDS, ...Object.keys(VARIANTS)].join(', ')})`);
-  const set = merge(v.set, changes);
-  return { space: await BASES[v.base](set), name, base: v.base, set };
+  const set = merge(v.set, changes), space = await BASES[v.base](set);
+  await space.prepare?.();
+  return { space, name, base: v.base, set };
 }
 
 // What a link's query names: ?variant&part.of.it=value&... (each value as

@@ -9,7 +9,7 @@ import { Flight, FLIGHT } from '../../src/flight.js';
 import { elsewhere } from '../../src/arrival.js';
 import { rand } from './rand.js';
 import { rayHolds } from './rays.js';
-import { VARIANTS, WORLDS, SETTINGS, makeWorld, makeSettings, fromLink } from '../../src/worlds.js';
+import { VARIANTS, WORLDS, SETTINGS, makeWorld, makeSettings, fromLink, dataDigest } from '../../src/worlds.js';
 
 // Some places in a world's buildings and plaza, and what its levels say there.
 const sample = (space) => {
@@ -69,9 +69,10 @@ test('a variant is made from the definition, and leaves the world as it was', ()
 });
 
 // Each part of the definition reaches what is made: a variant of any one of
-// them alone draws otherwise.
+// them alone draws otherwise (its shader, or the data it reads: see
+// dataDigest in worlds.js).
 test('every part of a variant is made', () => {
-  const glsl = arcology.glsl, ring = ARCOLOGY.building.coreFace.findIndex((f) => f.kind === 'rings');
+  const glsl = arcology.glsl, drawn = dataDigest(arcology), ring = ARCOLOGY.building.coreFace.findIndex((f) => f.kind === 'rings');
   const air = JSON.stringify([sample(arcology), townSample(made())]);
   for (const set of [
     { building: { edge: 'cornice' } },
@@ -90,7 +91,7 @@ test('every part of a variant is made', () => {
     { plaza: { fades: true } },
   ]) {
     const v = makeArcology(set), what = JSON.stringify(set).slice(0, 80);
-    assert.ok(v.arcology.glsl !== glsl, `${what} made no difference to the shader`);
+    assert.ok(v.arcology.glsl !== glsl || dataDigest(v.arcology) !== drawn, `${what} made no difference to the shader or its data`);
     // (The column's rings aside, every part shows in the air the JavaScript
     // finds too.)
     // (The plaza that fades, far off: see farPlaza.)

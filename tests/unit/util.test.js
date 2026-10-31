@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hash32, hashCell, levelSeed, hsv, define, byPaths, frozen } from '../../src/util.js';
+import { hash32, hashCell, levelSeed, hsv, define, byPaths, frozen, digest, stored } from '../../src/util.js';
 
 // hashCell must match the shaders' bit for bit (the browser tests check the
 // two against each other); these pin it down here, so that a change to one
@@ -59,4 +59,17 @@ test('changes by path are safe, and what is given is left as it was', () => {
   const inner = { b: [1] }, outer = Object.freeze({ inner });
   frozen(outer);
   assert.ok(Object.isFrozen(inner.b), 'the parts of what was frozen already are frozen too');
+});
+
+// A digest tells apart lists that would run together, and what is kept
+// without a store (here, in Node) is what is made.
+test('digest keeps parts apart, and stored makes what it cannot keep', async () => {
+  assert.notEqual(digest([1, 23]), digest([12, 3]));
+  assert.notEqual(digest(['ab', 'c']), digest(['a', 'bc']));
+  assert.notEqual(digest([[1], 2]), digest([1, [2]]));
+  assert.notEqual(digest([new Int32Array([1, 2])]), digest([new Int32Array([1]), new Int32Array([2])]));
+  assert.equal(digest(['a', 1, new Uint8Array([3])]), digest(['a', 1, new Uint8Array([3])]));
+  let made = 0;
+  assert.equal(await stored('key', () => (made++, 42)), 42);
+  assert.equal(made, 1);
 });

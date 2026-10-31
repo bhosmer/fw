@@ -4,8 +4,8 @@
 // tile and cut it, and each ridge's rows' notches, as ridgeRow() cuts them),
 // worked out once, as whole-number planes on the carried coordinates, and
 // listed for the cells of the table they meet. Both copies of the relief
-// (the shader's and the JavaScript's: see listedPieces in arcology.js) ask a
-// cell's list in one loop, from the same rows.
+// (the shader's and the JavaScript's: see listedCarve, and listed in
+// arcology.js) ask a cell's list in one loop, from the same rows.
 //
 // A piece is the intersection of its planes, each n . X <= K, X in its
 // level's lattice units from the building's origin (lv 0: the city's, the
@@ -20,7 +20,8 @@
 // - a notch: as a pocket, but from past the ridge (a unit past the other
 //   face too) to its edge (the edge's own direction, whole by construction);
 // - at the city's level, also the mass's box and 2 cells, where the city's
-//   cuts are asked (the gate of the city's faces, as cityFaces had it).
+//   cuts are asked (the gate of the city's faces, as the city's cell had it
+//   before the switch).
 // One level finer a piece is listed only in the skin cells of its face (as
 // its face's bit in the table says); where it meets a cell it may not run
 // on into (deaf: deep or plain, see VOLUME), it is listed instead, in each
@@ -29,11 +30,16 @@
 //
 // The rows (one RGBA32I texture, rows of four ints, ROW_WIDTH to a texture
 // row; every reference to another row, or to an int, from the first row):
-// - per table cell (from row 0), (first, count | n << 16) for the city's
-//   level and the same one level finer: its list's first int and length,
-//   and n the cells to the nearest cell with a list (Chebyshev; 0 for one
-//   with a list, at most 15): what the list leaves out is no nearer than the
-//   cell's sides and n - 1 cells more;
+// - per table cell (from row 0), (first, count | n << 16 | lower << 20)
+//   for the city's level and (first, count | lower' << 16) one level finer:
+//   each list's first int and length; n, the cells to the nearest cell with
+//   a list at the city's level (Chebyshev, 0 for one with a list, at most
+//   15), and from a cell with n of 2 or more, which of the cells around it
+//   have n - 1 (27 bits, lower' the high 15): what a city cell's list leaves
+//   out is no nearer than n - 2 cells and the nearest of those (or one cell
+//   more), and so no nearer than the bound a cell next to it gives, where
+//   they meet (so that the distance changes no faster than the point
+//   moves); one level finer, no nearer than the cell's sides;
 // - the lists, ints: each piece's row;
 // - per piece two rows: (its first plane's int, how many, its level, its
 //   source) and its bounds, in finer units from the building's origin,
@@ -45,14 +51,21 @@
 //   grows by fg fz, as the back's).
 // The directions (an id into DIRS): each an axis (0 to 2) or a slant
 // (3 on), with its whole-number m; a plane's n is sign m.
+import * as twin from '../twin.js';
+
 export const ROW_WIDTH = 1024;
+// What the rows are built by, for the key they are kept by (see stored in
+// util.js): the builder's own text, and the format's, which changes by hand
+// with anything else the rows depend on that the key does not name.
+export const RELIEF_FORMAT = 1;
+export const builtBy = () => [String(RELIEF_FORMAT), String(ROW_WIDTH), buildRelief.toString(), reliefDirections.toString(), edgeDirection.toString()];
 
 // The relief's directions, from its faces alone (so that they are known
 // before anything is built): the axes; 4 y and 12 y (the city's heights in
 // quarters, its terraces' floors in twelfths); each face's t, n and n_h; and
 // each face's notches' edges at its two ridges, each by the least whole
 // multiple its planes need. Each as m, its first part over 0: the arcology
-// carries each that is not an axis as a slant (see listedPieces).
+// carries each that is not an axis as a slant (see RELIEF_DIRS).
 export function reliefDirections({ FACES, T, R }) {
   const out = [];
   const add = (m) => {
@@ -79,7 +92,7 @@ function edgeDirection(F, E, FWT, k, e, R) {
 }
 
 // The pieces, their lists and rows. ctx: the arcology's own (see
-// listedPieces there): R, ORIGIN, FACES, T (RELIEF_ROWS), VOLUME and its
+// listed there): R, ORIGIN, FACES, T (RELIEF_ROWS), VOLUME and its
 // bits, the decisions (rectangle, rectDepth, cutOf, ridgeRow, depthN and
 // their state RS), hashCell, TILE_SALT, and DIRS (reliefDirections').
 export function buildRelief(ctx) {
@@ -87,6 +100,7 @@ export function buildRelief(ctx) {
   const t0 = typeof performance === 'undefined' ? 0 : performance.now();
   // A plane, as a row of the table: n . X <= K at level lv (n whole numbers),
   // its fade and fz. Equal rows are one row.
+  if (DIRS.length > 256) throw new Error('relief: more directions than a plane\'s row has room for');
   const planeRows = [], planeAt = new Map();
   const plane = (n, K, fade = 0, fz = 0) => {
     const nz = n.find((x) => x !== 0), s = Math.sign(nz);
@@ -263,7 +277,7 @@ export function buildRelief(ctx) {
     return true;
   };
   const lists = [Array.from({ length: NC }, () => []), Array.from({ length: NC }, () => [])];
-  const rows = []; // (pieces as listed: { pl, bb, flags, src })
+  const rows = []; // (pieces as listed: { pl, bb, lv, src })
   const listed = (p, pl = p.pl, bb = p.bb) => rows.push({ pl, bb, lv: p.b.lv, src: p.src }) - 1;
   let deafCut = 0;
   for (const p of pieces) {
@@ -311,24 +325,39 @@ export function buildRelief(ctx) {
   }
   // (Each list in a stable order: by source.)
   for (const ls of lists) for (const l of ls) l.sort((i, j) => rows[i].src - rows[j].src || i - j);
-  // The omitted bound: the cells to the nearest cell with a list (Chebyshev, at most 15).
-  const mOf = (ls) => {
-    const m = new Uint8Array(NC).fill(15);
-    const queue = [];
-    for (let ci = 0; ci < NC; ci++) if (ls[ci].length) (m[ci] = 0), queue.push(ci);
-    for (let h = 0; h < queue.length; h++) {
-      const ci = queue[h], x = ci % vsz[0], y = Math.floor(ci / vsz[0]) % vsz[1], z = Math.floor(ci / vsz[0] / vsz[1]);
-      if (m[ci] >= 15) continue;
-      for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const X = x + dx, Y = y + dy, Z = z + dz;
-        if (X < 0 || Y < 0 || Z < 0 || X >= vsz[0] || Y >= vsz[1] || Z >= vsz[2]) continue;
-        const cj = X + vsz[0] * (Y + vsz[1] * Z);
-        if (m[cj] > m[ci] + 1) (m[cj] = m[ci] + 1), queue.push(cj);
-      }
+  // What a city cell's list leaves out (see the head of this file): n,
+  // the cells to the nearest with a list (Chebyshev; as if every cell past
+  // the table were one past a list, the table's bounds being where the
+  // relief's own distance is that to the table), at most 15; and from a cell
+  // with n of 2 or more, the cells around it with n - 1 (by index (x + 1) +
+  // 3 (y + 1) + 9 (z + 1), not those past a nearer one of them along the
+  // same sides: no nearer than it).
+  const n0 = new Uint8Array(NC).fill(15), lower = new Uint32Array(NC);
+  const around = (ci, f) => {
+    const x = ci % vsz[0], y = Math.floor(ci / vsz[0]) % vsz[1], z = Math.floor(ci / vsz[0] / vsz[1]);
+    for (let o = 0; o < 27; o++) {
+      if (o === 13) continue;
+      const X = x + (o % 3) - 1, Y = y + (Math.floor(o / 3) % 3) - 1, Z = z + Math.floor(o / 9) - 1;
+      f(o, X < 0 || Y < 0 || Z < 0 || X >= vsz[0] || Y >= vsz[1] || Z >= vsz[2] ? -1 : X + vsz[0] * (Y + vsz[1] * Z));
     }
-    return m;
   };
-  const m0 = mOf(lists[0]), m1 = mOf(lists[1]);
+  {
+    const byN = Array.from({ length: 16 }, () => []);
+    for (let ci = 0; ci < NC; ci++) {
+      if (lists[0][ci].length) n0[ci] = 0;
+      else around(ci, (o, cj) => { if (cj < 0) n0[ci] = 2; });
+      byN[n0[ci]].push(ci);
+    }
+    for (let n = 0; n < 15; n++) for (const ci of byN[n]) if (n0[ci] === n) around(ci, (o, cj) => { if (cj >= 0 && n0[cj] > n + 1) (n0[cj] = n + 1), byN[n + 1].push(cj); });
+    // (o' is along o's sides, and no further: each part of it 0 or o's.)
+    const within = (q, o) => [1, 3, 9].every((u) => { const a = (Math.floor(q / u) % 3) - 1, b = (Math.floor(o / u) % 3) - 1; return a === 0 || a === b; });
+    for (let ci = 0; ci < NC; ci++) {
+      if (n0[ci] < 2) continue;
+      const n = n0[ci], at = [];
+      around(ci, (o, cj) => { if ((cj < 0 ? 1 : n0[cj]) === n - 1) at.push(o); });
+      for (const o of at) if (!at.some((q) => q !== o && within(q, o))) lower[ci] |= 1 << o;
+    }
+  }
 
   // --- The rows: the cells', the lists', the pieces', their planes' ints and the planes', in turn.
   const at = {}, nRows = (n) => Math.ceil(n / 4);
@@ -345,7 +374,8 @@ export function buildRelief(ctx) {
   for (let ci = 0; ci < NC; ci++) for (let lv = 0; lv < 2; lv++) {
     const l = lists[lv][ci];
     data[4 * ci + 2 * lv] = li;
-    data[4 * ci + 2 * lv + 1] = l.length | ((lv ? m1 : m0)[ci] << 16);
+    if (l.length > 65535) throw new Error('relief: a list too long');
+    data[4 * ci + 2 * lv + 1] = l.length | (lv ? (lower[ci] >>> 12) << 16 : (n0[ci] << 16) | ((lower[ci] & 4095) << 20));
     for (const i of l) data[li++] = at.PIECE0 + 2 * i;
   }
   const e16 = (v) => { const x = Math.floor(v) + 32768; if (x < 0 || x > 65535) throw new Error('relief: bounds beyond 16 bits'); return x; };
@@ -364,4 +394,149 @@ export function buildRelief(ctx) {
     // (For the checks: each listed piece's planes and bounds, and the lists.)
     _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb })), _lists: lists, fval,
   };
+}
+
+// The relief at level lv where the point is, from its table cell's list, in
+// either language (js: true, or GLSL), written once: the shader's reading
+// the rows from the texture uRelief (reliefRow, reliefInt), the
+// JavaScript's from their Int32Array (the same functions, given). Each
+// plane's direction from RDM (m, and its axis, or 3 + its slant) and RDI
+// (1 / |m|). (Where the languages differ, beyond what twin.writer writes:
+// the cell from the point, and vectors part by part.)
+export function listedCarve(js) {
+  // (S is the level's scale here, as in the shader: the pieces' state is PS.)
+  const { decl, loop, indent: ins, fade, faded, shaderOnly, slant, vadd, vsub, D, RAY, keep } = twin.writer(js, 'PS');
+  const W1 = ROW_WIDTH - 1, WB = Math.log2(ROW_WIDTH);
+  // (Its right shifts are of ints, as twin.unsigned writes them in
+  // JavaScript as of uints: each is masked after, so that both agree.)
+  // (How far past a piece's bounds along axis a, in units one level finer.)
+  const past = (a) => `max(float((b.${a} & 65535) - 32768) - X.${a}, X.${a} - float(((b.${a} >> 16) & 65535) - 32768))`;
+  const lines = [
+    ...shaderOnly(
+      '// The relief\'s rows (see relief.js): row i, and the j-th int from the first.',
+      `ivec4 reliefRow(int i) { return texelFetch(uRelief, ivec2(i & ${W1}, i >> ${WB}), 0); }`,
+      'int reliefInt(int j) { ivec4 t = reliefRow(j >> 2); int c = j & 3; return c == 0 ? t.x : c == 1 ? t.y : c == 2 ? t.z : t.w; }',
+      'int gCarve;',
+      'ivec3 gCarveBase;',
+      'float gCarveE;',
+    ),
+    "// The relief at level lv (0 the city's, 1 the next) where the point is",
+    "// (base: its cell's corner from the building's origin, in the level's",
+    "// units), united with d: the pieces its table cell lists, and, no nearer",
+    "// than the cell's sides and n - 1 cells more (n the cells to the nearest",
+    "// list), the rest. For a ray, how far it goes in them. Asked after from one",
+    "// place (see cell): what asks for it leaves the level (or -1), the base and",
+    "// the cell's own bound in the carve's state (the shader's gCarve globals,",
+    "// the JavaScript's CELL).",
+    js ? 'function carve(lv, L, f, base, d, ray) {' : 'float carve(int lv, ivec3 L, vec3 f, ivec3 base, float d, bool ray, inout float reach, inout vec3 nrm) {',
+    ...ins([
+      ...fade(
+        '// With distance (see the march), the relief one level finer fades by',
+        "// getting shallower: each piece's back rises by fr of its fading depth",
+        '// (fz, in its plane\'s row), growing by fg of it for each unit the ray',
+        "// goes, as a terrace's floor or ceiling grows; its other planes stay.",
+        "// (Not by the uniform shrinking of the rest of the level's air, which",
+        '// would fill in shallow relief long before deep, and leave slivers where',
+        "// pieces meet: cell() takes that out again for map.) The city's keeps the",
+        "// uniform shrinking, gO, but not its growth (B43).",
+        'float fo = gO, fa = gA, fr = lv == 1 ? gO / (CLOSE * float(R)) : 0.0, fg = lv == 1 ? gA / (CLOSE * float(R)) : 0.0;',
+        'if (lv == 1) gO = 0.0;',
+        'gA = 0.0;',
+      ),
+      decl('int', 'S = lv == 0 ? 1 : R'),
+      decl('ivec3', `W = ${vadd('base', 'L')}`),
+      "// (Its table cell: at the city's level, the one the point is in; one",
+      '// level finer, the one whose corner base is.)',
+      js
+        ? 'const cell = lv == 0 ? [W[0] - (f[0] < 0.0 ? 1 : 0), W[1] - (f[1] < 0.0 ? 1 : 0), W[2] - (f[2] < 0.0 ? 1 : 0)] : [int(base[0] / R), int(base[1] / R), int(base[2] / R)];'
+        : 'ivec3 cell = lv == 0 ? W - ivec3(lessThan(f, vec3(0.0))) : base / R;',
+      decl('ivec3', `v = ${vsub(vadd('cell', 'ORIGIN'), 'VOL_LO')}`),
+      "// (Outside the table, which only the city's level asks: no nearer than the table.)",
+      'if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, VOL_SIZE))) {',
+      ...ins([
+        decl('ivec3', `u = ${vsub(vadd('W', 'ORIGIN'), 'VOL_LO')}`),
+        js ? 'const q = [0, 1, 2].map((a) => max(-(float(u[a]) + f[a]), float(u[a] - VOL_SIZE[a]) + f[a]));' : 'vec3 q = max(-(vec3(u) + f), vec3(u - VOL_SIZE) + f);',
+        ...fade('gO = fo; gA = fa;'),
+        'return min(d, max(max(q.x, q.y), q.z));',
+      ]),
+      '}',
+      decl('ivec4', 'c = reliefRow(v.x + VOL_SIZE.x * (v.y + VOL_SIZE.y * v.z))'),
+      decl('int', 'first = lv == 0 ? c.x : c.z, count = (lv == 0 ? c.y : c.w) & 65535, n = lv == 0 ? (c.y >> 16) & 15 : 0'),
+      js ? 'const Y = [0, 1, 2].map((a) => float(W[a] - S * cell[a]) + f[a]);' : 'vec3 Y = vec3(W - S * cell) + f;',
+      "// (What the list leaves out: no nearer than the cell's sides; from a city",
+      '// cell with n of 2 or more, than n - 2 cells and the nearest of the cells',
+      '// around it with n - 1, or a cell more. See the head of relief.js.)',
+      decl('float', 'e = min(min(min(Y.x, float(S) - Y.x), min(Y.y, float(S) - Y.y)), min(Y.z, float(S) - Y.z))', true),
+      'if (n >= 2) {',
+      ...ins([
+        decl('float', 'h = 1.0', true),
+        `for (${js ? 'let' : 'uint'} mm = (uint(c.y) >> 20) | ((uint(c.w) >> 16) << 12); mm != 0u; mm &= mm - 1u) {`,
+        ...ins([
+          decl('int', `o = lowBit(mm), ox = o % 3 - 1, oy = ${js ? 'int(o / 3)' : 'o / 3'} % 3 - 1, oz = ${js ? 'int(o / 9)' : 'o / 9'} - 1`),
+          'h = min(h, max(max(ox == 0 ? 0.0 : ox > 0 ? 1.0 - Y.x : Y.x, oy == 0 ? 0.0 : oy > 0 ? 1.0 - Y.y : Y.y), oz == 0 ? 0.0 : oz > 0 ? 1.0 - Y.z : Y.z));',
+        ]),
+        '}',
+        'e = float(n - 2) + h;',
+      ]),
+      '}',
+      'd = min(d, max(e, 0.0));',
+      "// (The point in units one level finer, as the pieces' bounds are.)",
+      js ? 'const X = [0, 1, 2].map((a) => (float(W[a]) + f[a]) * float(R / S));' : 'vec3 X = (vec3(W) + f) * float(R / S);',
+      decl('float', 'bs = float(S) / float(R)'),
+      loop('j', 0, 'count'),
+      ...ins([
+        decl('int', 'pr = reliefInt(first + j)'),
+        decl('ivec4', 'h = reliefRow(pr), b = reliefRow(pr + 1)'),
+        "// (Past its bounds by d or more, it is no nearer; a ray, only from inside them.)",
+        decl('float', `far = max(max(${past('x')}, ${past('y')}), ${past('z')}) * bs`),
+        'if (far >= d && (!ray || far > 0.0)) continue;',
+        `${RAY} = false;`,
+        decl('float', 'gd = 1e9', true),
+        loop('pass', 0, 2),
+        ...ins([
+          'airPiece();',
+          loop('k', 0, 'h.y'),
+          ...ins([
+            decl('ivec4', 'p = reliefRow(reliefInt(h.x + k))'),
+            decl('ivec4', 'm = RDM[p.x & 255]'),
+            ...(js ? ['let w, r;'] : ['int w;', 'float r;']),
+            "// (Along an axis, the point's own; along a slant, as carried, and the",
+            "// cell's corner's.)",
+            'if (m.w < 3) {',
+            ...ins(['w = m.w == 0 ? W.x : m.w == 1 ? W.y : W.z;', 'r = m.w == 0 ? f.x : m.w == 1 ? f.y : f.z;']),
+            '} else {',
+            ...ins([...slant('m.w - 3', 'w').whole, `r = ${slant('m.w - 3', 'w').rest};`, 'w += m.x * base.x + m.y * base.y + m.z * base.z;']),
+            '}',
+            decl('int', 'sg = (p.x & 256) != 0 ? -1 : 1'),
+            decl('float', 'inv = RDI[p.x & 255]'),
+            decl('float', 's = (float(sg * w - p.y) + float(sg) * r) * inv', !js),
+            ...fade('int fc = (p.x >> 9) & 3;', 'if (fc == 1) s += fr * intBitsToFloat(p.z);', 'gA = fc != 0 ? fg * intBitsToFloat(p.z) : 0.0;'),
+            js ? 'airPlane(s, sg * m[0] * inv, sg * m[1] * inv, sg * m[2] * inv);' : 'airPlane(s, float(sg) * inv * vec3(m.xyz));',
+            `if (pass == 0 && ${D} >= d && (!ray || ${D}${faded(' + gO')} > 0.0)) break;`,
+          ]),
+          '}',
+          ...fade('gA = 0.0;'),
+          'if (pass == 0) {',
+          ...ins([
+            "// (Its distance no less than its bounds' (so that the bounds leaving it",
+            "// out leaves the distance as it is): in its air, its planes' alone.)",
+            `gd = max(${D}, far);`,
+            `if (!ray || gd${faded(' + gO')} > 0.0) break;`,
+            `${RAY} = true;`,
+          ]),
+          '} else {',
+          ...ins([`${RAY} = false;`, keep]),
+          '}',
+        ]),
+        '}',
+        'd = min(d, gd);',
+      ]),
+      '}',
+      ...fade('gO = fo; gA = fa;'),
+      'return d;',
+    ]),
+    '}',
+  ];
+  const text = lines.join('\n');
+  return js ? twin.unsigned(twin.arrays(text, ['c', 'v', 'q', 'Y', 'X', 'W', 'f', 'h', 'b', 'p', 'm', 'base', 'VOL_SIZE'])) : text;
 }

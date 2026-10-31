@@ -128,3 +128,80 @@ export function merge(a, b) {
   for (const [k, v] of Object.entries(b)) out[k] = merge(a[k], v);
   return out;
 }
+
+// A digest of what something is made from (text, numbers, typed arrays and
+// lists of them), as 16 hex digits: two 32-bit hashes, each of every byte.
+export function digest(parts) {
+  let a = 0x811c9dc5, b = 0x9e3779b9;
+  const word = (w) => {
+    a = Math.imul(a ^ w, 0x01000193);
+    b = Math.imul(b ^ w, 0x5bd1e995);
+    b ^= b >>> 13;
+  };
+  const add = (x) => {
+    // (Each part's length, or kind, first: so that no two lists of parts
+    // run together into the same words.)
+    if (typeof x === 'string') {
+      word(x.length + 0x7f4a);
+      for (let i = 0; i < x.length; i++) word(x.charCodeAt(i));
+    } else if (typeof x === 'number') add(String(x));
+    else if (ArrayBuffer.isView(x)) {
+      const u8 = new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+      word(u8.length);
+      for (let i = 0; i < u8.length; i++) word(u8[i]);
+    } else if (Array.isArray(x)) {
+      word(x.length + 0x5bd1);
+      x.forEach(add);
+    } else throw new Error(`digest: ${typeof x}`);
+  };
+  add(parts);
+  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
+}
+
+// What takes long to make, kept in the browser's store (IndexedDB) by a key
+// naming everything it is made from (see digest), and made afresh only where
+// none is kept: the store's, or make()'s. Values are what the store can keep
+// (typed arrays, plain objects). Without a store (in Node, or where it is
+// refused or fails), make()'s. The store keeps the last few made.
+const STORE = 'fw-made', KEEP = 8;
+export async function stored(key, make) {
+  // (No store where opening one throws, fails, is blocked, or does not
+  // answer within a few seconds; one that answers late is closed.)
+  const db = await new Promise((ok) => {
+    let q, done = false, timer = null;
+    const end = (x) => (done ? x?.close() : ((done = true), clearTimeout(timer), ok(x)));
+    try {
+      q = indexedDB.open(STORE, 1);
+    } catch {
+      return end(null);
+    }
+    timer = setTimeout(() => end(null), 3000);
+    q.onupgradeneeded = () => (q.result.createObjectStore('made'), q.result.createObjectStore('at'));
+    q.onsuccess = () => end(q.result);
+    q.onerror = q.onblocked = () => end(null);
+  });
+  if (!db) return make();
+  // (Requests in a transaction of their own over both stores: the last one's result, once done.)
+  const ask = (mode, f) =>
+    new Promise((ok, no) => {
+      const t = db.transaction(['made', 'at'], mode), q = f(t.objectStore('made'), t.objectStore('at'));
+      t.oncomplete = () => ok(q?.result);
+      t.onerror = t.onabort = () => no(t.error);
+    });
+  try {
+    const kept = await ask('readonly', (m) => m.get(key)).catch(() => undefined);
+    if (kept !== undefined) return kept;
+    const value = make();
+    await ask('readwrite', (m, at) => (m.put(value, key), at.put(Date.now(), key)))
+      .then(async () => {
+        // (The oldest let go, past the last few.)
+        const [keys, ats] = await Promise.all([ask('readonly', (m, at) => at.getAllKeys()), ask('readonly', (m, at) => at.getAll())]);
+        const old = keys.map((k, i) => [ats[i], k]).sort((x, y) => x[0] - y[0]).slice(0, Math.max(keys.length - KEEP, 0));
+        if (old.length) await ask('readwrite', (m, at) => old.forEach(([, k]) => (m.delete(k), at.delete(k))));
+      })
+      .catch(() => {});
+    return value;
+  } finally {
+    db.close();
+  }
+}
