@@ -47,9 +47,10 @@
 //   for each level as above;
 // - the lists, ints: each piece's row (a cell's list holds the pieces asked
 //   always: the physical ones, and the cover's joining the levels; each
-//   seam group's list, its cover pieces with that seam, see cover.js);
-// - per seam group a row: (its seam plane's row, its list's first int, its
-//   length, 0);
+//   seam group's list, its cover pieces with that seam, see cover.js),
+//   a cell's groups' lists after its own, in turn;
+// - per seam group a row: (its seam plane's direction | sign << 8 and K,
+//   as the plane's row has them, its list's length, 0);
 // - per piece two rows: (its first plane's int, how many, its level, its
 //   source) and its bounds, in finer units from the building's origin,
 //   +32768, low and high halves of x, y, z;
@@ -466,7 +467,8 @@ export function writeRows({ lists, rows, planeRows, size: vsz }) {
       data[4 * (at.GCELL0 + ci) + 2 * lv] = gi;
       data[4 * (at.GCELL0 + ci) + 2 * lv + 1] = gs.length;
       for (const [pi, items] of gs) {
-        data.set([at.PLANE0 + pi, li, items.length, 0], 4 * gi++);
+        if (planeRows[pi][0] >> 9) throw new Error('relief: a seam that fades');
+        data.set([planeRows[pi][0], planeRows[pi][1], items.length, 0], 4 * gi++);
         for (const i of items) data[li++] = at.PIECE0 + 2 * i;
       }
     }
@@ -593,7 +595,8 @@ export function listedCarve(js) {
       "// group's pieces are no nearer than their members, nor take a ray further",
       '// (see cover.js).',
       decl('ivec4', `g = reliefRow(${js ? 'VOL_SIZE[0] * VOL_SIZE[1] * VOL_SIZE[2]' : 'VOL_SIZE.x * VOL_SIZE.y * VOL_SIZE.z'} + v.x + VOL_SIZE.x * (v.y + VOL_SIZE.y * v.z))`),
-      decl('int', 'gi = lv == 0 ? g.x : g.z, gn = lv == 0 ? g.y : g.w, at = first, left = count', true),
+      "// (A cell's groups' lists follow its own, in turn: gl, the next group's.)",
+      decl('int', 'gi = lv == 0 ? g.x : g.z, gn = lv == 0 ? g.y : g.w, at = first, left = count, gl = first + count', true),
       'while (true) {',
       ...ins([
         'if (left == 0) {',
@@ -604,13 +607,17 @@ export function listedCarve(js) {
             decl('ivec4', 'gr = reliefRow(gi)'),
             'gi++;',
             'gn--;',
-            decl('ivec4', 'q = reliefRow(gr.x)'),
-            ...across({ p: 'q', m: 'mq', w: 'wq', r: 'rq', sg: 'sq', inv: 'iq', s: 'sd' }),
+            '// (Its seam plane is its row\'s first two ints, as a plane\'s row has them.)',
+            ...across({ p: 'gr', m: 'mq', w: 'wq', r: 'rq', sg: 'sq', inv: 'iq', s: 'sd' }),
             decl('float', `dt = float(sq) * iq * ${js ? '(mq[0] * PS.dx + mq[1] * PS.dy + mq[2] * PS.dz)' : 'dot(vec3(mq.xyz), gDir)'}`),
             "// (A ray in a member shrunk at the city's level, by O and growing by A",
             '// as it goes, leaves it so much sooner than at its seam.)',
             `if (abs(sd) <= -d || (ray && sd * dt < 0.0 && (abs(sd) - ${O}) / (abs(dt) + ${A}) <= ${REACH} * 1.0001 + 1e-4)) {`,
-            ...ins(['at = gr.y;', 'left = gr.z;', 'found = true;', 'break;']),
+            ...ins(['at = gl;', 'left = gr.z;', 'found = true;']),
+            '}',
+            'gl += gr.z;',
+            'if (found) {',
+            ...ins(['break;']),
             '}',
           ]),
           '}',

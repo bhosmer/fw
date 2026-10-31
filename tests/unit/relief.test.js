@@ -112,11 +112,13 @@ test('the rows say what the pieces and lists say', () => {
       // the group of each of its seams.)
       const read = [];
       for (let j = 0; j < count; j++) read.push(D[first + j]);
+      // (Its groups' lists after its own, in turn.)
+      let gf = first + count;
       for (let g = 0; g < gr[2 * lv + 1]; g++) {
-        const [plane, gf, gn] = row(gr[2 * lv] + g);
-        for (let j = 0; j < gn; j++) {
-          const pr = D[gf + j], i = (pr - L.at.PIECE0) / 2;
-          assert.ok(L.at.PLANE0 + L._built.rows[i].seams.find((pi) => L.at.PLANE0 + pi === plane) === plane, `a piece in the group of a plane not its seam`);
+        const [dir, K, gn] = row(gr[2 * lv] + g);
+        for (let j = 0; j < gn; j++, gf++) {
+          const pr = D[gf], i = (pr - L.at.PIECE0) / 2;
+          assert.ok(L._built.rows[i].seams.some((pi) => L._built.planeRows[pi][0] === dir && L._built.planeRows[pi][1] === K), `a piece in the group of a plane not its seam`);
           read.push(pr);
           grouped++;
         }
