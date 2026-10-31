@@ -375,7 +375,7 @@ const int STEPS = EXACT == 1 ? 96 : 160;
 // still where a straight line crosses a plane).
 // Sizes are as seen. An opening in a surface seen at a slant is foreshortened
 // across it by the cosine between the surface and the line of sight (a pit
-// in the ground far off is a wide, thin sliver), and what counts is its area
+// in a floor far off is a wide, thin sliver), and what counts is its area
 // on screen: so it goes by its size face on times lean(), the root of that
 // cosine. The surface is, for a ray that has met one, the one it met; while
 // marching, the one the ray is about to cross (its way out of the coarser
@@ -389,7 +389,7 @@ float lean(vec3 n, vec3 dir) { return sqrt(max(abs(dot(n, dir)), 1e-6)); }
 // relief would otherwise be left out until one was nearly upon it.)
 const float LEAN_MIN = 0.6;
 // A sun ray is tried only from at most this many fog lengths under the
-// ground, and gets at most this many steps to come out.
+// sky's plane, and gets at most this many steps to come out.
 const float SUN_DEPTH = 1.0;
 const int SUN_STEPS = 48;
 
@@ -477,8 +477,8 @@ float march(vec3 o, vec3 dir, float t0, float pix, float maxT, int most, bool se
         bn = uOuter.xyz;
       }
     }
-    // Above the ground there is nothing: a ray going up is gone, and one
-    // coming down has a clear run to the ground.
+    // Above the sky's plane there is nothing: a ray going up is gone, and one
+    // coming down has a clear run down to it.
     float high = v.y + uSkyH;
     if (high > 0.0) {
       if (dir.y >= 0.0) { open = true; break; }
@@ -614,7 +614,7 @@ vec3 beyond(vec3 rd, bool open) {
 // (Ceilings are coloured as floors.)
 vec3 surfaceColour(int slot, vec3 n) {
   float flatness = smoothstep(0.5, 0.9, abs(n.y));
-  return slot == -2 ? uGround
+  return slot == -2 ? uRoof
        : slot < 0 ? mix(uOuterWall, uOuterFloor, flatness)
                   : mix(uWall[slot], uFloor[slot], flatness);
 }
@@ -645,9 +645,9 @@ void main() {
   bool hit = false, open = false;
   vec3 n = -rd;
   // How far we see goes by the space we are in: out in the open, by how high
-  // we are (uFogLen). But a ray that goes down into a cavity in the ground is
-  // in that cavity from there on, and sees as far as it would from inside:
-  // by the cavity's size (that of the coarsest level whose air it is).
+  // we are (uFogLen). But a ray that goes down under the sky's plane is in
+  // the air under it from there on, and sees as far as it would from inside:
+  // by that air's size (that of the coarsest level whose air it is).
   float down = 1e30, fogIn = uFogLen, maxT = uMaxT;
   bool fogDown = false;
   if (uSkyH > 0.0 && rd.y < 0.0) {
@@ -661,8 +661,8 @@ void main() {
   // program grows steeply with how many there are (for the arcology, two
   // places take about 3 s, three about 11 s: see tests/unit/shader.test.js).
   // So everything that asks goes round one loop, in two phases. Phase 0:
-  // where the ray goes down into the ground near enough, whose air it is
-  // there (the fog); then the camera's ray. Phase 1, if that met a surface:
+  // where the ray goes down under the sky's plane near enough, whose air it
+  // is there (the fog); then the camera's ray. Phase 1, if that met a surface:
   // how open it is in front of the surface, at four points (ambient
   // occlusion), and what finer levels show on it (detail); then, if the sun
   // may reach it, the sun's ray.
@@ -825,10 +825,10 @@ void main() {
 #endif
     seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
     base = surfaceColour(slot, n);
-    // (The sun's ray is not tried from too far below the ground for any to
-    // come in: further than the space lets sunlight reach, and further than
-    // we see from here. Going by how far we see alone, where the space is
-    // open well under the ground, shadows came and went as that changed.)
+    // (The sun's ray is not tried from too far below the sky's plane for any
+    // to come in: further than the space lets sunlight reach, and further
+    // than we see from here. Going by how far we see alone, where the space
+    // is open well under the plane, shadows came and went as that changed.)
     float key = max(dot(n, uSunDir), 0.0), below = -(p.y + uSkyH);
     sunTried = uSun > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach);
     phases = 2;

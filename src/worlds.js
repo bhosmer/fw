@@ -80,7 +80,8 @@
 //   palette, sky, zenith, roof, fogK
 //                  its look: each level's colours (palette(level): { wall,
 //                  floor }), the haze, the sky's colour overhead, the colour
-//                  of the ground seen from above, and how far we see in the
+//                  of the sky's plane seen from above where nothing under it
+//                  is drawn, and how far we see in the
 //                  room we are in, in its cells
 //   room, openings, halfWall
 //                  for finding ways (see planner.js): a cell's room, if it

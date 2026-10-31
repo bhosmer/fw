@@ -29,10 +29,11 @@ export const SCHEME = {
   // (else they show as shadowed recesses).
   inlay: { is: 0, light: 'float' },
   // The haze, and the colour of the light from it; the sky overhead; the
-  // ground seen from above (the space's roof).
+  // sky's plane seen from above, where nothing is drawn under it (the space's
+  // roof).
   sky: { is: (space) => space.sky, light: 'vec3' },
   zenith: { is: (space) => space.zenith, light: 'vec3' },
-  ground: { is: (space) => space.roof, light: 'vec3' },
+  roof: { is: (space) => space.roof, light: 'vec3' },
   // Visibility, relative to the space's own.
   fog: { is: 1 },
   // level => { wall, floor }: the colours of each level, or none to keep
@@ -71,7 +72,7 @@ export const SCHEMES = [
     fog: 0.7,
     sky: [0.035, 0.045, 0.1],
     zenith: [0.01, 0.015, 0.05],
-    ground: hsv(0.62, 0.3, 0.1),
+    roof: hsv(0.62, 0.3, 0.1),
     disc: 0.5,
     clouds: 0,
     stars: 1,
@@ -90,7 +91,7 @@ export const SCHEMES = [
     ambient: 0.4,
     sky: [0.72, 0.78, 0.58],
     zenith: [0.08, 0.32, 0.33],
-    ground: hsv(0.08, 0.35, 0.6),
+    roof: hsv(0.08, 0.35, 0.6),
     disc: 0.6,
     clouds: 0,
     stone: turn([hsv(0.07, 0.42, 0.84), hsv(0.11, 0.22, 0.92), hsv(0.04, 0.48, 0.74), hsv(0.09, 0.3, 0.88)], 0.7),

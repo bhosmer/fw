@@ -69,7 +69,7 @@ export function flightSettings(set) {
 // or out in the open, SKY_LOOK times how high we are.
 const LOOK = 5;
 const SKY_LOOK = 2;
-const SKY_SEE = 150; // how far we see out in the open, in heights above the ground
+const SKY_SEE = 150; // how far we see out in the open, in heights above the sky's plane
 
 const TRAIL_MAX = 200000;
 const RAY_STEPS = 4; // the most of a ray's steps in one look ahead (see ahead)
@@ -114,7 +114,7 @@ export class Flight {
     this.airs = [];
     // Whether a sense is due before we move on (see setSpace and sense).
     this.due = false;
-    this.sky = -1e30; // how high we are above the ground, or what stands highest on it (level-F cells)
+    this.sky = -1e30; // how high we are above the sky's plane, or above what stands highest under it (level-F cells)
     this.clearance = 0;
     this.scale = 0.25; // smoothed clearance, level-F cells
     this.pace = 0.25; // how far a wish of 1 goes in a second (before speed): eased toward paced(the way open), level-F cells
@@ -177,8 +177,8 @@ export class Flight {
     return airAt(this.space, rec, v, ray);
   }
 
-  // How far we are above the ground: the one plane over which there is only
-  // sky (see the space's skyPlane). In level-F cells, negative below it.
+  // How far we are above the sky's plane: the one plane over which there is
+  // only sky (see the space's skyPlane). In level-F cells, negative below it.
   // Our height and the plane's are compared digit by digit from the coarsest
   // level at which we have ever been anywhere but the default, so that close
   // to the plane what is left is a small whole number plus our offset in the
@@ -203,8 +203,8 @@ export class Flight {
   // there, at least, nothing is in the way. It is whichever is more of two
   // figures, neither of which ever overstates: what the levels around us
   // say (built: see builtAt, where it is already known), and, over the
-  // ground, how high v is above it (or above what stands highest on it:
-  // see sky).
+  // sky's plane, how high v is above it (or above what stands highest under
+  // it: see sky).
   clearanceAt(v, built = this.builtAt(v)) {
     return Math.max(this.sky + v[1], built);
   }
@@ -246,8 +246,8 @@ export class Flight {
         open = t += c;
         continue;
       }
-      // (Over the ground plane, a ray going up is gone; coming down, it
-      // has a clear run to the ground. A level's ray, where it says how
+      // (Over the sky's plane, a ray going up is gone; coming down, it
+      // has a clear run down to it. A level's ray, where it says how
       // far it goes: no less than its distance.)
       const high = this.sky + v[1];
       let e = high > 0 ? (dir[1] >= 0 ? Infinity : high / -dir[1]) : -1, unit = 0;

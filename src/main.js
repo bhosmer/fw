@@ -127,7 +127,7 @@ function draw() {
   return made;
 }
 
-// Where we are, for the tour: our level, clearance, height above the ground
+// Where we are, for the tour: our level, clearance, height above the sky's plane
 // and the size of the space we are in (level-F cells).
 const whereNow = () => ({
   F: pos.F,

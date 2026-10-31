@@ -39,7 +39,7 @@ export function rayHolds(flight, r, v, dir, at = '') {
     t += Math.max(b, end * 1e-6);
   }
   // (Just past: a millionth of the way, or of the level's lattice unit,
-  // whichever is more; open above the ground, where the shader stops
+  // whichever is more; open above the sky's plane, where the shader stops
   // marching. A level that does not answer rays goes on as far as its
   // distance says.)
   const p = v.map((x, i) => x + dir[i] * (end + 1e-6 * Math.max(end, 1 / r.sig)));

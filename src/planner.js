@@ -151,7 +151,7 @@ export class Planner {
       if (r && i[0] >= this.M && i[0] < this.R - this.M && i[2] >= this.M && i[2] < this.R - this.M && i[1] >= this.M && i[1] < this.M + r.H) found = { k: j - 1, c: p };
       x = p;
     }
-    // Above the ground there is only sky.
+    // Above the sky's plane there is only sky.
     if (!found && f.sky + atMiddle(k, c)[1] > 0) return 'sky';
     return found;
   }

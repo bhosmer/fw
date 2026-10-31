@@ -37,7 +37,7 @@ export function trace(ctx, dir, steps = 60, finest = Infinity) {
 // from just past it. And, if given, through outer: a half-space of air
 // ({ normal, dist }, as the view's outer plane: see outerAir in view.js).
 // Over the sky's plane a ray going up is gone, and one coming down has a
-// clear run to the ground. No further than far; a level whose cells are less
+// clear run down to it. No further than far; a level whose cells are less
 // than a ten-millionth of the way gone is left out (past its numbers there,
 // and too small to matter). Returns how far the ray went (t), and whether it
 // met a surface there (hit). In level-F cells.

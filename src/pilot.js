@@ -64,7 +64,7 @@ export function awayFrom(flight) {
 }
 
 // Which way is out: toward the nearest air of a level coarser than the room
-// we are in, or under the ground, up to the sky. A direction, how far, in
+// we are in, or under the sky's plane, up to the sky. A direction, how far, in
 // level-F cells, as the crow flies (the way there may well wind), and
 // whether it is the sky; null out in the open.
 export function outward(flight) {
@@ -305,7 +305,7 @@ export class Pilot {
   // A new look (from Renderer.seen): a grid of distances in level-lookF cells,
   // -1 for nothing, taken with camera basis b and half-height tan, every
   // stride-th pixel of a canvas res pixels in size. F, scale (our clearance),
-  // sky (how high we are above the ground) and room (how big the space we
+  // sky (how high we are above the sky's plane) and room (how big the space we
   // are in is, if we are in one) are as of now, in level-F cells; out is
   // which way is out (see Flight.outward), going out.
   see(look, b, lookF, tan, res, stride, { F, scale, sky, room = Infinity, out = null }) {
@@ -391,10 +391,10 @@ export class Pilot {
         const b = Math.log(Math.max(e, 1e-30) / room);
         return straight && b < 0 ? Math.min(0, b + this.lnR) : b;
       };
-      // (Steep views are avoided, except diving down at the ground, or
+      // (Steep views are avoided, except diving down at the sky's plane, or
       // going straight the way out.)
       const pitch = Math.max(0, Math.abs(dy) - ((diving && sky > 0 && dy < 0) || outness > 0.7 ? 0.9 : 0.45)) * 3;
-      // Off into an empty sky is no tour. (But from under the ground, it
+      // Off into an empty sky is no tour. (But from under the sky's plane, it
       // is the way out.)
       const away = dist[m0] < 0 && dy > 0.15 && (diving || sky > 0) ? 2 : 0;
       const base = -1.2 * turn - pitch - away + jitter;
@@ -419,8 +419,8 @@ export class Pilot {
         aim = 0.85 * d;
         kind = 'surface';
       }
-      // Out over the ground, a way down into it is an opening too (seen
-      // nearly edge on, a pit is not much deeper than the ground beyond it).
+      // Out over the sky's plane, a way down under it is an opening too
+      // (seen nearly edge on, a pit is not much deeper than the plane beyond it).
       if (diving && sky > 0 && dy < 0) {
         const below = -(sky + dy * d);
         if (below > 0.3 * scale) {

@@ -154,7 +154,7 @@ export function makeView(flight, s) {
   const fogLen = flight.fog * scheme.fog, fogK = space.fogK * R * scheme.fog;
   const maxT = 4 * Math.max(flight.fog, fogLen);
   // (The furthest any ray goes (see main in shaders.js): maxT, or under the
-  // ground's plane as far as four fog lengths (fogDown) and four times how far
+  // sky's plane as far as four fog lengths (fogDown) and four times how far
   // one sees in the air the dive comes to; and each time it comes into bigger
   // air, as far again as four times how far one sees there (gWideFog), each
   // more than half as much again as the last. Of the levels drawn, none sees
