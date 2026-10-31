@@ -344,6 +344,10 @@ uniform vec4 uOuter;
 // further for being in their air (see gWideFog): as far as the flight says
 // (uFogLen, uMaxT), as when they were not drawn.
 uniform int uWide;
+// How far from the camera what is drawn holds (a room too coarse for the
+// numbers here, drawn zoomed about the corner of it we are near: see visible
+// in view.js); no ray goes further (1e30: as far as any goes).
+uniform float uValid;
 // How far the camera is above the plane over which there is only sky
 // (negative: below it).
 uniform float uSkyH;
@@ -511,7 +515,7 @@ ${ifOpen(`      // (The open level, faded fully, stays so: its open air as it is
         if (seen && i >= uWide && fog > 1.5 * gWideFog) {
           gWideFog = fog;
           gWideT = t0 + t;
-          maxT = max(maxT, t + 4.0 * fog);
+          maxT = min(max(maxT, t + 4.0 * fog), uValid);
         }
         // The shrinking changes pace where the level starts to fade and
         // where it is gone: go no further than that in one step.
@@ -766,12 +770,12 @@ void main() {
       gWideT = fogIn > uFogLen ? down : 1e30;
       gWideFog = fogIn;
       for (int i = 0; i < NLEV; i++) gSolid[i] = uDebug == 2 ? 0.0 : uNear[i];
-      o = vec3(0.0); dir = rd; t0 = 0.0; far = maxT; most = STEPS;
+      o = vec3(0.0); dir = rd; t0 = 0.0; far = min(maxT, uValid); most = STEPS;
     } else {
       ao = clamp(ao / 0.96, 0.0, 1.0);
       if (!sunTried) break;
       for (int i = 0; i < NLEV; i++) gSolid[i] = 0.0;
-      o = p + n * foot; dir = uSunDir; t0 = t; far = 1e30; most = SUN_STEPS;
+      o = p + n * foot; dir = uSunDir; t0 = t; far = max(uValid - t, 0.0); most = SUN_STEPS;
     }
     bool rh, ro;
     int rs = slot, rst = 0;
@@ -791,9 +795,9 @@ void main() {
         rst++;
         if (d < 0.5 * ft) { rh = true; break; }
         rt += d * 0.9;
-        if (rt > maxT) break;
+        if (rt > far) break;
       }
-      if (rt <= maxT) rh = true;
+      if (rt <= far) rh = true;
     } else rt = march(o, dir, t0, pix, far, most, false, rh, ro, rs, rn, rst);
 #endif
     if (ph == 1) {

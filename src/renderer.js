@@ -311,6 +311,7 @@ export class Renderer {
     gl.uniform3fv(p.u.uOuterWall, outer.wall);
     gl.uniform3fv(p.u.uOuterFloor, outer.floor);
     gl.uniform1i(p.u.uWide, view.wide ?? 0);
+    gl.uniform1f(p.u.uValid, Math.min(view.valid ?? Infinity, 1e30));
     gl.uniform1i(p.u.uDebug, view.debug | 0);
     gl.uniform1f(p.u.uStride, stride);
     gl.uniform2f(p.u.uJitter, 0, 0);

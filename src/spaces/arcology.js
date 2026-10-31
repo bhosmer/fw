@@ -3098,6 +3098,9 @@ ${CELL_GLSL.cell}
     // (The city's levels: the relief's surfaces are not all carried exactly
     // (ledger B49), nor yet are the openings' and the town's (B44).)
     nearOnly: [CITY, CITY + 1],
+    // (Only the city's levels are cut by the slants: finer, the halls are
+    // all axes and diagonals.)
+    slanted: (level) => level <= CITY + 1,
     entrances: { level: CITY + 1, list: ENTRANCES },
     // Nothing stands higher than the building (in level-0 cells).
     skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),

@@ -54,6 +54,8 @@
 //   slants         optionally, the whole-number normals of planes, other than
 //                  the axes and the diagonals, that the cell is cut by,
 //                  carried exactly across levels (see Position.levels)
+//   slanted        optionally, slanted(level): whether the slants cut that
+//                  level's cells (if not given, every level's)
 //   nearOnly       optionally, the levels whose surfaces hold only near the
 //                  level we work at: not all on planes carried exactly
 //                  across levels (see slants), so that far finer than the

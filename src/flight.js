@@ -17,11 +17,12 @@ export const DOWN = 3;
 // Beyond those, this many coarser levels are still asked whether we are in
 // their air. We can be: flying at a surface that never happens to open, we
 // come closer to it than any drawn level reaches, and it is still that
-// level's room we are in. Such a level is drawn as far up as the GPU's
-// numbers hold it (see visible in view.js), unless the space draws it only
-// near F (nearOnly: see worlds.js); otherwise its surface is, as a plane.
-// And held at such a surface, the room can end up further up than FAR: then
-// it is the room we know we are in (see room) that is still asked.
+// level's room we are in. Such a level is drawn as it is as far up as the
+// GPU's numbers hold it, and further up, zoomed about the corner of it we
+// are near (see visible in view.js); unless the space draws it only near F
+// (nearOnly: see worlds.js), and then its surface is, as a plane. And held
+// at such a surface, the room can end up further up than FAR: then it is the
+// room we know we are in (see room) that is still asked.
 const FAR = 60;
 // The furthest up from F that a level is asked anything, the room we are in
 // included: further, and how big a level is in level-F cells is more than a

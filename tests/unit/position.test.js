@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Position, DIAGONALS } from '../../src/position.js';
+import { Position, DIAGONALS, zoomed } from '../../src/position.js';
+import { Flight } from '../../src/flight.js';
+import { into } from './corner.js';
 import arcology from '../../src/spaces/arcology.js';
 import { rand } from './rand.js';
 
@@ -112,4 +114,56 @@ test('close to a diagonal plane, the offset along it keeps its precision', () =>
   const p = DIAGONALS.findIndex(([a, b]) => a === 0 && b === 1);
   assert.equal(rec.Lp[p], 6);
   assert.ok(Math.abs(rec.fp[p] / (0.5 * R ** -20) - 1) < 1e-9, `fp = ${rec.fp[p]}`);
+});
+
+// Close to a room's corner, edge or ceiling far coarser than F, the room's
+// level zoomed about where its planes near us meet is the level as it is:
+// the same distances and rays, in level-F cells, out to valid.
+test('a level zoomed about the corner of it we are near is as it is, out to where it holds', () => {
+  for (const to of ['corner', 'edge', 'ceiling'])
+    for (const gap of [26, 40, 80]) {
+      let got = null;
+      for (let seed = 1; !got && seed <= 12; seed++) got = into(new Flight(arcology), { seed, gap, to });
+      assert.ok(got, `no place ${gap} levels below a room's ${to}`);
+      const { flight, room } = got, rec = flight.airs.find((a) => a.rec.level === room).rec;
+      const z = zoomed(rec, arcology.slants, Math.pow(R, flight.pos.F - room - 24), 1e21, { slanted: arcology.slanted(room) });
+      assert.equal(z.valid, 1e21, `${to}, ${gap} up: it holds only ${z.valid}`);
+      const rnd = rand(3);
+      for (let i = 0; i < 200; i++) {
+        const d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], l = Math.hypot(...d), r = 0.9 * z.valid * Math.pow(10, -22 * rnd());
+        const v = d.map((x) => (x / l) * r), e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], el = Math.hypot(...e), dir = e.map((x) => x / el);
+        const a = { dir }, b = { dir };
+        const da = flight.airAt(rec, v, a) / rec.sig, db = flight.airAt(z.rec, v, b) / z.rec.sig;
+        assert.ok(Math.abs(da - db) <= 1e-12 * Math.max(Math.abs(da), 1e-9 * r), `${to}, ${gap} up, ${r} away: ${da} as it is, ${db} zoomed`);
+        assert.equal(a.reach >= 0, b.reach >= 0, `${to}, ${gap} up: in air one way and not the other`);
+        if (a.reach >= 0) {
+          const x = Math.min(a.reach / rec.sig, z.valid - r), y = Math.min(b.reach / z.rec.sig, z.valid - r);
+          assert.ok(Math.abs(x - y) <= 1e-12 * Math.max(x, 1e-9 * r), `${to}, ${gap} up: a ray goes ${x} as it is, ${y} zoomed`);
+        }
+      }
+    }
+});
+
+// Planes near us that do not meet where the others do: the zoom is about
+// where those others meet, and holds no further than the one that misses.
+test('a level zoomed holds no further than a plane near us that misses where the rest meet', () => {
+  // (By hand: at (0.001, 0.2, 0.3) lattice units, sig 1. The nearest
+  // planes, 3x + 5y = 1, x = 0 and z - y = 0, meet at (0, 0.2, 0.2); the next,
+  // x - y = 0 and x + y = 0 (0.14 away) and y = 0 (0.2), miss it. Of the
+  // first two alone, z - y = 0 misses where they meet nearest us.)
+  const at = [0.001, 0.2, 0.3], slants = [[3, 5, 0]];
+  const rec = { L: [0, 0, 0], f: at.slice(), sig: 1, Lp: [0, 0, 0], fp: [0, 0, 0], Lm: [0, 0, 0], fm: [0, 0, 0], Ls: [1], fs: [3 * at[0] + 5 * at[1] - 1] };
+  DIAGONALS.forEach(([a, b], p) => {
+    (rec.Lp[p] = Math.round(at[a] + at[b])), (rec.fp[p] = at[a] + at[b] - rec.Lp[p]);
+    (rec.Lm[p] = Math.round(at[a] - at[b])), (rec.fm[p] = at[a] - at[b] - rec.Lm[p]);
+  });
+  const z = zoomed(rec, slants, 1, 0.25);
+  // (Asking about the planes within a tenth: the first two meet in the line
+  // x = 0, y = 0.2, p0 on it nearest us, (0, 0.2, 0.3); the nearest plane that
+  // misses it is z - y = 0, 0.1 / root 2 off, less how far we are from p0,
+  // 0.001. Asking further, about z - y = 0 too, p0 is (0, 0.2, 0.2), 0.1 from
+  // us, and x - y = 0 0.2 / root 2 from it: it holds less far.)
+  assert.ok(Math.abs(z.valid - (0.1 / Math.SQRT2 - 0.001)) < 1e-6, `it holds ${z.valid}, not ${0.1 / Math.SQRT2 - 0.001}`);
+  // (Scaled by 1, it is the record as it was.)
+  assert.deepEqual([z.rec.f, z.rec.fs, z.rec.sig], [rec.f, rec.fs, rec.sig]);
 });

@@ -976,25 +976,125 @@ check('close to a coarse room\'s walls, the shader sees no further than the worl
   assert(found.every((x) => !x.none && !x.unseen && !x.moved), `not every place was found, seen and kept still: ${JSON.stringify(found)}`);
   const said = (x) => `${x.to} ${x.gap} levels up: ${x.past} of ${x.counted} past, ${x.nearer} of ${x.samples} nearer`;
   assert(found.every((x) => x.nearer <= 0.001 * x.samples), `the shader sees nearer than the world (${found.map(said).join('; ')})`);
-  for (const x of found.filter((x) => x.gap <= x.fit)) assert(x.past === 0, `the shader sees past surfaces the world has (${said(x)})`);
-  // (Further up than view.fit, the outer plane stands for the room still.)
-  const far = found.filter((x) => x.gap > x.fit);
-  known(far.every((x) => x.past === 0), `the shader sees past surfaces the world has (${far.map(said).join('; ')})`, 'ledger B45: coarser than view.fit, the outer plane stands for one wall of the room');
+  for (const x of found) assert(x.past === 0, `the shader sees past surfaces the world has (${said(x)})`);
+});
+
+// A room drawn zoomed is the room drawn as it is (zoomed further, or at all,
+// with view.fit fewer: see VIEW): at its corners 24 and 30 levels up, the
+// picture and the tour's look the same, but for single precision at the
+// zoom's other scale (measured: at most 19 pixels, by 5 of 255, at fit 14).
+check('a room drawn zoomed is the room drawn as it is', async () => {
+  const got = [];
+  for (const gap of [24, 30]) {
+    const shots = [];
+    for (const fit of [24, 18]) {
+      await load('start', 'alhambra', false, `view.fit=${fit}`);
+      shots.push(await page.eval(`(async () => {
+        const { into } = await import('/tests/unit/corner.js'), V = await import('/src/view.js');
+        let ok = null;
+        for (let seed = 1; !ok && seed <= 12; seed++) ok = into(fw.flight, { seed, gap: ${gap}, to: 'corner' });
+        if (!ok) return null;
+        fw.flight.yaw = 2.5;
+        fw.flight.pitch = 0.2;
+        const px = Array.from(__snap(320, 180));
+        const s = { w: 320, h: 180, lodH: 180, upscale: 1, snapping: true, debug: 0, reference: false, scheme: 2, side: 0, history: 'range', fit: ${fit} };
+        const { recs, view } = V.makeView(fw.flight, s);
+        fw.renderer.look(recs, view, 4);
+        let seen = null;
+        for (const until = performance.now() + 5000; !seen && performance.now() < until; ) { await new Promise((r) => setTimeout(r, 5)); seen = fw.renderer.seen(); }
+        return { px, dist: seen && Array.from(seen.dist), zoomed: recs.some((r) => r.level === ok.room && r.sig !== fw.flight.airs.find((a) => a.rec.level === ok.room).rec.sig) };
+      })()`));
+    }
+    const [a, b] = shots;
+    assert(a && b && a.dist && b.dist, `${gap} levels up: no place, or no look`);
+    let px = 0, step = 0, far = 0;
+    for (let i = 0; i < a.px.length; i += 4) {
+      const d = Math.max(...[0, 1, 2].map((c) => Math.abs(a.px[i + c] - b.px[i + c])));
+      if (d) px++;
+      step = Math.max(step, d);
+    }
+    a.dist.forEach((x, i) => { if ((x < 0) !== (b.dist[i] < 0) || (x >= 0 && Math.abs(x - b.dist[i]) > 1e-3 * x)) far++; });
+    got.push({ gap, zoomed: [a.zoomed, b.zoomed], px, step, far });
+  }
+  const said = JSON.stringify(got);
+  assert(got.every((x) => x.zoomed[1] && x.zoomed[0] === x.gap > 24), `not drawn as meant: ${said}`);
+  assert(got.every((x) => x.px <= 0.001 * 320 * 180 && x.step <= 8 && x.far === 0), `the room zoomed differs from the room as it is: ${said}`);
+});
+
+// No ray goes further than what is drawn holds (view.valid: see visible in
+// view.js), forced here nearer than it is: not the camera's, nor the older
+// way's (fw.reference), nor the sun's (which can only take light away).
+check('no ray goes further than what is drawn holds', async () => {
+  await load('start');
+  const got = await page.eval(`(async () => {
+    const V = await import('/src/view.js'), W = 320, H = 180, STRIDE = 4, orig = fw.renderer.setView;
+    // (Drawn holding only so far, or as it is (null); the older way or not. The tour's look draws the newer way: here, either.)
+    const holding = (valid, reference = false) => (fw.renderer.setView = function (recs, v, st) { return orig.call(this, recs, { ...v, ...(valid === null ? {} : { valid }), ...(reference ? { reference } : {}) }, st); });
+    const looked = async (reference, valid, stride = STRIDE) => {
+      fw.snap(W, H);
+      holding(valid, reference);
+      const s = { w: W, h: H, lodH: H, upscale: 1, snapping: true, debug: 0, reference: false, scheme: 0, side: 0, history: 'range' };
+      const { recs, view } = V.makeView(fw.flight, s);
+      fw.renderer.look(recs, view, stride);
+      let seen = null;
+      for (const until = performance.now() + 5000; !seen && performance.now() < until; ) {
+        await new Promise((r) => setTimeout(r, 5));
+        seen = fw.renderer.seen();
+      }
+      fw.renderer.setView = orig;
+      return seen && Array.from(seen.dist);
+    };
+    const out = {};
+    for (const reference of [false, true]) {
+      const all = await looked(reference, null), hit = all.filter((d) => d >= 0).sort((a, b) => a - b), cut = hit[Math.floor(hit.length / 2)];
+      const held = await looked(reference, cut);
+      out[reference ? 'older' : 'march'] = { cut, beyond: held.filter((d) => d > cut * 1.0001).length, samples: held.length };
+    }
+    // (The sun's rays: the picture with what is drawn holding just past what
+    // the camera sees, against it as it is, where the camera's rays went as
+    // far either way: there only light that comes from further can differ,
+    // and only by going.)
+    holding(null);
+    const a = fw.snap(W, H), da = await looked(false, null, 1);
+    const most = Math.max(...da.filter((d) => d >= 0));
+    holding(most * 1.01);
+    const b = fw.snap(W, H);
+    fw.renderer.setView = orig;
+    const db = await looked(false, most * 1.01, 1);
+    let brighter = 0, darker = 0, same = 0;
+    for (let k = 0; k < da.length; k++) {
+      if (da[k] < 0 || da[k] !== db[k]) continue;
+      same++;
+      const i = k * 4, la = a[i] + a[i + 1] + a[i + 2], lb = b[i] + b[i + 1] + b[i + 2];
+      if (lb > la + 3) brighter++;
+      else if (lb < la - 3) darker++;
+    }
+    out.sun = { brighter, darker, same };
+    return out;
+  })()`);
+  for (const k of ['march', 'older']) assert(got[k].beyond === 0, `${k}: ${got[k].beyond} of ${got[k].samples} samples beyond ${got[k].cut}`);
+  assert(got.sun.same > 1000, `too few pixels whose camera rays went as far either way: ${got.sun.same}`);
+  assert(got.sun.brighter === 0 && got.sun.darker > 0, `held short, the sun lights ${got.sun.brighter} pixels more and ${got.sun.darker} fewer, of ${got.sun.same} (fewer it must: else nothing held it)`);
 });
 
 // Where the outer plane is off, its colours are those of the level just
 // coarser than the first drawn: what a level that colours its surfaces as the
 // one coarser than it (gSkin, the shader's slot i - 1) takes when that one is
-// not drawn. Where it is on, its own level's.
+// not drawn. Where it is on (only for a room of the levels the space draws
+// only near F: nearOnly), its own level's: flying from a first visit straight
+// at a wall until the room we are in is such a level, out of those drawn.
 check('the colours before the first level drawn are the level just coarser\'s, or the outer plane\'s', async () => {
   const got = [];
   for (const [place, plane] of [['corner', false], [null, true]]) {
     await load(place ?? 'start');
     got.push(await page.eval(`(async () => {
       if (${plane}) {
-        const { into } = await import('/tests/unit/corner.js');
-        let ok = null;
-        for (let seed = 1; !ok && seed <= 12; seed++) ok = into(fw.flight, { seed, gap: 30, to: 'corner' });
+        const { elsewhere } = await import('/src/arrival.js'), { rand } = await import('/tests/unit/rand.js'), V = await import('/src/view.js');
+        const f = fw.flight, rnd = rand(102), s = { w: 160, h: 90, lodH: 90, upscale: 1, snapping: true, debug: 0, reference: false, scheme: 2, side: 0, history: 'range' };
+        elsewhere(f, rnd);
+        f.yaw += rnd() * 6.28;
+        f.pitch = (rnd() - 0.5) * 1.2;
+        for (let i = 0; i < 400 && !V.makeView(f, s).view.outer; i++) (f.step(0.1, f.basis().fwd.map((x) => x * 8)), f.sense());
       }
       fw.snap(160, 90);
       // (As the picture was drawn: in alhambra, the scheme the page was loaded with.)
