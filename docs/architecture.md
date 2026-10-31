@@ -19,7 +19,7 @@ The world answers, for a point at a level, its distance to that level's air, and
 - `src/place.js`: a place in a link (the URL's hash; it names no world): read and checked whole, written, and gone to.
 - `src/position.js`: where we are, as digits at every level; each level's record (`levels`).
 - `src/air.js`: asking the world what the shader asks of it, in JavaScript (`airAt`), and a gradient of such answers.
-- `src/view.js`: from the flight and how the view is shown: which levels to draw, the outer plane, the camera (how the screen maps to rays), the view as drawn (`makeView`) and its redraw key (`viewKey`).
+- `src/view.js`: from the flight and how the view is shown: which levels to draw (those the flight looks at as a rule, and coarser ones whose air is in sight, as far up as `view.fit`, but for those the space draws only near the level we work at, `nearOnly`), the outer plane (for such a level that cannot be drawn), the camera (how the screen maps to rays), the view as drawn (`makeView`) and its redraw key (`viewKey`).
 - `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing.
 
 ## Drawing

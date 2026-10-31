@@ -84,6 +84,7 @@ const showing = {
   scheme: loadScheme(),
   side: 0,
   history: world.settings.view.history, // (the side shown's view.history: set again at each flip)
+  fit: world.settings.view.fit, // (and its view.fit)
 };
 // When the scheme last changed, the worlds compared were last flipped, and
 // the link's place was found unreadable (and why): the legend names each for
@@ -211,6 +212,7 @@ function flip() {
   flight.setSpace(space);
   flight.settings = settings.flight;
   showing.history = settings.view.history;
+  showing.fit = settings.view.fit;
   lookAt = null;
   if (pilot.on) pilot.start(pos.F);
   said.world = performance.now();

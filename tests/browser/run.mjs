@@ -921,6 +921,94 @@ check('a great hall is seen through a doorway', async () => {
   assert(spread > 120, `the upper left of the view is nearly flat (spread ${spread}): lost in the haze`);
 });
 
+// Close to a room's walls, ceiling, edge or corner, its level more than UP
+// levels coarser than F (as tests/unit/corner.js finds such places): what the
+// shader sees, sparsely (the tour's look), against a ray in the world as the
+// JavaScript has it (rayThrough in debug.js). Counted only where the world's
+// ray meets a surface within one fog length and short of the furthest the
+// view sees: further off, both are lost in the haze, and at the very end a
+// ray stopped and one let on differ by nothing one could see. (Nearer than
+// the world, by half as much again, at most a thousandth of the samples: a
+// first bound, not yet measured, for levels too small to carve, left solid,
+// and rays that run out of steps.)
+const COARSE = [['corner', 13], ['ceiling', 13], ['corner', 30]];
+check('close to a coarse room\'s walls, the shader sees no further than the world', async () => {
+  const found = [];
+  for (const [to, gap] of COARSE) {
+    await load('start');
+    found.push(await page.eval(`(async () => {
+      const { into } = await import('/tests/unit/corner.js'), { rayThrough } = await import('/src/debug.js');
+      const V = await import('/src/view.js');
+      let got = null;
+      for (let seed = 1; !got && seed <= 12; seed++) got = into(fw.flight, { seed, gap: ${gap}, to: '${to}' });
+      if (!got) return { to: '${to}', gap: ${gap}, none: true };
+      const f = fw.flight, W = 480, H = 270, STRIDE = 6;
+      fw.snap(W, H);
+      const where = JSON.stringify([f.pos.F, f.pos.frac]);
+      const s = { w: W, h: H, lodH: H, upscale: 1, snapping: true, debug: 0, reference: false, scheme: 0, side: 0, history: 'range' };
+      const { recs, view } = V.makeView(f, s);
+      // (The world's rays first, from where the look is drawn.)
+      const { fwd, right, up } = V.camera(f), w = Math.ceil(W / STRIDE), h = Math.ceil(H / STRIDE), world = [];
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+        const x = (((i + 0.5) * STRIDE * 2 - W) / H) * V.FOV_TAN, y = (((j + 0.5) * STRIDE * 2 - H) / H) * V.FOV_TAN;
+        const d = fwd.map((q, a) => q + x * right[a] + y * up[a]), l = Math.hypot(...d);
+        world.push(rayThrough(f, d.map((q) => q / l), view.maxT));
+      }
+      fw.renderer.look(recs, view, STRIDE);
+      let seen = null;
+      for (const until = performance.now() + 5000; !seen && performance.now() < until; ) {
+        await new Promise((r) => setTimeout(r, 5));
+        seen = fw.renderer.seen();
+      }
+      if (!seen) return { to: '${to}', gap: ${gap}, unseen: true };
+      if (JSON.stringify([f.pos.F, f.pos.frac]) !== where || seen.w !== w || seen.h !== h) return { to: '${to}', gap: ${gap}, moved: true };
+      let counted = 0, past = 0, nearer = 0;
+      world.forEach((wr, k) => {
+        const gpu = seen.dist[k];
+        if (gpu >= 0 && gpu < (wr.hit ? wr.t : view.maxT) / 1.5) nearer++;
+        if (!wr.hit || wr.t > view.fogLen || wr.t > 0.99 * view.maxT) return;
+        counted++;
+        if (gpu < 0 || gpu > 1.5 * wr.t) past++;
+      });
+      return { to: '${to}', gap: ${gap}, F: f.pos.F, room: got.room, samples: world.length, counted, past, nearer, fit: V.FIT };
+    })()`));
+  }
+  assert(found.every((x) => !x.none && !x.unseen && !x.moved), `not every place was found, seen and kept still: ${JSON.stringify(found)}`);
+  const said = (x) => `${x.to} ${x.gap} levels up: ${x.past} of ${x.counted} past, ${x.nearer} of ${x.samples} nearer`;
+  assert(found.every((x) => x.nearer <= 0.001 * x.samples), `the shader sees nearer than the world (${found.map(said).join('; ')})`);
+  for (const x of found.filter((x) => x.gap <= x.fit)) assert(x.past === 0, `the shader sees past surfaces the world has (${said(x)})`);
+  // (Further up than view.fit, the outer plane stands for the room still.)
+  const far = found.filter((x) => x.gap > x.fit);
+  known(far.every((x) => x.past === 0), `the shader sees past surfaces the world has (${far.map(said).join('; ')})`, 'ledger B45: coarser than view.fit, the outer plane stands for one wall of the room');
+});
+
+// Where the outer plane is off, its colours are those of the level just
+// coarser than the first drawn: what a level that colours its surfaces as the
+// one coarser than it (gSkin, the shader's slot i - 1) takes when that one is
+// not drawn. Where it is on, its own level's.
+check('the colours before the first level drawn are the level just coarser\'s, or the outer plane\'s', async () => {
+  const got = [];
+  for (const [place, plane] of [['corner', false], [null, true]]) {
+    await load(place ?? 'start');
+    got.push(await page.eval(`(async () => {
+      if (${plane}) {
+        const { into } = await import('/tests/unit/corner.js');
+        let ok = null;
+        for (let seed = 1; !ok && seed <= 12; seed++) ok = into(fw.flight, { seed, gap: 30, to: 'corner' });
+      }
+      fw.snap(160, 90);
+      // (As the picture was drawn: in alhambra, the scheme the page was loaded with.)
+      const { SCHEMES } = await import('/src/schemes.js'), scheme = SCHEMES.findIndex((x) => x.name === 'alhambra'), sc = SCHEMES[scheme];
+      const V = await import('/src/view.js'), { recs, view } = V.makeView(fw.flight, { w: 160, h: 90, lodH: 90, upscale: 1, snapping: true, debug: 0, reference: false, scheme, side: 0, history: 'range' });
+      const gl = fw.renderer.gl, p = fw.renderer.setView(recs, view, 1), wall = Array.from(gl.getUniform(p.prog, p.u.uOuterWall));
+      const level = view.outer ? view.outer.level : recs[0].level - 1, want = (sc.stone?.(level) ?? fw.space.palette(level)).wall;
+      return { plane: !!view.outer, level, off: Math.max(...wall.map((x, a) => Math.abs(x - want[a]))) };
+    })()`));
+  }
+  assert(got[0].plane === false && got[1].plane === true, `the places are not as meant: ${JSON.stringify(got)}`);
+  assert(got.every((x) => x.off < 1e-6), `the colours are not the level's: ${JSON.stringify(got)}`);
+});
+
 check('rewinding retraces the way we came', async () => {
   await load('inside');
   const where = () => page.eval('JSON.stringify({ F: fw.pos.F, frac: fw.pos.frac, d: [...fw.pos.digits].sort() })');

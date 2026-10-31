@@ -261,7 +261,12 @@ test('a link sets how we fly, apart from the world', async () => {
   assert.throws(() => makeSettings(fromLink('?flight.speed=1e999').settings), /flight\.speed is a number more than 0, not Infinity/);
   // (How frames are drawn, too: view.history, a word.)
   assert.deepEqual(fromLink('?arcology&vs.view.history=depth').vs.settings, { view: { history: 'depth' } });
-  assert.deepEqual(makeSettings(fromLink('?view.history=depth').settings).view, { history: 'depth' });
+  assert.deepEqual(makeSettings(fromLink('?view.history=depth').settings).view, { history: 'depth', fit: 24 });
+  // (And view.fit, how many levels up a level is still drawn as it is: a whole number, more than UP, at most FIT.)
+  assert.equal(makeSettings(fromLink('?view.fit=14').settings).view.fit, 14);
+  assert.deepEqual(fromLink('?arcology&vs.view.fit=24').vs.settings, { view: { fit: 24 } });
+  for (const fit of [12, 25, 14.5]) assert.throws(() => makeSettings({ view: { fit } }), /view\.fit is a whole number of levels more than 12 and at most 24/, String(fit));
+  assert.throws(() => makeSettings(fromLink('?view.fit=far').settings), /view\.fit is a number, not "far"/);
   assert.equal(makeSettings(undefined).view.history, 'range');
   assert.throws(() => makeSettings({ view: { history: 'fog' } }), /view\.history is depth or range, not fog/);
   assert.throws(() => makeSettings({ view: { nope: 1 } }), /there is no view\.nope/);

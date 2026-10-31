@@ -302,12 +302,15 @@ export class Renderer {
       if (l.type === 'float') gl.uniform1f(p.u[l.uniform], v);
       else gl.uniform3fv(p.u[l.uniform], v);
     }
-    // (The outer plane, if any, and its colours; with none, off, and no
-    // colours left from a frame before.)
-    const outer = view.outer ? colours(view.outer.level) : { wall: [0, 0, 0], floor: [0, 0, 0] };
+    // (The outer plane, if any, and its colours; with none, off, and the
+    // colours of the level just coarser than the first drawn, which a level
+    // that colours its surfaces as the one coarser than it (gSkin) takes when
+    // that level is not drawn.)
+    const outer = view.outer ? colours(view.outer.level) : recs.length ? colours(recs[0].level - 1) : { wall: [0, 0, 0], floor: [0, 0, 0] };
     gl.uniform4f(p.u.uOuter, ...(view.outer ? [...view.outer.normal, view.outer.dist] : [0, 0, 0, -1]));
     gl.uniform3fv(p.u.uOuterWall, outer.wall);
     gl.uniform3fv(p.u.uOuterFloor, outer.floor);
+    gl.uniform1i(p.u.uWide, view.wide ?? 0);
     gl.uniform1i(p.u.uDebug, view.debug | 0);
     gl.uniform1f(p.u.uStride, stride);
     gl.uniform2f(p.u.uJitter, 0, 0);

@@ -1,13 +1,22 @@
 // What the renderer is to draw, decided from where the flight is and how the
-// view is shown: which levels, the outer plane (see outerAir), the camera,
-// the view as drawn (makeView) and when it would be drawn differently
-// (viewKey). The flight knows where we are and which way we face; this,
-// what of it to show.
+// view is shown: which levels (see visible), the outer plane (see outerAir),
+// the camera, the view as drawn (makeView) and when it would be drawn
+// differently (viewKey). The flight knows where we are and which way we
+// face; this, what of it to show.
 import { UP } from './flight.js';
 import { gradient } from './air.js';
 import { SLACK } from './shaders.js';
 import { SCHEMES } from './schemes.js';
 import { define, frozen } from './util.js';
+
+// The most levels coarser than the one we work at that a level can be and
+// still be drawn as it is: in the shader's single precision, a level's
+// lattice units per level-F cell (sig, R^(level + 1 - F)) and its cells in
+// level-F cells (R / sig) stay numbers, as do the sizes the march works out
+// from them, with two levels to spare. (Measured: such a level agrees with
+// the JavaScript, in level-F cells, as far as 26 levels up; at 27 it does
+// not, and further up sig is no number at all. Ledger B45.)
+export const FIT = 24;
 
 // How frames are drawn, as a link may set it (?view.history=depth: see
 // fromLink in worlds.js), at its defaults:
@@ -17,11 +26,17 @@ import { define, frozen } from './util.js';
 //            a distance among the samples around it, or the sky where one of
 //            them did (steadier far detail in motion, ledger B25; Basil
 //            chose it, 2026-10-30: depth is how frames were drawn before)
-export const VIEW = frozen({ history: 'range' });
+//   fit      how many levels coarser than the one we work at a level may be
+//            and still be drawn as it is (see visible): FIT, the most there
+//            are numbers for; fewer only to see that the picture is the same
+//            however coarse levels are drawn (once coarser levels are drawn
+//            zoomed: ledger B45, step 3)
+export const VIEW = frozen({ history: 'range', fit: FIT });
 // Settings for the view, from VIEW with changes, checked.
 export function viewSettings(set) {
   const s = define(VIEW, set, 'view.');
   if (!['depth', 'range'].includes(s.history)) throw new Error(`definition: view.history is depth or range, not ${s.history}`);
+  if (!(Number.isInteger(s.fit) && s.fit > UP && s.fit <= FIT)) throw new Error(`definition: view.fit is a whole number of levels more than ${UP} and at most ${FIT}, not ${s.fit}`);
   return s;
 }
 
@@ -47,45 +62,63 @@ export function camera(flight) {
 // away its nearest air is (near); and all the levels around us, drawn or
 // not, each with its air distance here (rec, air). As the flight last sensed
 // them, where we are (see Flight.airs). A level with no air in sight is
-// solid as far as this frame is concerned.
-export function visible(flight, maxT, n) {
-  const { pos } = flight;
+// solid as far as this frame is concerned. The levels drawn are those the
+// flight looks at as a rule (UP coarser than F and finer), and coarser ones
+// too, up to fit (see VIEW), where their air is in sight: close to a wall
+// that has not opened for many levels, the room it is a wall of. But not
+// those the space draws only near F (nearOnly: see worlds.js). Where the
+// room we are in is a level not drawn, the outer plane stands in for it (see
+// outerAir).
+export function visible(flight, maxT, n, fit = FIT) {
+  const { pos, space } = flight;
   const all = flight.airs;
+  const drawn = (level) => level >= pos.F - UP || (level >= pos.F - fit && !space.nearOnly?.includes(level));
   // (Each its own record, near and all: the flight's are left as they are.)
-  let recs = all.filter(({ rec }) => rec.level >= pos.F - UP).map(({ rec, air }) => ({ ...rec, near: Math.max(0, (air - SLACK) / rec.sig) }));
+  let recs = all.filter(({ rec }) => drawn(rec.level)).map(({ rec, air }) => ({ ...rec, near: Math.max(0, (air - SLACK) / rec.sig) }));
   recs = recs.filter((r) => r.near < maxT);
   if (recs.length > n) recs = mostVisible(flight, recs, n);
   return { recs, all };
 }
 
 // More levels have air in sight than can be drawn. In order, keep: what is
-// right in front of us; the space we are in and the two levels that give its
-// far walls their facade and texture; the spaces outside it; then the rest.
+// right in front of us; the space we are in (within: the coarsest level whose
+// air we are in) and the two levels that give its far walls their facade
+// and texture (of those looked at as a rule: a room further up than that,
+// its walls those levels and coarser, is a room we are pressed close to the
+// walls of, and they its texture); the spaces outside it; then the rest; and
+// last of all, a level coarser than those looked at as a rule (UP), which is
+// drawn only if there is room left (unless it is the space we are in).
 function mostVisible(flight, recs, n) {
   const levels = recs.map((r) => r.level);
   const within = (flight.sensed.find((s) => s.air < 0) ?? flight.sensed[0]).level;
+  const first = levels.filter((l) => l >= flight.pos.F - UP || l === within);
   const order = [
-    ...levels.filter((l) => l >= flight.pos.F - 1).reverse(),
-    within, within + 1, within + 2,
-    ...levels.filter((l) => l < within).reverse(),
-    ...levels.slice().reverse(),
+    ...first.filter((l) => l >= flight.pos.F - 1).reverse(),
+    within, ...[within + 1, within + 2].filter((l) => first.includes(l)),
+    ...first.filter((l) => l < within).reverse(),
+    ...first.slice().reverse(),
+    ...levels.filter((l) => !first.includes(l)).reverse(),
   ];
   const keep = new Set();
   for (const l of order) if (keep.size < n && levels.includes(l)) keep.add(l);
   return recs.filter((r) => keep.has(r.level));
 }
 
-// The air of a level too coarse to draw, as the shader is to see it: the
-// plane of its nearest surface. all: the levels around us, each with its
-// air here (see visible).
-export function outerAir(flight, all) {
+// The air of a level coarser than those looked at as a rule (UP) whose air we
+// are in, as the shader is to see it where that level is not drawn: the
+// plane of its nearest surface. Of such levels, the one that gives us the
+// most room; if it is drawn (one of recs), none. A stand-in that keeps one
+// wall of a room and loses the rest, left only where the level cannot be
+// drawn (see visible). all and recs: the levels around us, each with its air
+// here, and those drawn (see visible).
+export function outerAir(flight, all, recs) {
   let best = null;
   for (const { rec: r, air } of all) {
     if (r.level >= flight.pos.F - UP) break;
     const dist = -air / r.sig;
     if (dist > 0 && (!best || dist > best.dist)) best = { r, dist };
   }
-  if (!best) return null;
+  if (!best || recs.some((r) => r.level === best.r.level)) return null;
   const { r, dist } = best;
   const g = gradient((v) => -flight.airAt(r, v), 0.25 * dist);
   const len = Math.hypot(...g);
@@ -99,13 +132,13 @@ export function outerAir(flight, all) {
 // snapping (drawn at that fraction of the pixels, or, snapping, all of them
 // and without antialiasing over time); debug and reference (see fw in
 // main.js); scheme, an index into SCHEMES; side, which of two worlds
-// compared is shown (the flight is in it); history, the view.history setting
-// (see VIEW).
+// compared is shown (the flight is in it); history and fit, the view
+// settings (see VIEW: fit FIT if not given).
 export function makeView(flight, s) {
-  const { pos, space, R } = flight, scheme = SCHEMES[s.scheme];
+  const { pos, space, R } = flight, scheme = SCHEMES[s.scheme], fit = s.fit ?? FIT;
   const fogLen = flight.fog * scheme.fog;
   const maxT = 4 * Math.max(flight.fog, fogLen);
-  const { recs, all } = visible(flight, maxT, N_VIEW);
+  const { recs, all } = visible(flight, maxT, N_VIEW, fit);
   const { fwd, right, up } = camera(flight);
   const view = {
     cam: [...right, ...up, -fwd[0], -fwd[1], -fwd[2]],
@@ -123,7 +156,12 @@ export function makeView(flight, s) {
     upscale: s.snapping ? 1 : s.upscale,
     scheme,
     history: s.history,
-    outer: outerAir(flight, all),
+    outer: outerAir(flight, all, recs),
+    // (How many of the levels drawn, the first, are coarser than those looked
+    // at as a rule (UP): one does not see any further for being in their air,
+    // but as far as the flight says, as when they were not drawn (see uWide
+    // in shaders.js).)
+    wide: recs.filter((r) => r.level < pos.F - UP).length,
     sky: flight.skyHeight(),
     // (Deep down R^F is Infinity, and none times that no number at all.)
     sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
@@ -141,5 +179,5 @@ export function makeView(flight, s) {
 export function viewKey(flight, s) {
   const { pos } = flight;
   const own = [...pos.digits].filter(([j, d]) => d.some((x, a) => x !== pos.defaultDigit(j)[a])).sort((a, b) => a[0] - b[0]);
-  return [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), s.w, s.h, s.lodH, s.upscale, s.debug, s.reference, s.scheme, s.side, s.history, own].join();
+  return [pos.F, pos.frac, flight.yaw, flight.pitch, flight.scale.toPrecision(3), flight.fog.toPrecision(3), s.w, s.h, s.lodH, s.upscale, s.debug, s.reference, s.scheme, s.side, s.history, s.fit, own].join();
 }

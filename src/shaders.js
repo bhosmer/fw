@@ -332,11 +332,18 @@ uniform float uScale;      // our clearance, smoothed
 uniform float uFogLen;
 uniform float uMaxT;
 uniform float uFogK;       // how far we see inside a level's air, over its uSig
-// The air we are in may belong to a level too coarse to draw (we are very
-// close to one of its surfaces, which has not opened for many levels). Then
-// this stands in for it: the surface as a plane, air on the side its normal
-// (xyz) points to, the camera w from it. Off when w < 0.
+// The air we are in may belong to a level that is not drawn (we are very
+// close to one of its surfaces, which has not opened for many levels, and
+// the level is too coarse for the numbers here, or one the space draws only
+// near the level we work at: see outerAir in view.js). Then this stands in
+// for it: the surface as a plane, air on the side its normal (xyz) points to,
+// the camera w from it. Off when w < 0.
 uniform vec4 uOuter;
+// The levels drawn that are coarser than those the flight looks at as a rule
+// (see visible in view.js) come first, this many of them. One does not see
+// further for being in their air (see gWideFog): as far as the flight says
+// (uFogLen, uMaxT), as when they were not drawn.
+uniform int uWide;
 // How far the camera is above the plane over which there is only sky
 // (negative: below it).
 uniform float uSkyH;
@@ -501,7 +508,7 @@ ${ifOpen(`      // (The open level, faded fully, stays so: its open air as it is
       float a = levelRay(i, v, reach, nn);
       if (reach >= 0.0) {
         float fog = uFogK / uSig[i];
-        if (seen && fog > 1.5 * gWideFog) {
+        if (seen && i >= uWide && fog > 1.5 * gWideFog) {
           gWideFog = fog;
           gWideT = t0 + t;
           maxT = max(maxT, t + 4.0 * fog);
@@ -686,8 +693,11 @@ void main() {
         float o = 0.0, sc = 0.0, wgt = 0.0, hole = 0.0, sharp = 0.0;
         vec3 ink = vec3(0.0);
         if (q == ASK_FOG) {
-          // (Not as far as levels too small to see from here, as with drawing.)
+          // (Not as far as levels too small to see from here, as with drawing;
+          // nor those one does not see further for being in the air of: see
+          // uWide.)
           if (cell < LOD_LO * down * pix${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;
+          ask = i >= uWide;
         } else if (occlusion) {
           if (along < gSolid[i]) continue;   // nothing but solid at this level yet
           if (m > MAX_IN * cell${ifOpen(' && uLevel[i] != OPEN_AIR')}) break;      // already in bigger air than this level has

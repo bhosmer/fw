@@ -3095,6 +3095,9 @@ ${CELL_GLSL.cell}
     // Finer than the city, it is halls, whose ways the tour can plan (and
     // from the plaza, the ways in are ENTRANCES).
     planned: (level) => level > CITY,
+    // (The city's levels: the relief's surfaces are not all carried exactly
+    // (ledger B49), nor yet are the openings' and the town's (B44).)
+    nearOnly: [CITY, CITY + 1],
     entrances: { level: CITY + 1, list: ENTRANCES },
     // Nothing stands higher than the building (in level-0 cells).
     skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),

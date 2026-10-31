@@ -54,6 +54,13 @@
 //   slants         optionally, the whole-number normals of planes, other than
 //                  the axes and the diagonals, that the cell is cut by,
 //                  carried exactly across levels (see Position.levels)
+//   nearOnly       optionally, the levels whose surfaces hold only near the
+//                  level we work at: not all on planes carried exactly
+//                  across levels (see slants), so that far finer than the
+//                  level itself they are not where they are. Coarser than
+//                  the levels looked at as a rule, such a level is not drawn
+//                  (see visible in view.js); where it is the room we are in,
+//                  one plane stands in for it (see outerAir)
 //   ancestorDigit  where a cell sits inside its parent when nothing says
 //                  otherwise (must be somewhere solid in the parent)
 //   start          where in its level-0 cell a visit starts (see elsewhere in
