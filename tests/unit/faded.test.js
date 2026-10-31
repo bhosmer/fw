@@ -92,9 +92,7 @@ for (const fades of [true, false]) {
 
 // In the city's pockets round the buildings' skin (every way, and toward the
 // middle), by the solids without relief (toward them), and along the rays
-// the pockets take that those solids stop (see clippedRays). (The pockets'
-// faded rays go too far, ledger B43, by less than these 31 points find:
-// the fading oracle sees it, in relief.test.js.)
+// the pockets take that those solids stop (see clippedRays).
 test("what the city's pockets say of a faded ray holds, by the solids without relief too", () => {
   const rnd = rand(29), { lo, size, kind, at: cellAt } = VOLUME, middle = lo.map((x, a) => x + size[a] / 2);
   const ask = cityAsk(new Flight(arcology), arcology), count = { pockets: 0, bare: 0, clipped: 0 };

@@ -276,10 +276,14 @@ test('a room not drawn keeps its plane', () => {
 // precision can tell, not more. At every level past fit, the room is drawn,
 // zoomed, holding out to where any ray goes, and we are in its air.
 test('pressed into a coarse room\'s wall, the room is drawn zoomed all the way down', () => {
+  // (Places from enough seeds to meet 40 states, and no more than 120: where
+  // inside lands, and so which of them reach a room's edge, changes with
+  // the world. Those whose edge is not reached in 200 steps, far off, are
+  // passed over.)
   let states = 0;
   for (const g0 of [6, 8, 10, 12])
-    for (let seed = 1; seed <= 6; seed++) {
-      const got = into(new Flight(arcology), { seed, gap: g0, to: 'edge' });
+    for (let seed = 1; seed <= 24 && states < 120; seed++) {
+      const got = into(new Flight(arcology), { seed, gap: g0, to: 'edge', steps: 200 });
       if (!got) continue;
       const { flight, room } = got, sx = seed % 2 ? 1 : -1;
       let last = 0;

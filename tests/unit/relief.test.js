@@ -10,7 +10,6 @@ import { _V2, VOLUME } from '../../src/spaces/arcology.js';
 import { writeRows } from '../../src/spaces/relief.js';
 import arcology from '../../src/spaces/arcology.js';
 import { unionExit, reliefFade, fadeAt } from './fade.js';
-import { known } from './known.js';
 import { rand } from './rand.js';
 import { reliefSamples } from './relief-samples.js';
 
@@ -26,8 +25,10 @@ const dist = (p, X) => { let d = -Infinity; for (const q of p.planes) d = Math.m
 // (The table's cell of X, finer units, at either level: the city's level's
 // table cells are its lattice's units, R finer units.)
 const cellOf = (X) => cellIndex(X.map((x) => Math.floor(x / R)));
-// The listed relief at X (finer units) at level lv: the least over its cell's list.
-const listedAt = (lv, X) => { const ci = cellOf(X); let d = Infinity; if (ci >= 0) for (const i of L._lists[lv][ci]) d = Math.min(d, dist(pieces[i], X)); return d; };
+// The listed relief at X (finer units) at level lv: the least over its
+// cell's list; own: the level's own pieces alone (not the cover's joining
+// the levels, which one level finer hold the city's air).
+const listedAt = (lv, X, own = false) => { const ci = cellOf(X); let d = Infinity; if (ci >= 0) for (const i of L._lists[lv][ci]) if (!own || !pieces[i].cross) d = Math.min(d, dist(pieces[i], X)); return d; };
 // The JavaScript's carve at X (finer units) at level lv, as the city's cell
 // or the table's skin cell asks it (in the level's units); one level finer,
 // only in a skin cell. (And for a ray ({ dir }), how far it goes in it; from
@@ -60,9 +61,9 @@ test('the listed relief is the air its decisions cut, but where it is declared t
   assert.equal(AIR.n, SAMPLES.length);
   const out = [0, 1].map(() => ({ pts: 0, air: 0, declared: 0, differ: 0 })), ex = [];
   SAMPLES.forEach(({ lv, X }, i) => {
-    const was = airAt(i), b = listedAt(lv, X), c = carveAt(lv, X);
+    const was = airAt(i), b = listedAt(lv, X, true), all = listedAt(lv, X), c = carveAt(lv, X);
     // (Both copies alike: the pieces' own distances in air, and air where they are.)
-    if (b < 0 || c < 0) assert.ok(Math.abs(b - (lv === 0 ? c * R : c)) < 1e-6 * R, `level ${lv} at ${X}: listed ${b}, carve ${c}`);
+    if (all < 0 || c < 0) assert.ok(Math.abs(all - (lv === 0 ? c * R : c)) < 1e-6 * R, `level ${lv} at ${X}: listed ${all}, carve ${c}`);
     if (was === 0 || Math.abs(b) < 1e-9) return;
     const o = out[lv];
     o.pts++;
@@ -97,21 +98,35 @@ test("every piece's air is air by its cell's list, and by carve, wherever the pi
 });
 
 test('the rows say what the pieces and lists say', () => {
-  // (Read as the shader reads them: from a cell's row, its list's ints, each
+  // (Read as the shader reads them: from a cell's row, its list's ints and
+  // its seam groups' (each its seam plane's row and its pieces' ints), each
   // its piece's rows (its bounds, and its planes' ints), each its plane's row.)
   const D = L.data, row = (i) => D.subarray(4 * i, 4 * i + 4);
-  let n = 0, listedCells = 0;
+  let n = 0, listedCells = 0, grouped = 0;
   SAMPLES.forEach(({ X }, s) => {
     if (s & 1) return;
-    const ci = cellOf(X), cr = row(ci);
+    const ci = cellOf(X), cr = row(ci), gr = row(L.at.GCELL0 + ci);
     for (const lv of [0, 1]) {
       const first = cr[2 * lv], count = cr[2 * lv + 1] & 65535;
-      assert.equal(count, L._lists[lv][ci].length);
-      if (lv === 0) assert.ok((((cr[1] >> 16) & 15) === 0) === count > 0);
+      // (Every piece of the cell's list: in its list if asked always, else in
+      // the group of each of its seams.)
+      const read = [];
+      for (let j = 0; j < count; j++) read.push(D[first + j]);
+      for (let g = 0; g < gr[2 * lv + 1]; g++) {
+        const [plane, gf, gn] = row(gr[2 * lv] + g);
+        for (let j = 0; j < gn; j++) {
+          const pr = D[gf + j], i = (pr - L.at.PIECE0) / 2;
+          assert.ok(L.at.PLANE0 + L._built.rows[i].seams.find((pi) => L.at.PLANE0 + pi === plane) === plane, `a piece in the group of a plane not its seam`);
+          read.push(pr);
+          grouped++;
+        }
+      }
+      const listed = new Set(L._lists[lv][ci].map((i) => L.at.PIECE0 + 2 * i));
+      assert.ok(read.every((pr) => listed.has(pr)) && [...listed].every((pr) => read.includes(pr)), `level ${lv}, cell ${ci}: what the rows list is the list`);
+      if (lv === 0) assert.ok((((cr[1] >> 16) & 15) === 0) === listed.size > 0);
       let d = Infinity;
-      for (let j = 0; j < count; j++) {
-        const pr = D[first + j], h = row(pr), b = row(pr + 1), p = pieces[L._lists[lv][ci][j]];
-        assert.equal(pr, L.at.PIECE0 + 2 * L._lists[lv][ci][j]);
+      for (const pr of read) {
+        const h = row(pr), b = row(pr + 1), p = pieces[(pr - L.at.PIECE0) / 2];
         assert.ok(h[1] === p.planes.length && h[2] === p.lv && h[3] === p.src);
         // (Its bounds hold it.)
         for (let a = 0; a < 3; a++) assert.ok((b[a] & 65535) - 32768 <= p.bb[a][0] && ((b[a] >>> 16) & 65535) - 32768 >= p.bb[a][1]);
@@ -126,10 +141,10 @@ test('the rows say what the pieces and lists say', () => {
         n++;
       }
       assert.equal(d, listedAt(lv, X));
-      listedCells += count > 0;
+      listedCells += read.length > 0;
     }
   });
-  assert.ok(n > 10000 && listedCells > 1000, `${n} pieces read, ${listedCells} listed cells`);
+  assert.ok(n > 10000 && listedCells > 1000 && grouped > 1000, `${n} pieces read, ${grouped} of them in seam groups, ${listedCells} listed cells`);
 });
 
 test("the city's relief never overstates what its lists leave out, nor changes faster than the point moves", () => {
@@ -160,11 +175,14 @@ test("the city's relief never overstates what its lists leave out, nor changes f
   assert.ok(far > 200 && worst > 0.5, `${far} points more than a cell from a list's air, the steepest ${worst}`);
 });
 
-test('the listed relief is built within its time and room', () => {
-  // (Not a benchmark: a guard against the builder growing well past its
-  // plan, .claude/design/relief-cover.md: about 0.4 s and 2 MB here.)
-  assert.ok(L.data.byteLength < 4e6, `${L.data.byteLength} bytes`);
-  assert.ok(L.stats.ms < 3000, `${L.stats.ms} ms`);
+test('the listed relief is built within its time and room, its cover all but a few connectors', () => {
+  // (Not a benchmark: a guard against the builder growing well past what
+  // it is, with its cover: about 2 s and 5 MB here.)
+  assert.ok(L.data.byteLength < 8e6, `${L.data.byteLength} bytes`);
+  assert.ok(L.stats.ms < 6000, `${L.stats.ms} ms`);
+  // (The connectors the cover could not make (see cover.js), no more than
+  // now; the coverage check finds no seam they leave.)
+  assert.ok(L.stats.coverFailed <= 29, `${L.stats.coverFailed} connectors not made`);
 });
 
 // The same air divided otherwise (.claude/design/test-oracles.md, C8): the
@@ -212,7 +230,7 @@ const throughRays = (() => {
 // only: at that level alone, faded as the march would fade it, each ray at
 // one of FADES.)
 function sameRays(carve, only = null) {
-  const out = { rays: 0, inAir: 0, onSurface: 0, moved: [], turned: 0, capped: 0 };
+  const out = { rays: 0, inAir: 0, onSurface: 0, moved: [], turned: 0, sideTies: 0, capped: 0 };
   for (const [i, { lv, X, dir }] of throughRays.entries()) {
     if (only !== null && lv !== only) continue;
     const fade = only === null ? null : FADES[i % FADES.length];
@@ -222,7 +240,11 @@ function sameRays(carve, only = null) {
     out.capped += a.k === 64 || b.k === 64;
     out.onSurface += a.n !== null;
     if (Math.abs(a.t - b.t) > 1e-6 * (1 + a.t)) { if (out.moved.length < 5) out.moved.push({ lv, X, dir, a, b }); continue; }
-    if ((a.n === null) !== (b.n === null) || (a.n && b.n && a.n.some((x, i) => Math.abs(x - b.n[i]) > 1e-12))) out.turned++;
+    // (Where it ends on a table cell's side that a surface lies on, ending
+    // at the side and on the surface are one: a tie.)
+    const end = X.map((x, i) => x + dir[i] * a.t), onSide = end.some((x) => Math.abs(x / R - Math.round(x / R)) < 1e-9);
+    if ((a.n === null) !== (b.n === null)) onSide ? out.sideTies++ : out.turned++;
+    else if (a.n && b.n && a.n.some((x, i) => Math.abs(x - b.n[i]) > 1e-12)) out.turned++;
   }
   return out;
 }
@@ -297,7 +319,129 @@ test('with every piece cut in two halves that overlap, rays end where they did, 
   const r = sameRays(carve);
   assert.ok(air > 2000 && r.inAir > 10000 && r.onSurface > 0.6 * r.rays, `${air} points in air; ${r.inAir} rays through, ${r.onSurface} ending on a surface`);
   assert.deepEqual(r.moved, []);
-  assert.ok(r.turned === 0 && r.capped < 0.001 * r.rays, `${r.turned} rays ending on another surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
+  assert.ok(r.turned === 0 && r.sideTies < 0.001 * r.rays && r.capped < 0.001 * r.rays, `${r.turned} rays ending on another surface, ${r.sideTies} at a cell's side on a surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
+});
+
+// The cover (src/spaces/cover.js): wherever pieces of air meet with air all
+// round, one piece holds the point strictly: no sheet where the relief's
+// distance is 0 in the middle of its air, at either level (its own pieces)
+// or between them (both levels' pieces, as the flight's clearance and the
+// shader's map see the two together). Asked at points on the physical
+// pieces' sides, where seams are; those held by no physical piece strictly
+// (on a seam) are what the cover is for, and are counted.
+test('where pieces of air meet, one holds the point: no sheet at either level, nor between them', () => {
+  const rnd = rand(12), phys = pieces.map((p, i) => i).filter((i) => !pieces[i].cover);
+  // (Whether Y is in a physical piece at one of the levels lvs, as its cell
+  // lists them; and not inside a solid without relief, where the city's
+  // air is clipped (bareIn in arcology.js).)
+  const BARE = _V2.BARE_BOX.map(([lo, hi]) => [lo.map((x) => x * R), hi.map((x) => x * R)]);
+  const inBare = (Y) => BARE.some(([lo, hi]) => Y.every((x, a) => x > lo[a] && x < hi[a]));
+  const inPhys = (lvs, Y, strict = 0) => { const ci = cellOf(Y); return ci >= 0 && !inBare(Y) && lvs.some((lv) => L._lists[lv][ci].some((i) => !pieces[i].cover && dist(pieces[i], Y) < -strict)); };
+  const BALL = [];
+  for (let i = 0; i < 26; i++) { const z = 1 - (2 * (i + 0.5)) / 26, r = Math.sqrt(1 - z * z), t = i * 2.39996; BALL.push([r * Math.cos(t), r * Math.sin(t), z]); }
+  const fields = { city: [0], finer: [1], both: [0, 1] }, out = {};
+  for (const [name, lvs] of Object.entries(fields)) out[name] = { asked: 0, seam: 0, sheets: 0, ex: [] };
+  for (let s = 0; s < 40000; s++) {
+    const p = pieces[phys[Math.floor(rnd() * phys.length)]], j = Math.floor(rnd() * p.planes.length), q = p.planes[j], len = Math.hypot(...q.a);
+    // (A point of the piece's side on plane j: one in its bounds, onto the plane, within the rest.)
+    const Y0 = p.bb.map(([lo, hi]) => lo + rnd() * (hi - lo)), s0 = (q.a[0] * Y0[0] + q.a[1] * Y0[1] + q.a[2] * Y0[2] - q.b) / (len * len);
+    const X = Y0.map((x, a) => x - s0 * q.a[a]);
+    if (!p.planes.every((r, k) => k === j || r.a[0] * X[0] + r.a[1] * X[1] + r.a[2] * X[2] - r.b < -1e-6 * Math.hypot(...r.a))) continue;
+    for (const [name, lvs] of Object.entries(fields)) {
+      if (!lvs.includes(p.lv)) continue;
+      const o = out[name];
+      // (Air all round: a small ball about it in the level's physical pieces.)
+      if (!BALL.every((e) => inPhys(lvs, X.map((x, a) => x + 1e-4 * e[a])))) continue;
+      o.asked++;
+      if (inPhys(lvs, X, 1e-7)) continue;
+      o.seam++;
+      // (Each level alone by its own pieces, cover and all, the city's air
+      // the finer level's joins hold aside; both, as the world asks them.)
+      const held = name === 'both' ? lvs.some((lv) => carveAt(lv, X) * (lv === 0 ? R : 1) < -1e-7) : listedAt(p.lv, X, true) < -1e-7;
+      if (!held) (o.sheets++, o.ex.length < 3 && o.ex.push({ X, lv: p.lv }));
+    }
+  }
+  for (const o of Object.values(out)) assert.ok(o.seam > 300, JSON.stringify(out));
+  assert.deepEqual(Object.values(out).map((o) => o.sheets), [0, 0, 0], JSON.stringify(out));
+});
+
+// The cover's seam groups (see listedCarve) are asked only where their seam
+// is near: the relief answers as it would with every cover piece asked,
+// distance, reach and surface, unfaded and faded (the city's level shrunk,
+// and one level finer its backs risen, both growing as a ray goes). And no
+// cover piece holds air its members do not, faded or not: a point in one is
+// in a physical piece of its own level, or of the city's (a piece joining
+// the levels: the city's level does not fade while the finer is drawn), and
+// not inside a solid without relief.
+test("the cover's seam groups, asked only near their seams, answer as the whole cover", () => {
+  const all = _V2.carveOver(writeRows({ ...BUILT, rows: BUILT.rows.map((r) => ({ ...r, seams: [] })) }).data);
+  const fades = [undefined, { o: 0.1, a: 0, scale: 0, rate: 0 }, { o: 0.4, a: 0.02, scale: 0, rate: 0 }];
+  let rays = 0, faded = 0;
+  const at = [0, 0];
+  SAMPLES.forEach(({ lv, X }, i) => {
+    const fade = fades[i % 3], e = [Math.sin(5 * i), Math.cos(i), Math.sin(3 * i)], m = Math.hypot(...e), dir = e.map((x) => x / m);
+    const a = carveAt(lv, X, null, _V2.reliefCarve, fade), b = carveAt(lv, X, null, all, fade);
+    assert.ok(Object.is(a, b), `level ${lv} at ${X}, faded ${JSON.stringify(fade)}: ${a}, every piece asked ${b}`);
+    const ra = { dir }, rb = { dir };
+    carveAt(lv, X, ra, _V2.reliefCarve, fade), carveAt(lv, X, rb, all, fade);
+    assert.ok(Object.is(ra.reach, rb.reach) && ra.nx === rb.nx && ra.ny === rb.ny && ra.nz === rb.nz, `level ${lv} at ${X} along ${dir}, faded ${JSON.stringify(fade)}: reach ${ra.reach}, every piece asked ${rb.reach}`);
+    rays += ra.reach >= 0;
+    faded += !!fade && ra.reach >= 0;
+    at[lv] += ra.reach >= 0;
+  });
+  assert.ok(at[0] > 2000 && at[1] > 2000 && faded > 2000, `${at} rays in air at each level, ${faded} of them faded`);
+});
+
+test('no cover piece holds air its members do not, faded or not', () => {
+  // (A piece's distance at X, its finer level's backs risen by fr of their
+  // fading depth, as carve fades them: every other plane stays.)
+  const faded = (p, X, fr) => { let d = -Infinity; p.planes.forEach((q, k) => { let s = (q.a[0] * X[0] + q.a[1] * X[1] + q.a[2] * X[2] - q.b) / Math.hypot(...q.a); if (p.lv === 1 && p.rows[k][0] >> 9 === 1) s += fr * L.fval(p.rows[k][2]); d = Math.max(d, s); }); return d; };
+  const rnd = rand(17), BARE = _V2.BARE_BOX.map(([lo, hi]) => [lo.map((x) => x * R), hi.map((x) => x * R)]);
+  const inPhys = (lv, X, fr) => { const ci = cellOf(X); return ci >= 0 && L._lists[lv][ci].some((i) => !pieces[i].cover && faded(pieces[i], X, fr) < 1e-9); };
+  let n = 0, joins = 0, fadedIn = 0;
+  const out = [];
+  pieces.forEach((p, i) => {
+    if (!p.cover) return;
+    for (let k = 0; k < 6; k++) {
+      const fr = [0, 0.5, 1][k % 3], X = p.bb.map(([lo, hi]) => lo + rnd() * (hi - lo));
+      if (!(faded(p, X, fr) < -1e-6)) continue;
+      // (Where it is asked: a cell that lists it.)
+      const ci = cellOf(X);
+      if (ci < 0 || !L._lists[p.lv][ci].includes(i)) continue;
+      n++;
+      joins += p.cross;
+      fadedIn += fr > 0 && p.lv === 1;
+      const held = inPhys(p.lv, X, fr) || (p.cross && inPhys(0, X, fr) && !BARE.some(([lo, hi]) => X.every((x, a) => x > lo[a] && x < hi[a])));
+      if (!held && out.length < 5) out.push({ X, lv: p.lv, cross: p.cross, fr });
+    }
+  });
+  assert.ok(n > 30000 && joins > 5000 && fadedIn > 12000, `${n} points in cover pieces, ${joins} in pieces joining the levels, ${fadedIn} faded one level finer`);
+  assert.deepEqual(out, []);
+});
+
+// Which planes fade (the head of relief.js), from what each piece is: at
+// the city's level none (the level shrinks as a whole); one level finer,
+// in each physical piece just one, its back (facing into the building, from
+// its face: square to the face, or for a terrace's, to the face's level
+// part), and in each cover piece only its members' backs; never a plane
+// across y (a floor or ceiling, a row's top or bottom), and no fade but 0
+// (none) or 1 (a back).
+test('the planes that fade are the backs one level finer, and only those', () => {
+  const backOf = (F, a) => { const l = Math.hypot(...a); return [F.n, [F.n[0], 0, F.n[2]]].some((n) => { const m = Math.hypot(...n); return a.every((x, i) => Math.abs(x / l + n[i] / m) < 1e-12); }); };
+  let backs = 0;
+  pieces.forEach((p) => {
+    const codes = p.rows.map((r) => r[0] >> 9);
+    assert.ok(codes.every((c) => c === 0 || c === 1), `a fade code not 0 or 1: ${codes}`);
+    if (p.lv === 0) return void assert.ok(codes.every((c) => c === 0), "a plane of the city's level that fades");
+    p.planes.forEach((q, k) => {
+      if (!codes[k]) return;
+      assert.ok(q.a[0] !== 0 || q.a[2] !== 0, 'a plane across y that fades');
+      assert.ok(p.cover ? FACES.some((F) => backOf(F, q.a)) : backOf(FACES[faceOf(p)], q.a), `a plane that fades, not a back: ${q.a}`);
+      backs++;
+    });
+    if (!p.cover) assert.equal(codes.filter((c) => c).length, 1, 'a piece one level finer without just one back');
+  });
+  assert.ok(backs > 20000, `${backs} backs`);
 });
 
 // Faded as the march fades the relief (fade.js): fade states for the
@@ -353,10 +497,9 @@ const fadedHolds = (lv) => {
   assert.ok(r.apart === 0 && r.off === 0 && r.solid === 0, `level ${lv}: ${r.apart} rays in air by one and not the other, ${r.off} ending elsewhere (worst ${r.worst}), ${r.solid} going through faded solid, of ${r.inAir}: ${JSON.stringify(r.first)}`);
 };
 test('one level finer than the city, the relief fades as its planes say', () => fadedHolds(1));
-// (The city's pockets are meant to shrink as the rest of the level does,
-// growing as the ray goes; the carve keeps the shrinking but drops the
-// growth: ledger B43.)
-test("at the city's level, the relief fades as its planes say", (t) => known(t, 'B43', () => fadedHolds(0)));
+// (The city's pockets shrink as the rest of the level does, growing as the
+// ray goes: ledger B43, fixed.)
+test("at the city's level, the relief fades as its planes say", () => fadedHolds(0));
 
 // And faded, the same air divided otherwise ends rays where it did: one
 // level finer, where the planes that cut the pieces do not move; and at the
@@ -369,7 +512,7 @@ const fadedSplit = (lv) => {
   const carve = _V2.carveOver(writeRows(split().built).data), r = sameRays(carve, lv);
   assert.ok(r.inAir > (lv ? 1000 : 300) && r.onSurface > 0.5 * r.inAir, `level ${lv}: ${r.inAir} rays through, ${r.onSurface} ending on a surface`);
   assert.deepEqual(r.moved, []);
-  assert.ok(r.turned === 0 && r.capped < 0.001 * r.rays, `level ${lv}: ${r.turned} rays ending on another surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
+  assert.ok(r.turned === 0 && r.sideTies < 0.001 * r.rays && r.capped < 0.001 * r.rays, `level ${lv}: ${r.turned} rays ending on another surface, ${r.sideTies} at a cell's side on a surface, ${r.capped} of ${r.rays} not ended in 64 asks`);
 };
 test('faded, one level finer, with every piece cut in two, rays end where they did', () => fadedSplit(1));
 test("faded, at the city's level, with every piece cut in two, rays end where they did", () => fadedSplit(0));

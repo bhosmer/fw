@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { airExit, solidHit, unionExit, segmentsExit, marchState, reliefFade, LOD_LO, LOD_HI, LOD_K } from './fade.js';
 import arcology from '../../src/spaces/arcology.js';
+import { readFileSync } from 'node:fs';
 
 const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b)), `${what}: ${a}, not ${b}`);
 const X = [1, 0, 0];
@@ -107,9 +108,32 @@ test("the relief's planes fade as its design says", () => {
   assert.deepEqual(reliefFade(0, 1, 5, state, w), { o: 3.6, a: 0.012 });
   near(reliefFade(1, 1, 5, state, w).o, 2.5, 'a back, half faded, is up by half its depth');
   near(reliefFade(1, 1, 5, state, w).a, (0.012 / 7.2) * 5, 'and grows by its share');
-  assert.equal(reliefFade(1, 2, 5, state, w).o, 0);
-  near(reliefFade(1, 2, 5, state, w).a, (0.012 / 7.2) * 5, 'a floor or ceiling only grows');
   assert.deepEqual(reliefFade(1, 0, 5, state, w), { o: 0, a: 0 });
+  assert.throws(() => reliefFade(1, 2, 5, state, w), /no fade 2/);
+});
+
+// The relief's pieces joining the levels hold the city's air one level
+// finer, as it is unfaded (see cover.js): so the march never fades the
+// city's level at a step where it asks the next one, at any slant it takes
+// (from LEAN_MIN, the shader's least, to face on), open or not.
+test("the city's level does not fade while the next one is drawn", () => {
+  const LEAN_MIN = +readFileSync(new URL('../../src/shaders.js', import.meta.url), 'utf8').match(/const float LEAN_MIN = ([0-9.]+);/)[1];
+  const { close, R } = arcology, cell = 1, pix = 1e-3;
+  let asked = 0, faded = 0;
+  for (let i = 0; i <= 400; i++) {
+    const foot = cell * 10 ** (-4 + (4 * i) / 400);
+    for (let j = 0; j <= 8; j++) {
+      const slant = LEAN_MIN + ((1 - LEAN_MIN) * j) / 8, finer = marchState({ foot, cell: cell / R, pix, slant, close, R });
+      for (const open of [false, true]) {
+        const city = marchState({ foot, cell, pix, slant, close, R, open });
+        if (city?.gO > 0) faded++;
+        if (!finer) continue;
+        asked++;
+        assert.ok(city && city.gO === 0 && city.gA === 0, `at foot ${foot}, slant ${slant}${open ? ', open' : ''}: the city faded by ${city?.gO} as the next level is drawn`);
+      }
+    }
+  }
+  assert.ok(asked > 1000 && faded > 1000, `${asked} steps asking the next level, ${faded} fading the city`);
 });
 
 // The JavaScript twin fades as the shader does (src/pieces.js: fade), as each

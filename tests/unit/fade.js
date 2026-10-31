@@ -103,16 +103,18 @@ export function marchState({ foot, cell, pix, slant, close, R, open = false }) {
 
 // How each plane of the relief (src/spaces/relief.js) is meant to fade, from
 // the head of relief.js and .claude/design/relief-cover.md 3.6, given its
-// level lv (0 the city's, 1 the next), its fade code (0 none, 1 a back, 2 a
-// terrace's floor or ceiling), its fading depth fz, and the march's state:
-// at the city's level every plane shrinks uniformly, by gO and growing by gA
-// (ledger B43: the code drops the growth); one level finer a back rises by
-// fr fz and grows by fg fz, a floor or ceiling only grows, and the rest stay,
-// where fr and fg are gO and gA as fractions of a whole fade (close R).
+// level lv (0 the city's, 1 the next), its fade code (0 none, 1 a back), its
+// fading depth fz, and the march's state: at the city's level every plane
+// shrinks uniformly, by gO and growing by gA; one level finer a back rises
+// by fr fz and grows by fg fz, and the
+// rest stay (a terrace's floor or ceiling too: it is the city terrace's,
+// relief-cover.md 3.6, rev 2 H1), where fr and fg are gO and gA as
+// fractions of a whole fade (close R).
 export function reliefFade(lv, code, fz, { gO, gA }, { close, R }) {
+  if (code !== 0 && code !== 1) throw new Error(`reliefFade: no fade ${code}`);
   if (lv === 0) return { o: gO, a: gA };
   const fr = gO / (close * R), fg = gA / (close * R);
-  return code === 1 ? { o: fr * fz, a: fg * fz } : code === 2 ? { o: 0, a: fg * fz } : { o: 0, a: 0 };
+  return code === 1 ? { o: fr * fz, a: fg * fz } : { o: 0, a: 0 };
 }
 
 const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];

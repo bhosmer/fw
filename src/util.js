@@ -205,3 +205,36 @@ export async function stored(key, make) {
     db.close();
   }
 }
+
+// Rows of whole numbers ({ data, size }: an Int32Array and its texture's
+// size) that take long to make, kept on disk where JavaScript runs outside
+// a browser (the checks, the tools: in the system's temporary directory, by
+// the key that names all they are made from, see digest), and made afresh
+// only where none is kept. In a browser, make()'s (see stored for its own
+// store).
+export function keptOnDisk(key, make) {
+  const node = globalThis.process?.getBuiltinModule;
+  if (!node) return make();
+  const fs = node('node:fs'), os = node('node:os'), path = node('node:path');
+  const dir = path.join(os.tmpdir(), 'fw-made'), file = path.join(dir, `${digest([key])}.bin`);
+  try {
+    const b = fs.readFileSync(file), size = [b.readInt32LE(0), b.readInt32LE(4)];
+    if (b.length !== 8 + 16 * size[0] * size[1]) throw new Error('not whole');
+    return { size, data: new Int32Array(b.buffer.slice(b.byteOffset + 8, b.byteOffset + b.byteLength)) };
+  } catch {
+    const made = make();
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const head = Buffer.alloc(8);
+      head.writeInt32LE(made.size[0], 0), head.writeInt32LE(made.size[1], 4);
+      // (Written whole, then put in place: so that another run never reads half of it.)
+      const part = `${file}.${process.pid}`;
+      fs.writeFileSync(part, Buffer.concat([head, Buffer.from(made.data.buffer, made.data.byteOffset, made.data.byteLength)]));
+      fs.renameSync(part, file);
+      // (The oldest let go, past the last few.)
+      const kept = fs.readdirSync(dir).filter((f) => f.endsWith('.bin')).map((f) => [fs.statSync(path.join(dir, f)).mtimeMs, f]).sort((x, y) => y[0] - x[0]);
+      for (const [, f] of kept.slice(8)) fs.rmSync(path.join(dir, f), { force: true });
+    } catch {}
+    return made;
+  }
+}

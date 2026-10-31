@@ -22,6 +22,9 @@
 // - at the city's level, also the mass's box and 2 cells, where the city's
 //   cuts are asked (the gate of the city's faces, as the city's cell had it
 //   before the switch).
+// Over the seams where the pieces meet, the cover (cover.js), pieces of its
+// own, listed as the physical ones are (one level finer, where all its
+// members of that level may be).
 // One level finer a piece is listed only in the skin cells of its face (as
 // its face's bit in the table says); where it meets a cell it may not run
 // on into (deaf: deep or plain, see VOLUME), it is listed instead, in each
@@ -40,25 +43,35 @@
 //   more), and so no nearer than the bound a cell next to it gives, where
 //   they meet (so that the distance changes no faster than the point
 //   moves); one level finer, no nearer than the cell's sides;
-// - the lists, ints: each piece's row;
+// - per table cell (from row NC), (first, count) of its seam groups' rows,
+//   for each level as above;
+// - the lists, ints: each piece's row (a cell's list holds the pieces asked
+//   always: the physical ones, and the cover's joining the levels; each
+//   seam group's list, its cover pieces with that seam, see cover.js);
+// - per seam group a row: (its seam plane's row, its list's first int, its
+//   length, 0);
 // - per piece two rows: (its first plane's int, how many, its level, its
 //   source) and its bounds, in finer units from the building's origin,
 //   +32768, low and high halves of x, y, z;
 // - the pieces' planes, ints: each plane's row;
 // - per plane (direction | sign << 8 | fade << 9, K at the piece's level,
 //   fz's bits, 0): fade 0 none, 1 a back (it rises by fr fz as the finer
-//   level fades, and grows by fg fz), 2 a terrace's floor or ceiling (it
-//   grows by fg fz, as the back's).
+//   level fades, and grows by fg fz). A terrace's floor or ceiling is the
+//   city terrace's, and stays as the finer level fades (relief-cover.md
+//   3.6, rev 2 H1: so that no plane the cover drops or shares moves).
 // The directions (an id into DIRS): each an axis (0 to 2) or a slant
 // (3 on), with its whole-number m; a plane's n is sign m.
 import * as twin from '../twin.js';
+import { coverOf, coverBuiltBy } from './cover.js';
 
 export const ROW_WIDTH = 1024;
 // What the rows are built by, for the key they are kept by (see stored in
 // util.js): the builder's own text, and the format's, which changes by hand
 // with anything else the rows depend on that the key does not name.
 export const RELIEF_FORMAT = 1;
-export const builtBy = () => [String(RELIEF_FORMAT), String(ROW_WIDTH), buildRelief.toString(), writeRows.toString(), reliefDirections.toString(), edgeDirection.toString()];
+export const builtBy = () => [String(RELIEF_FORMAT), String(ROW_WIDTH), String(COVER_SRC), buildRelief.toString(), writeRows.toString(), reliefDirections.toString(), edgeDirection.toString(), ...coverBuiltBy()];
+// (A cover piece's source: after every physical piece's.)
+const COVER_SRC = 0x40000000;
 
 // The relief's directions, from its faces alone (so that they are known
 // before anything is built): the axes; 4 y and 12 y (the city's heights in
@@ -96,13 +109,16 @@ function edgeDirection(F, E, FWT, k, e, R) {
 // bits, the decisions (rectangle, rectDepth, cutOf, ridgeRow, depthN and
 // their state RS), hashCell, TILE_SALT, and DIRS (reliefDirections').
 export function buildRelief(ctx) {
-  const { R, ORIGIN: O, FACES, T, VOLUME: V, BITS, decide, RS, hashCell, TILE_SALT, DIRS } = ctx;
+  const { R, ORIGIN: O, FACES, T, VOLUME: V, BITS, decide, RS, hashCell, TILE_SALT, DIRS, BARE } = ctx;
   const t0 = typeof performance === 'undefined' ? 0 : performance.now();
   // A plane, as a row of the table: n . X <= K at level lv (n whole numbers),
   // its fade and fz. Equal rows are one row.
   if (DIRS.length > 256) throw new Error('relief: more directions than a plane\'s row has room for');
-  const planeRows = [], planeAt = new Map();
+  const planeRows = [], planeAt = new Map(), asked = new Map();
   const plane = (n, K, fade = 0, fz = 0) => {
+    // (Asked before, as it is given: its row.)
+    const given = `${n}|${K}|${fade}|${fade ? fz : 0}`, was = asked.get(given);
+    if (was !== undefined) return was;
     const nz = n.find((x) => x !== 0), s = Math.sign(nz);
     // (n is a whole multiple c of its direction's m: the plane is s m . X <= K / c, K / c whole.)
     // (Of the directions n is a whole multiple of, one its K is whole along: the least multiple.)
@@ -117,6 +133,7 @@ export function buildRelief(ctx) {
     if (Math.abs(row[1]) >= 2 ** 31) throw new Error('relief: a plane too far out for 32 bits');
     const key = row.join();
     if (!planeAt.has(key)) planeAt.set(key, planeRows.length), planeRows.push(row);
+    asked.set(given, planeAt.get(key));
     return planeAt.get(key);
   };
   const f32 = new Float32Array(1), i32 = new Int32Array(f32.buffer);
@@ -161,13 +178,13 @@ export function buildRelief(ctx) {
     else ps.push(plane(b.edgeN, b.edgeK));
     // (Rows, floors and ceilings: at the city's level in 12 y, the floors
     // being on twelfths; one level finer in y. A terrace's floor or ceiling
-    // one level finer grows with the fade as its back does (fade 2), as the
-    // cell had it.)
+    // stays as the finer level fades: it is the city terrace's. One that lies
+    // on the piece's own row is that row's plane.)
     ps.push(plane([0, -1, 0], -b.y0), plane([0, 1, 0], b.y1));
     if (b.ter) {
-      const H12 = T.FTH[k * 17 + b.tH] * S, f = lv === 1 ? 2 : 0;
-      if (up) ps.push(lv === 0 ? plane([0, -12, 0], -(12 * b.yin - H12), f, b.fz) : plane([0, -1, 0], -(12 * b.yin - H12) / 12, f, b.fz));
-      else ps.push(lv === 0 ? plane([0, 12, 0], 12 * b.yin + H12, f, b.fz) : plane([0, 1, 0], (12 * b.yin + H12) / 12, f, b.fz));
+      const H12 = T.FTH[k * 17 + b.tH] * S;
+      if (up) ps.push(lv === 0 ? plane([0, -12, 0], -(12 * b.yin - H12)) : plane([0, -1, 0], -(12 * b.yin - H12) / 12));
+      else ps.push(lv === 0 ? plane([0, 12, 0], 12 * b.yin + H12) : plane([0, 1, 0], (12 * b.yin + H12) / 12));
     }
     if (b.ter) ps.push(plane(nh.map((x) => -x), -(F.K * S - ny * b.yin - b.D), lv === 1 ? 1 : 0, b.fz));
     else ps.push(plane(F.n.map((x) => -x), -(F.K * S - b.dn), lv === 1 ? 1 : 0, b.fz));
@@ -180,7 +197,7 @@ export function buildRelief(ctx) {
       const lo = F.solid.lo.map((x, a) => x - O[a] - 2), hi = F.solid.hi.map((x, a) => x - O[a] + 2);
       for (let a = 0; a < 3; a++) { const e = [0, 0, 0]; e[a] = 1; ps.push(plane(e, hi[a]), plane(e.map((x) => -x), -lo[a])); }
     }
-    return ps;
+    return [...new Set(ps)];
   };
 
   // --- The rectangles, by flood: one call of rectangle() per rectangle.
@@ -278,10 +295,13 @@ export function buildRelief(ctx) {
     return true;
   };
   const lists = [Array.from({ length: NC }, () => []), Array.from({ length: NC }, () => [])];
-  const rows = []; // (pieces as listed: { pl, bb, lv, src })
-  const listed = (p, pl = p.pl, bb = p.bb) => rows.push({ pl, bb, lv: p.b.lv, src: p.src }) - 1;
+  const rows = []; // (pieces as listed: { pl, bb, lv, src, seams, cross })
+  const listed = (p, pl = p.pl, bb = p.bb) => rows.push({ pl, bb, lv: p.b.lv, src: p.src, seams: p.seams ?? [], cross: !!p.cross }) - 1;
+  // (Whether piece p may be in table cell ci one level finer: a skin cell
+  // of its face, or of all its members' faces.)
+  const mayBe = (b, ci) => (b.k >= 0 ? skinOf[b.k].has(ci) : (word(ci) & 3) === BITS.SKIN && ((word(ci) >> BITS.FACE_AT) & b.faces) === b.faces);
   let deafCut = 0;
-  for (const p of pieces) {
+  const list = (p) => {
     const { b, fp, bb } = p, unit = b.lv === 0 ? 1 : R, sc = b.lv === 0 ? 1 / R : 1;
     const cells = [];
     // (The cells its bounds meet with more than a side: x < hi, x + 1 > lo.)
@@ -295,18 +315,18 @@ export function buildRelief(ctx) {
     if (b.lv === 0) {
       let i = -1;
       for (const [x, y, z] of cells) { const ci = cellIndex(x, y, z); if (ci < 0) throw new Error(`relief: a city piece outside the table: cell ${[x, y, z]}, bounds ${JSON.stringify(p.bb)}, table ${vlo} + ${vsz}`); i = i < 0 ? listed(p) : i; lists[0][ci].push(i); }
-      continue;
+      return;
     }
     // (One level finer: a cell it may be in (skin, its face's bit), one it
     // may run on into (open, or out of the table: the city's air), or deaf.)
     const ok = [], deaf = [];
     for (const [x, y, z] of cells) {
       const ci = cellIndex(x, y, z);
-      if (ci >= 0 && skinOf[b.k].has(ci)) ok.push(ci);
+      if (ci >= 0 && mayBe(b, ci)) ok.push(ci);
       else if (ci >= 0 && !V.open[ci]) deaf.push(ci);
     }
-    if (!ok.length) continue;
-    if (!deaf.length) { const i = listed(p); for (const ci of ok) lists[1][ci].push(i); continue; }
+    if (!ok.length) return;
+    if (!deaf.length) { const i = listed(p); for (const ci of ok) lists[1][ci].push(i); return; }
     // Cut to each cell's run-on (as runsOn in arcology.js: the cell, and a
     // cell past each side it runs on across; three boxes, each along one
     // axis, where the word says so).
@@ -323,16 +343,41 @@ export function buildRelief(ctx) {
         lists[1][ci].push(listed(p, pl, cb));
       }
     }
-  }
+  };
+  pieces.forEach(list);
+
+  // --- The cover (see cover.js), from the physical pieces as listed (cut
+  // to a cell's run-on where they would run into a deaf cell, so that what
+  // such a cut meets is covered too): as pieces of their own, each with its
+  // seams (the planes it was made by dropping; none for a piece joining the
+  // levels, which is asked always: see listedCarve) and the faces of its
+  // members of its own level (one level finer, it is listed only where all
+  // of them may be: where one is not, its air there is not the cell's; a
+  // member of the city's holds city air, which is air wherever the relief
+  // is).
+  const faceOf = (r) => (r.src >>> 24) >> 2;
+  const members = rows.map((r, id) => {
+    const sc = r.lv === 0 ? 1 / R : 1;
+    const planes = r.pl.map((pi) => { const q = planeRows[pi], s = q[0] & 256 ? -1 : 1; return { n: DIRS[q[0] & 255].m.map((x) => s * x), K: q[1], lv: r.lv, fade: q[0] >> 9, fz: fval(q[2]) }; });
+    return { id, lv: r.lv, planes, fp: planes.map((q) => ({ a: q.n, b: q.K })), box: r.bb.map(([a, c]) => [a * sc, c * sc]) };
+  });
+  const { cover, failed: coverFailed } = coverOf(members, { R, bare: BARE });
+  cover.forEach((c, i) => {
+    const lift = (q) => q.K * R ** (c.lv - q.lv);
+    const pl = c.planes.map((q) => plane(q.n, lift(q), q.fade ?? 0, q.fz ?? 0));
+    const seams = c.cross ? [] : c.dropped.map((q) => plane(q.n, lift(q)));
+    const sc = c.lv === 0 ? R : 1, faces = c.members.reduce((m, id) => m | (rows[id].lv === c.lv ? 1 << faceOf(rows[id]) : 0), 0);
+    list({ b: { lv: c.lv, k: -1, faces }, pl, fp: pl.map((pi) => floatOf(pi, c.lv)), bb: c.box.map(([a, d]) => [a * sc, d * sc]), src: COVER_SRC + i, seams, cross: c.cross });
+  });
   // (Each list in a stable order: by source.)
   for (const ls of lists) for (const l of ls) l.sort((i, j) => rows[i].src - rows[j].src || i - j);
   const { data, size, at } = writeRows({ lists, rows, planeRows, size: vsz });
   const ms = typeof performance === 'undefined' ? 0 : performance.now() - t0;
   return {
     data, size, at, dirs: DIRS,
-    stats: { boxes: boxes.length, pieces: pieces.length, rows: rows.length, planes: planeRows.length, deafCut, refs: [lists[0].reduce((s, l) => s + l.length, 0), lists[1].reduce((s, l) => s + l.length, 0)], ms: Math.round(ms) },
+    stats: { boxes: boxes.length, pieces: pieces.length, cover: cover.length, coverFailed, rows: rows.length, planes: planeRows.length, deafCut, refs: [lists[0].reduce((s, l) => s + l.length, 0), lists[1].reduce((s, l) => s + l.length, 0)], ms: Math.round(ms) },
     // (For the checks: each listed piece's planes and bounds, and the lists.)
-    _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb })), _lists: lists, fval,
+    _pieces: rows.map((r) => ({ lv: r.lv, src: r.src, cover: r.src >= COVER_SRC, cross: r.cross, planes: r.pl.map((pi) => floatOf(pi, r.lv)), rows: r.pl.map((pi) => planeRows[pi]), bb: r.bb })), _lists: lists, fval,
     // (And what the rows are written from, so that the checks can write them
     // again from the same air divided otherwise: see writeRows.)
     _built: { lists, rows, planeRows, size: vsz },
@@ -380,25 +425,51 @@ export function writeRows({ lists, rows, planeRows, size: vsz }) {
     }
   }
 
-  // --- The rows: the cells', the lists', the pieces', their planes' ints and the planes', in turn.
-  const at = {}, nRows = (n) => Math.ceil(n / 4);
-  let nList = 0, nRun = 0;
-  for (const ls of lists) for (const l of ls) nList += l.length;
+  // --- The rows: the cells', the cells' seam groups', the lists', the
+  // groups', the pieces', their planes' ints and the planes', in turn. Each
+  // cell's list at a level holds its pieces asked always (the physical ones,
+  // and the cover's joining the levels); its other cover pieces are in
+  // groups by seam plane, each group asked only where its seam is near (see
+  // listedCarve), a piece of several seams in each of their groups.
+  const always = [0, 1].map(() => []), grouped = [0, 1].map(() => []);
+  let nList = 0, nGroup = 0, nRun = 0;
+  for (let lv = 0; lv < 2; lv++)
+    for (let ci = 0; ci < NC; ci++) {
+      const a = [], g = new Map();
+      for (const i of lists[lv][ci]) {
+        if (!rows[i].seams?.length) a.push(i);
+        else for (const pi of rows[i].seams) (g.get(pi) ?? g.set(pi, []).get(pi)).push(i);
+      }
+      always[lv].push(a);
+      grouped[lv].push([...g]);
+      nList += a.length;
+      for (const [, items] of g) (nList += items.length), nGroup++;
+    }
   const firsts = rows.map((r) => ((nRun += r.pl.length), nRun - r.pl.length));
-  at.LIST0 = NC;
-  at.PIECE0 = at.LIST0 + nRows(nList);
+  const at = {}, nRows = (n) => Math.ceil(n / 4);
+  at.GCELL0 = NC;
+  at.LIST0 = 2 * NC;
+  at.GROUP0 = at.LIST0 + nRows(nList);
+  at.PIECE0 = at.GROUP0 + nGroup;
   at.RUN0 = at.PIECE0 + 2 * rows.length;
   at.PLANE0 = at.RUN0 + nRows(nRun);
   const total = at.PLANE0 + planeRows.length, H = Math.ceil(total / ROW_WIDTH);
   const data = new Int32Array(ROW_WIDTH * H * 4);
-  let li = 4 * at.LIST0;
-  for (let ci = 0; ci < NC; ci++) for (let lv = 0; lv < 2; lv++) {
-    const l = lists[lv][ci];
-    data[4 * ci + 2 * lv] = li;
-    if (l.length > 65535) throw new Error('relief: a list too long');
-    data[4 * ci + 2 * lv + 1] = l.length | (lv ? (lower[ci] >>> 12) << 16 : (n0[ci] << 16) | ((lower[ci] & 4095) << 20));
-    for (const i of l) data[li++] = at.PIECE0 + 2 * i;
-  }
+  let li = 4 * at.LIST0, gi = at.GROUP0;
+  for (let ci = 0; ci < NC; ci++)
+    for (let lv = 0; lv < 2; lv++) {
+      const l = always[lv][ci], gs = grouped[lv][ci];
+      data[4 * ci + 2 * lv] = li;
+      if (l.length > 65535) throw new Error('relief: a list too long');
+      data[4 * ci + 2 * lv + 1] = l.length | (lv ? (lower[ci] >>> 12) << 16 : (n0[ci] << 16) | ((lower[ci] & 4095) << 20));
+      for (const i of l) data[li++] = at.PIECE0 + 2 * i;
+      data[4 * (at.GCELL0 + ci) + 2 * lv] = gi;
+      data[4 * (at.GCELL0 + ci) + 2 * lv + 1] = gs.length;
+      for (const [pi, items] of gs) {
+        data.set([at.PLANE0 + pi, li, items.length, 0], 4 * gi++);
+        for (const i of items) data[li++] = at.PIECE0 + 2 * i;
+      }
+    }
   const e16 = (v) => { const x = Math.floor(v) + 32768; if (x < 0 || x > 65535) throw new Error('relief: bounds beyond 16 bits'); return x; };
   rows.forEach((r, i) => {
     const o = 4 * (at.PIECE0 + 2 * i);
@@ -420,8 +491,25 @@ export function writeRows({ lists, rows, planeRows, size: vsz }) {
 // the cell from the point, and vectors part by part.)
 export function listedCarve(js) {
   // (S is the level's scale here, as in the shader: the pieces' state is PS.)
-  const { decl, loop, indent: ins, shaderOnly, slant, vadd, vsub, D, RAY, keep, O, A } = twin.writer(js, 'PS');
+  const { decl, loop, indent: ins, shaderOnly, slant, vadd, vsub, D, RAY, REACH, keep, O, A } = twin.writer(js, 'PS');
   const W1 = ROW_WIDTH - 1, WB = Math.log2(ROW_WIDTH);
+  // (The point's distance outside plane row p (the names of its parts and
+  // of what is worked out from it given): its direction m; along it, the
+  // whole part w and the rest r, along an axis the point's own, along a
+  // slant as carried and the cell's corner's; its sign sg, 1 / |m| inv, and
+  // the distance s.)
+  const across = (n) => [
+    decl('ivec4', `${n.m} = RDM[${n.p}.x & 255]`),
+    ...(js ? [`let ${n.w}, ${n.r};`] : [`int ${n.w};`, `float ${n.r};`]),
+    `if (${n.m}.w < 3) {`,
+    ...ins([`${n.w} = ${n.m}.w == 0 ? W.x : ${n.m}.w == 1 ? W.y : W.z;`, `${n.r} = ${n.m}.w == 0 ? f.x : ${n.m}.w == 1 ? f.y : f.z;`]),
+    '} else {',
+    ...ins([...slant(`${n.m}.w - 3`, n.w).whole, `${n.r} = ${slant(`${n.m}.w - 3`, n.w).rest};`, `${n.w} += ${n.m}.x * base.x + ${n.m}.y * base.y + ${n.m}.z * base.z;`]),
+    '}',
+    decl('int', `${n.sg} = (${n.p}.x & 256) != 0 ? -1 : 1`),
+    decl('float', `${n.inv} = RDI[${n.p}.x & 255]`),
+    decl('float', `${n.s} = (float(${n.sg} * ${n.w} - ${n.p}.y) + float(${n.sg}) * ${n.r}) * ${n.inv}`, !!n.changing),
+  ];
   // (A plane's fz: in the shader from its row's bits; in JavaScript read as
   // a float from the rows themselves, reliefFloat.)
   const FZ = js ? 'reliefFloat(4 * qr + 2)' : 'intBitsToFloat(p.z)';
@@ -451,14 +539,14 @@ export function listedCarve(js) {
       '// With distance (see the march), the relief one level finer fades by',
       "// getting shallower: each piece's back rises by fr of its fading depth",
       '// (fz, in its plane\'s row), growing by fg of it for each unit the ray',
-      "// goes, as a terrace's floor or ceiling grows; its other planes stay.",
+      "// goes; its other planes stay (a terrace's floor or ceiling is the city",
+      "// terrace's).",
       "// (Not by the uniform shrinking of the rest of the level's air, which",
       '// would fill in shallow relief long before deep, and leave slivers where',
       "// pieces meet: cell() takes that out again for map.) The city's keeps the",
-      "// uniform shrinking, gO, but not its growth (B43).",
+      "// uniform shrinking, gO, growing by gA, on every plane (B43).",
       decl('float', `fo = ${O}, fa = ${A}, fr = lv == 1 ? ${O} / (CLOSE * float(R)) : 0.0, fg = lv == 1 ? ${A} / (CLOSE * float(R)) : 0.0`),
-      `if (lv == 1) ${O} = 0.0;`,
-      `${A} = 0.0;`,
+      `if (lv == 1) { ${O} = 0.0; ${A} = 0.0; }`,
       decl('int', 'S = lv == 0 ? 1 : R'),
       decl('ivec3', `W = ${vadd('base', 'L')}`),
       "// (Its table cell: at the city's level, the one the point is in; one",
@@ -499,9 +587,39 @@ export function listedCarve(js) {
       "// (The point in units one level finer, as the pieces' bounds are.)",
       js ? 'const X = [0, 1, 2].map((a) => (float(W[a]) + f[a]) * float(R / S));' : 'vec3 X = (vec3(W) + f) * float(R / S);',
       decl('float', 'bs = float(S) / float(R)'),
-      loop('j', 0, 'count'),
+      '// Its list, then each seam group whose seam is near: within the clearance',
+      "// found so far, or for a ray, crossed within its reach (a little over: where",
+      '// the ray leaves a member through the seam, the two are one). Elsewhere a',
+      "// group's pieces are no nearer than their members, nor take a ray further",
+      '// (see cover.js).',
+      decl('ivec4', `g = reliefRow(${js ? 'VOL_SIZE[0] * VOL_SIZE[1] * VOL_SIZE[2]' : 'VOL_SIZE.x * VOL_SIZE.y * VOL_SIZE.z'} + v.x + VOL_SIZE.x * (v.y + VOL_SIZE.y * v.z))`),
+      decl('int', 'gi = lv == 0 ? g.x : g.z, gn = lv == 0 ? g.y : g.w, at = first, left = count', true),
+      'while (true) {',
       ...ins([
-        decl('int', 'pr = reliefInt(first + j)'),
+        'if (left == 0) {',
+        ...ins([
+          decl('bool', 'found = false', true),
+          'while (gn > 0) {',
+          ...ins([
+            decl('ivec4', 'gr = reliefRow(gi)'),
+            'gi++;',
+            'gn--;',
+            decl('ivec4', 'q = reliefRow(gr.x)'),
+            ...across({ p: 'q', m: 'mq', w: 'wq', r: 'rq', sg: 'sq', inv: 'iq', s: 'sd' }),
+            decl('float', `dt = float(sq) * iq * ${js ? '(mq[0] * PS.dx + mq[1] * PS.dy + mq[2] * PS.dz)' : 'dot(vec3(mq.xyz), gDir)'}`),
+            "// (A ray in a member shrunk at the city's level, by O and growing by A",
+            '// as it goes, leaves it so much sooner than at its seam.)',
+            `if (abs(sd) <= -d || (ray && sd * dt < 0.0 && (abs(sd) - ${O}) / (abs(dt) + ${A}) <= ${REACH} * 1.0001 + 1e-4)) {`,
+            ...ins(['at = gr.y;', 'left = gr.z;', 'found = true;', 'break;']),
+            '}',
+          ]),
+          '}',
+          'if (!found) break;',
+        ]),
+        '}',
+        decl('int', 'pr = reliefInt(at)'),
+        'at++;',
+        'left--;',
         decl('ivec4', 'h = reliefRow(pr), b = reliefRow(pr + 1)'),
         "// (Past its bounds by d or more, it is no nearer; a ray, only from inside them.)",
         decl('float', `far = max(max(${past('x')}, ${past('y')}), ${past('z')}) * bs`),
@@ -515,26 +633,15 @@ export function listedCarve(js) {
           ...ins([
             // (In JavaScript, the plane's row qr, to read its fz as a float.)
             js ? 'const qr = reliefInt(h.x + k), p = reliefRow(qr);' : 'ivec4 p = reliefRow(reliefInt(h.x + k));',
-            decl('ivec4', 'm = RDM[p.x & 255]'),
-            ...(js ? ['let w, r;'] : ['int w;', 'float r;']),
-            "// (Along an axis, the point's own; along a slant, as carried, and the",
-            "// cell's corner's.)",
-            'if (m.w < 3) {',
-            ...ins(['w = m.w == 0 ? W.x : m.w == 1 ? W.y : W.z;', 'r = m.w == 0 ? f.x : m.w == 1 ? f.y : f.z;']),
-            '} else {',
-            ...ins([...slant('m.w - 3', 'w').whole, `r = ${slant('m.w - 3', 'w').rest};`, 'w += m.x * base.x + m.y * base.y + m.z * base.z;']),
-            '}',
-            decl('int', 'sg = (p.x & 256) != 0 ? -1 : 1'),
-            decl('float', 'inv = RDI[p.x & 255]'),
-            decl('float', 's = (float(sg * w - p.y) + float(sg) * r) * inv', true),
+            ...across({ p: 'p', m: 'm', w: 'w', r: 'r', sg: 'sg', inv: 'inv', s: 's', changing: true }),
             decl('int', 'fc = (p.x >> 9) & 3'),
             `if (fc == 1) s += fr * ${FZ};`,
-            `${A} = fc != 0 ? fg * ${FZ} : 0.0;`,
+            `if (lv == 1) ${A} = fc == 1 ? fg * ${FZ} : 0.0;`,
             js ? 'airPlane(s, sg * m[0] * inv, sg * m[1] * inv, sg * m[2] * inv);' : 'airPlane(s, float(sg) * inv * vec3(m.xyz));',
             `if (pass == 0 && ${D} >= d && (!ray || ${D} + ${O} > 0.0)) break;`,
           ]),
           '}',
-          `${A} = 0.0;`,
+          `if (lv == 1) ${A} = 0.0;`,
           'if (pass == 0) {',
           ...ins([
             "// (Its distance no less than its bounds' (so that the bounds leaving it",
@@ -557,5 +664,5 @@ export function listedCarve(js) {
     '}',
   ];
   const text = lines.join('\n');
-  return js ? twin.unsigned(twin.arrays(text, ['c', 'v', 'q', 'Y', 'X', 'W', 'f', 'h', 'b', 'p', 'm', 'base', 'VOL_SIZE'])) : text;
+  return js ? twin.unsigned(twin.arrays(text, ['c', 'g', 'gr', 'v', 'q', 'Y', 'X', 'W', 'f', 'h', 'b', 'p', 'm', 'mq', 'base', 'VOL_SIZE'])) : text;
 }

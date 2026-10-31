@@ -8,11 +8,12 @@
 // axes, so that the corner is found however deep we are (as one flying there
 // would, steering by eye). Returns the flight, the room's level, and how far
 // off (level-F cells) each of the walls aimed at is; or null if the room
-// opened on the way (another level's air took us in).
+// opened on the way (another level's air took us in), or it is not reached
+// in so many steps.
 import { inside } from './inside.js';
 import { rand } from './rand.js';
 
-export function into(flight, { seed = 1, gap = 13, to = 'corner' } = {}) {
+export function into(flight, { seed = 1, gap = 13, to = 'corner', steps = 4000 } = {}) {
   inside(flight, rand(seed));
   const room = flight.room, sx = seed % 2 ? 1 : -1, sz = seed % 3 ? 1 : -1;
   const axes = { ceiling: [[0, 1, 0]], edge: [[sx, 0, 0], [0, -1, 0]], corner: [[sx, 0, 0], [0, -1, 0], [0, 0, sz]] }[to];
@@ -22,7 +23,7 @@ export function into(flight, { seed = 1, gap = 13, to = 'corner' } = {}) {
     flight.airAt(rec, [0, 0, 0], ray);
     return ray.known && ray.reach >= 0 ? ray.reach / rec.sig : NaN;
   };
-  for (let i = 0; i < 4000 && flight.pos.F - room < gap; i++) {
+  for (let i = 0; i < steps && flight.pos.F - room < gap; i++) {
     const off = axes.map(wall);
     if (!off.every(Number.isFinite) || flight.room !== room) return null;
     const aim = [0, 1, 2].map((a) => axes.reduce((s, e, k) => s + e[a] * off[k], 0)), l = Math.hypot(...aim);

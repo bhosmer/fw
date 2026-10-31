@@ -25,7 +25,7 @@
 import * as P from '../pieces.js';
 import * as twin from '../twin.js';
 import { makeHalls, HALLS, R, M, STANDING, ancestorDigit as hallsDigit } from './halls.js';
-import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen, digest, stored } from '../util.js';
+import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen, digest, stored, keptOnDisk } from '../util.js';
 import { hexahedron, HEXAHEDRON, GROUND } from './hexahedron.js';
 import { townShapeJs, townShapeGlsl, townShapes, TOWN_TYPES } from './town.js';
 import { reliefDirections, buildRelief, listedCarve, builtBy } from './relief.js';
@@ -2521,6 +2521,7 @@ ${CELL_GLSL.cell}
       R, ORIGIN, FACES, T: RELIEF_ROWS, VOLUME, RS, hashCell, TILE_SALT, DIRS: RELIEF_DIRS,
       BITS: { SKIN, FACE_AT, OPEN_AT, CROSS_AT },
       decide: RFN,
+      BARE: BARE_BOX,
     });
   // Its rows, the table uRelief (and the JavaScript's, read as the shader
   // reads them, reliefRow and reliefInt): kept by the browser for the same
@@ -2529,12 +2530,12 @@ ${CELL_GLSL.cell}
   // builder, the decisions' text, what it runs on and its tables, the table
   // of cells, and the rest of what it is given.)
   let RELIEF = null;
-  const reliefTable = () => (RELIEF ??= (({ data, size }) => ({ data, size }))(listed()));
+  const reliefTable = () => (RELIEF ??= keptOnDisk(reliefKey(), () => (({ data, size }) => ({ data, size }))(listed())));
   const reliefKey = () =>
     'relief ' +
     digest([
       builtBy(), Object.values(RELIEF_JS), twin.AS_GLSL, twin.AS_GLSL_VEC, P.beyond.toString(), P.h01.toString(), JSON.stringify(RELIEF_ROWS), JSON.stringify(RELIEF_DIRS), hashCell.toString(), fdiv.toString(),
-      JSON.stringify(FACES.map((F) => [F.n, F.K, F.nl, F.tv, F.solid.lo, F.solid.hi])),
+      JSON.stringify(FACES.map((F) => [F.n, F.K, F.nl, F.tv, F.solid.lo, F.solid.hi])), JSON.stringify(BARE_BOX),
       [R, ...ORIGIN, TILE_SALT, ROW_SALT, POCKET_SALT, DEPTH_SALT, ND, ...RR_FROM, ...RR_N, ...RIDGE_ROWS.size, SKIN, FACE_AT, OPEN_AT, CROSS_AT, ...VOLUME.lo, ...VOLUME.size, VOLUME.words],
       RIDGE_ROWS.data, VOLUME.data, VOLUME.open,
     ]);
