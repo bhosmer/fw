@@ -7,9 +7,8 @@ import { h01 } from '../../src/pieces.js';
 import { rand } from './rand.js';
 
 // The halls the arcology is built of, as a catalogue, apart from the
-// arcology: their cell alone, everywhere (no rule of the arcology's keeping
-// rooms out of some cells), at the levels the arcology has halls (finer
-// than the city's), and their parts.
+// arcology: their cell alone, at the levels the arcology has halls to see
+// (finer than the city's), and their parts.
 const halls = makeHalls();
 const P = R * R;
 const wrapId = (id) => wrapIdR(id, R);
@@ -19,7 +18,7 @@ const LEVELS = 42, someLevel = (rnd) => CITY + 1 + Math.floor(rnd() * LEVELS);
 // of the level whose seed it is (and for a ray, if given, how far it goes).
 function air(q, id, seed, level, ray) {
   const L = q.map(Math.round);
-  return halls.air(L, q.map((x, a) => x - L[a]), id, seed, null, level, null, ray);
+  return halls.air(L, q.map((x, a) => x - L[a]), id, seed, null, level, ray);
 }
 // The same at a point anywhere along the lattice, in the cell it is in
 // (lattice coordinates from cell id's corner).
@@ -171,9 +170,9 @@ test('the halls by level change only their level', () => {
     const level = [-2, -1, 0, 1][i % 4], e = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], m = Math.hypot(...e), dir = e.map((x) => x / m);
     const want = level === -1 ? as : plain;
     const r1 = { dir }, r2 = { dir };
-    const a = by.air(L, f, id, seed, null, level, null, r1), b = want.air(L, f, id, seed, null, level, null, r2);
+    const a = by.air(L, f, id, seed, null, level, r1), b = want.air(L, f, id, seed, null, level, r2);
     if (a !== b || r1.reach !== r2.reach || JSON.stringify(by.room(id, seed, level)) !== JSON.stringify(want.room(id, seed, level)) || JSON.stringify(by.openings(id, seed, level)) !== JSON.stringify(want.openings(id, seed, level))) differ++;
-    if (level === -1 && a !== plain.air(L, f, id, seed, null, level, null)) changed++;
+    if (level === -1 && a !== plain.air(L, f, id, seed, null, level)) changed++;
   }
   assert.equal(differ, 0, `${differ} answers not as their level's halls`);
   assert.ok(changed > 500, `the change made little difference (${changed}): the test sees too little`);
@@ -190,5 +189,5 @@ test('the halls by level change only their level', () => {
   assert.throws(() => makeHalls({ byLevel: { 2: { salt: { built: 1 } } } }), /there is no byLevel\.2\.salt/);
   assert.throws(() => makeHalls({ byLevel: { 2: { byLevel: {} } } }), /there is no byLevel\.2\.byLevel/);
   assert.throws(() => makeHalls({ byLevel: { 2: { walls: { door: { share: 0.9 } } } } }), /halls: walls: shares adding up to/);
-  assert.throws(() => plain.air([1, 1, 1], [0, 0, 0], [0, 0, 0], 1, null, undefined, null), /halls: a cell asked at no level/);
+  assert.throws(() => plain.air([1, 1, 1], [0, 0, 0], [0, 0, 0], 1, null, undefined), /halls: a cell asked at no level/);
 });

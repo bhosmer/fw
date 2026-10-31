@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import arcology, { makeArcology, ARCOLOGY, CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
+import arcology, { makeArcology, ARCOLOGY, CITY, ROW_ID, ROWS, G, VOLUME, _V2 } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR, hashCell } from '../../src/util.js';
 import { rand } from './rand.js';
 import { Flight, UP, DOWN } from '../../src/flight.js';
@@ -551,10 +551,12 @@ test('where the plaza does not fade, its far cells are its air as one piece', ()
   // (Nor does it overstate across cells: the ball its distance claims, air
   // all through or none, holds into the cells round it. Not where the city's
   // air reaches over the sky's plane, up to M, which the cells over it do not
-  // count: ledger B35. X: lattice units from the middle city cell's corner.)
+  // count: ledger B35. X: lattice units from the middle city cell's corner.
+  // As the world has the city's level: cut off at the ground, the plaza's
+  // floor, as airAt cuts it: see ground in worlds.js.)
   const abs = (X) => {
     const c = X.map((x) => Math.floor(x / R));
-    return mine(X.map((x, i) => x - c[i] * R), wrapId([MID + c[0], ROW_ID + c[1], MID + c[2]]));
+    return Math.max(mine(X.map((x, i) => x - c[i] * R), wrapId([MID + c[0], ROW_ID + c[1], MID + c[2]])), G - X[1]);
   };
   const overSky = (X) => X[1] > ROWS * R - 1e-6 && X[1] < ROWS * R + M + 1e-6;
   let balls = 0;
@@ -650,7 +652,7 @@ test('under the ground there is no air, at any level', () => {
     // (Points round us, across: within the well, over one; else half a cell.)
     const half = well ? Math.pow(R, F - CITY - 1) : 0.5;
     // (Our cell's bottom on the floor: at the city's level, the floor is G up its cell.)
-    Object.assign(flight.pos, { F, frac: [rnd(), (F === CITY ? (VOLUME.lo[1] + 0.02) / R : 0.02) + 0.5 * rnd(), rnd()], digits });
+    Object.assign(flight.pos, { F, frac: [rnd(), (F === CITY ? (G + 0.02) / R : 0.02) + 0.5 * rnd(), rnd()], digits });
     const g = flight.pos.groundHeight();
     assert.ok(g > 0 && g < 1, `the floor is ${g} under us`);
     for (const r of flight.pos.levels(F - UP, F + DOWN)) {
@@ -711,7 +713,7 @@ test('pressed onto the floor, the room we are in is the plaza', () => {
   const flight = new Flight(arcology), rnd = rand(51);
   for (let k = 0; k < 200; k++) {
     const F = 2 + (k % 20);
-    const digits = new Map([[CITY, [Math.floor(rnd() * R), ROW_ID % R, Math.floor(rnd() * R)]], [CITY + 1, [Math.floor(rnd() * R), VOLUME.lo[1], Math.floor(rnd() * R)]]]);
+    const digits = new Map([[CITY, [Math.floor(rnd() * R), ROW_ID % R, Math.floor(rnd() * R)]], [CITY + 1, [Math.floor(rnd() * R), G, Math.floor(rnd() * R)]]]);
     for (let j = CITY + 2; j <= F; j++) digits.set(j, [Math.floor(rnd() * R), 0, Math.floor(rnd() * R)]);
     Object.assign(flight.pos, { F, frac: [rnd(), 0.02 + 0.2 * rnd(), rnd()], digits });
     flight.begin();

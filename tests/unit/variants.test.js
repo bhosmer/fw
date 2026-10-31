@@ -102,20 +102,6 @@ test('every part of a variant is made', () => {
   }
 });
 
-// The arcology's halls have rooms only where it lets them (see spaceRoom):
-// on the city's row, away from the buildings, none, though the halls alone
-// would have some; and nowhere more than the halls alone.
-test('the arcology\'s rooms are the halls\' where it lets them be', () => {
-  const seed = levelSeed(-2), halls = makeHalls();
-  let fewer = 0;
-  for (let a = -9; a <= 9; a++) for (let c = -9; c <= 9; c++) for (const y of [0, 1]) {
-    const id = [300 + a, 300 + y, 300 + c], mine = arcology.room(id, seed, -2), theirs = halls.room(id, seed, -2);
-    assert.ok(!mine || theirs, `a room at ${id} the halls have not`);
-    if (theirs && !mine) fewer++;
-  }
-  assert.ok(fewer > 20, `${fewer} rooms the arcology does without`);
-});
-
 // What a definition does not have, or of another kind, is refused; and a
 // definition made cannot be changed after.
 test('a variant must be one the definition has', () => {
@@ -139,7 +125,8 @@ test('a variant must be one the definition has', () => {
   assert.throws(() => { v.def.halls.solid = 0.1; }, TypeError);
   assert.throws(() => { v.def.building.slopes.upper[0] = 3; }, TypeError, 'a variant\'s own parts are frozen');
   assert.ok(!Object.isFrozen(up), 'what was given is not');
-  assert.throws(() => makeArcology({ halls: { byLevel: { '-3': { solid: 0.5 } } } }), /arcology: halls\.byLevel\.-3: there are no halls coarser than the city's level/);
+  assert.throws(() => makeArcology({ halls: { byLevel: { '-3': { solid: 0.5 } } } }), /arcology: halls\.byLevel\.-3: there are no halls to see at or coarser than the city's level/);
+  assert.throws(() => makeArcology({ halls: { byLevel: { '-2': { solid: 0.5 } } } }), /arcology: halls\.byLevel\.-2: there are no halls to see at or coarser than the city's level/);
   assert.equal(makeArcology({ halls: { solid: 0.5, byLevel: { '-1': { rooms: { low: { share: 0.3 } } } } } }).def.halls.byLevel['-1'].solid, 0.5, 'a level\'s halls start from the arcology\'s');
   assert.throws(() => makeArcology({ building: { edge: 'nope' } }), /no edge nope \(there are cornice, steps/);
   // (And what the rest of the arcology needs of a variant: see check.)

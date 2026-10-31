@@ -24,17 +24,16 @@ export const M = 3; // half the wall thickness between two rooms
 const HLO = 12; // ceiling height of a low room (see rooms in HALLS)
 
 // What the halls make of a cell's hashes, in one place for both copies (and
-// for the planner, and the arcology's light wells): each choice is a hash of
-// the cell, salted for what it chooses, as a number from 0 to 1, which picks
-// one of the kinds of each part in order, each taking its share of the
-// numbers (the last, what is left). The first kind of the walls, slabs and
-// furniture is nothing there (a wall with no opening, a solid slab, an
-// empty room). The halls' pieces, in both languages, are written from the
-// kinds (see pieces below). Sizes are lattice units; a size may be an
-// expression (see check in twin.js) in C, M, R, HLO, FAR (so far off it is
-// never met: no gable, no top, no cut), and the cell's hash h, by its
-// helpers bit(h, n), field(h, n, m) and among(h, n) (one of n, 0 to n - 1);
-// and div, min and max.
+// for the planner): each choice is a hash of the cell, salted for what it
+// chooses, as a number from 0 to 1, which picks one of the kinds of each part
+// in order, each taking its share of the numbers (the last, what is left). The
+// first kind of the walls, slabs and furniture is nothing there (a wall with
+// no opening, a solid slab, an empty room). The halls' pieces, in both
+// languages, are written from the kinds (see pieces below). Sizes are lattice
+// units; a size may be an expression (see check in twin.js) in C, M, R, HLO,
+// FAR (so far off it is never met: no gable, no top, no cut), and the cell's
+// hash h, by its helpers bit(h, n), field(h, n, m) and among(h, n) (one of n,
+// 0 to n - 1); and div, min and max.
 export const HALLS = {
   solid: 0.65, // the share of cells left solid, with no room
   // Rooms, by their ceilings' height over the floor: low, or tall, filling
@@ -403,18 +402,14 @@ function pieces(js, levels, salt) {
     : ['  int cu, hw, y0, sp, top;', '  if (!wallShape(h, u, fu, level, cu, hw, y0, sp, top)) return 1e9;']));
   out.push('  ' + decl('int', 'x = u - cu, yy = y - M - y0'), '  airPiece();', ...twin.planes(js, 'air', TUNNEL).map((l) => '  ' + l), `  return ${D};`, '}');
 
-  // An opening through a slab, from y0 to y1 (see HOLE), as h picks it: in
-  // a room's floor or ceiling (slabOpening: the one above, up, or below), or
-  // carried further (as the arcology's light wells are, up to its plaza).
-  out.push(fn('float', 'slabHole', ['ivec3 L', 'vec3 f', 'int y0', 'int y1', 'uint h', 'int level']));
+  // An opening through a slab (see HOLE), as h picks it, in a room's floor or
+  // ceiling: the one above (up), from the room's ceiling to M into the cell
+  // over it, or below, from M under the cell to over its floor (y0 to y1).
+  out.push(fn('float', 'slabOpening', ['ivec3 L', 'vec3 f', 'bool up', 'int H', 'uint h', 'int level']));
   out.push('  ' + decl('int', 'w, dg', true));
   out.push(...atLevel((kinds) => choose(kinds.slabs, (k) => [`w = ${e(k.half)}; dg = ${e(k.cut)};`], NOTHING)));
+  out.push('  ' + decl('int', 'y0 = up ? M + H - 1 : -M, y1 = up ? R + M : M + 1'));
   out.push('  airPiece();', ...twin.planes(js, 'air', HOLE).map((l) => '  ' + l), `  return ${D};`, '}');
-  out.push(fn('float', 'slabOpening', ['ivec3 L', 'vec3 f', 'bool up', 'int H', 'uint h', 'int level']));
-  out.push('  return slabHole(L, f, up ? M + H - 1 : -M, up ? R + M : M + 1, h, level);', '}');
-  // (And in JavaScript, the opening's half width, or none: for a check of
-  // where there is one.)
-  if (js) out.push('function slabHalf(h, level) {', ...atLevel((kinds) => choose(kinds.slabs, (k) => [`return ${e(k.half)};`], 'null')), '}');
 
   // Solid things standing in the room: the distance to the nearest
   // (negative inside it). under and over are what picks the openings in
@@ -492,14 +487,14 @@ function pieces(js, levels, salt) {
   // whichever it is in for longest. Each piece is first asked only its
   // distance; only one the point turns out to be in is asked again, for
   // where the ray leaves it (asking that of every piece costs far more).
-  // (Where the languages differ: a cell's hash, salted or not; whether a
-  // cell has a room; a neighbour's id, d from this one; and a piece the
-  // point is in, d its distance as first asked, asked again for the ray.
+  // (Where the languages differ: a cell's hash, salted or not; a neighbour's
+  // id, d from this one; and a piece the point is in, d its distance as first
+  // asked, asked again for the ray.
   // Otherwise the text is both's: in JavaScript float and abs are as GLSL
   // has them, min and max the language's own, and a whole number is halved
   // by div.)
   const hash = (id, s) => `hashCell(${id}, ${s === undefined ? 'seed' : `seed ^ ${js ? `0x${(s >>> 0).toString(16)}` : hexu(s)}`})`;
-  const hasRoom = (id) => (js ? `built(${id}, seed, level, rule)` : `built(${id}, seed, level)`);
+  const hasRoom = (id) => `built(${id}, seed, level)`;
   const next = (d) => (js ? `wrapId([${d.map((x, a) => (x === 0 ? `id[${a}]` : `id[${a}] + (${x})`)).join(', ')}])` : `wrapId(id + ivec3(${d.join(', ')}))`);
   const most = (f, xs) => xs.reduce((a, x) => `${f}(${a}, ${x})`);
   const half = (x) => (js ? `div(${x}, 2)` : twin.HELPERS.div.glsl([x, '2']));
@@ -510,7 +505,7 @@ function pieces(js, levels, salt) {
   const slabIn = 'slabOpening(L, f, hy, H, hwy, level)', roomIn = 'roomAir(L, f, H, hf, h01(hdn), h01(hup), level)';
   // (In GLSL, the cell asks its pieces with gRay clear but where it says,
   // and gives it back as it was: see hallsCell below.)
-  out.push(js ? 'function hallsAir(L, f, id, seed, dg, level, rule, ray) {' : 'float hallsCellIn(ivec3 L, vec3 f, ivec3 id, uint seed, int level, bool ray, out float reach, out vec3 nrm) {');
+  out.push(js ? 'function hallsAir(L, f, id, seed, dg, level, ray) {' : 'float hallsCellIn(ivec3 L, vec3 f, ivec3 id, uint seed, int level, bool ray, out float reach, out vec3 nrm) {');
   out.push(...(js ? ["if (!Number.isInteger(level)) throw new Error('halls: a cell asked at no level');", 'at(L, f, dg);'] : []).map((l) => '  ' + l), ...aim('  '));
   out.push(
     ...[
@@ -594,21 +589,19 @@ export function makeHalls(set) {
   const to = (part, name, level) => kindsAt(wholeLevel(level))[part].find((k) => k.name === name).to;
   const C = R / 2;
   const HHI = R - 2 * M;
-  // Does this cell have a room in it? (rule: where the space allows a room,
-  // as spaceRoom in the GLSL; none, everywhere.)
-  const built = (id, seed, level, rule) => (!rule || rule(id, seed)) && h01(hashCell(id, seed ^ salt.built)) >= threshold(specAt(wholeLevel(level)).solid);
+  // Does this cell have a room in it?
+  const built = (id, seed, level) => h01(hashCell(id, seed ^ salt.built)) >= threshold(specAt(wholeLevel(level)).solid);
   // The halls in JavaScript, made into functions (the flight asks the cell
   // every frame: asking the GPU would mean waiting for it; the tests compare
   // the two languages); and of them, hallsAir:
-  // the halls cell's distance at L + f (dg: its diagonals, see pieces.at; rule:
-  // where the space allows a room, as spaceRoom in the GLSL; none,
-  // everywhere). And if ray is given ({ dir }), for a ray along dir from
-  // there: how far it goes in the piece of air it is in (reach, in lattice
-  // units; less than 0, in solid), and the surface it meets there (nx, ny,
-  // nz); known says whether the cell answers that (here, always).
-  const { roomHigh, wallShape, slabHole, slabHalf, furnitureKind, hallsAir } = new Function(
+  // the halls cell's distance at L + f (dg: its diagonals, see pieces.at). And
+  // if ray is given ({ dir }), for a ray along dir from there: how far it goes
+  // in the piece of air it is in (reach, in lattice units; less than 0, in
+  // solid), and the surface it meets there (nx, ny, nz); known says whether
+  // the cell answers that (here, always).
+  const { roomHigh, wallShape, furnitureKind, hallsAir } = new Function(
     'P', 'C', 'M', 'R', 'HLO', 'HHI', 'FAR', 'H2', 'hashCell', 'wrapId', 'built',
-    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\n${twin.AS_GLSL}\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabHole, slabHalf, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
+    `'use strict';\nconst { S, at, aim, through, airPiece, airPlane, airSpan, solidPiece, solidPlane, solidSpan, solidDone, diag, h01, beyond, NONE } = P;\n${twin.AS_GLSL}\n${twin.jsHelpers(LANG)}\n${pieces(true, levels, salt)}\nreturn { roomHigh, wallShape, wallOpening, slabOpening, furniture, roomAir, furnitureKind, hallsAir };\n//# sourceURL=hallsPieces.gen.js`,
   )(P, C, M, R, HLO, HHI, FAR, Math.SQRT1_2, hashCell, wrapId, built);
 
   // (The arcology builds on these: hallsGlsl and hallsAir are a halls cell,
@@ -620,9 +613,7 @@ const int FAR = ${FAR};
 const int HHI = R - 2 * M;
 // Does this cell have a room in it? Some are left solid, so that a surface
 // which cuts through cells (any diagonal) is not all cut-open rooms.
-// (And only where the arcology allows a room: spaceRoom, which it defines.)
-bool spaceRoom(ivec3 id, uint seed);
-bool built(ivec3 id, uint seed, int level) { return spaceRoom(id, seed) && h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= (${[...Object.entries(spec.byLevel).filter(([, s]) => s.solid !== spec.solid).map(([l, s]) => `level == ${l} ? ${glf(threshold(s.solid))} : `), glf(threshold(spec.solid))].join('')}); }
+bool built(ivec3 id, uint seed, int level) { return h01(hashCell(id, seed ^ ${hexu(salt.built)})) >= (${[...Object.entries(spec.byLevel).filter(([, s]) => s.solid !== spec.solid).map(([l, s]) => `level == ${l} ? ${glf(threshold(s.solid))} : `), glf(threshold(spec.solid))].join('')}); }
 
 ${pieces(false, levels, salt)}
 
@@ -635,8 +626,8 @@ ${pieces(false, levels, salt)}
   // the middle of where it crosses the face, the way across it (e), and the
   // cell on the other side. (Of a row of openings, the one at the wall's
   // middle.) The same hashes as above.
-  function hallsRoom(id, seed, level, rule) {
-    if (!built(id, seed, level, rule)) return null;
+  function hallsRoom(id, seed, level) {
+    if (!built(id, seed, level)) return null;
     const H = roomHigh(hashCell(id, seed), level);
     // (What stands in it, as furniture has it: whether it is in a way
     // across the room's middle.)
@@ -644,14 +635,14 @@ ${pieces(false, levels, salt)}
     const stands = furnitureKind(hashCell(id, seed ^ salt.furniture), under, over, level);
     return { H, middle: [C, M + (H >> 1), C], piers: !!stands && !!specAt(level).furniture[stands].blocks };
   }
-  function hallsOpenings(id, seed, level, rule) {
-    const here = built(id, seed, level, rule);
+  function hallsOpenings(id, seed, level) {
+    const here = built(id, seed, level);
     const out = [];
     for (const [a, sign] of [[0, 1], [0, -1], [2, 1], [2, -1], [1, 1], [1, -1]]) {
       const e = [0, 0, 0];
       e[a] = sign;
       const nb = wrapId(id.map((x, b) => x + e[b]));
-      if (!here && !built(nb, seed, level, rule)) continue;
+      if (!here && !built(nb, seed, level)) continue;
       // A face belongs to the cell on its lower side.
       const owner = sign > 0 ? id : nb;
       const at = [C, 0, C];
@@ -669,7 +660,7 @@ ${pieces(false, levels, salt)}
     return out;
   }
 
-  return { spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built, slabHole, slabHalf };
+  return { spec, kindsAt, to, glsl: hallsGlsl, air: hallsAir, room: hallsRoom, openings: hallsOpenings, built };
 }
 
 // Standing height in the middle of a room, in its cell.
