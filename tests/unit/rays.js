@@ -13,7 +13,9 @@ import assert from 'node:assert/strict';
 // some level says the ray goes on through its air (as the shader marches,
 // which stops where none does: a level whose way ended short of its
 // surface, with nothing to take the ray on, would draw a surface that is
-// not there). Says whether it was known, and in air.
+// not there); and each level's distance there says the same, so that the
+// hand-over is not taken on the word of the rays alone. Says whether it was
+// known, and in air.
 // (at: where the point is, for the messages.)
 export function rayHolds(flight, r, v, dir, at = '') {
   const R = flight.space.R;
@@ -27,28 +29,43 @@ export function rayHolds(flight, r, v, dir, at = '') {
   assert.ok(ray.reach >= -a - 1e-9, `reach ${ray.reach} less than the distance ${-a}, ${where}`);
   assert.ok(Math.abs(Math.hypot(ray.nx, ray.ny, ray.nz) - 1) < 1e-9 && ray.nx * dir[0] + ray.ny * dir[1] + ray.nz * dir[2] <= 1e-12, `normal ${[ray.nx, ray.ny, ray.nz]}, ${where}`);
   // (Covered by balls of air, each as big as the clearance of the level,
-  // or past its cell of the levels no finer and the sky, says.)
-  const end = ray.reach / r.sig;
+  // or past its cell of the levels no finer and the sky, says: all the way
+  // to the end. Each step is at least a millionth of the way, so the walk
+  // ends; where a ball is smaller than that, the step goes on unchecked,
+  // and those steps together may cover no more than a thousandth of the
+  // way.) (Cells of level F.)
+  const end = ray.reach / r.sig, least = end * 1e-6;
   const cellOf = (u) => [0, 1, 2].map((a) => Math.floor((r.L[a] + r.f[a] + u[a] * r.sig) / R)).join();
   const home = cellOf(v);
-  for (let t = 0, n = 0; t < end * (1 - 1e-6) && n < 4000; n++) {
+  let t = 0, unchecked = 0;
+  for (let n = 0; t < end * (1 - 1e-6); n++) {
+    assert.ok(n <= 1e6, `the walk did not end: at ${t} of ${end} after ${n} steps, ${where}`);
     const u = v.map((x, i) => x + dir[i] * t);
     const inHome = cellOf(u) === home, levels = inHome ? [r] : flight.here.filter((q) => q.level <= r.level);
     const b = Math.max(inHome ? -Infinity : flight.sky + u[1], ...levels.map((q) => -flight.airAt(q, u) / q.sig));
     assert.ok(b >= -1e-9 / r.sig, `solid (${-b} cells) at ${t * r.sig} of reach ${ray.reach}, ${where}`);
-    t += Math.max(b, end * 1e-6);
+    if (b < least) unchecked += least - b;
+    t += Math.max(b, least);
   }
+  assert.ok(unchecked <= 1e-3 * end, `${unchecked / end} of the way stepped over unchecked (balls under a millionth of it), ${where}`);
   // (Just past: a millionth of the way, or of the level's lattice unit,
   // whichever is more; open above the sky's plane, where the shader stops
   // marching. A level that does not answer rays goes on as far as its
   // distance says.)
   const p = v.map((x, i) => x + dir[i] * (end + 1e-6 * Math.max(end, 1 / r.sig)));
   if (flight.sky + p[1] <= 0) {
-    const on = flight.here.map((q) => {
-      const next = { dir }, b = flight.airAt(q, p, next);
-      return next.known ? next.reach : b <= 0 ? -b : -1;
+    const d = flight.here.map((q) => flight.airAt(q, p));
+    const on = flight.here.map((q, j) => {
+      const next = { dir };
+      flight.airAt(q, p, next);
+      return next.known ? next.reach : d[j] <= 0 ? -d[j] : -1;
     });
-    assert.ok(on.every((x) => x < 0) || on.some((x) => x > 0), `the ray is handed over to none just past its end (${on.map((x, j) => `level ${flight.here[j].level}: ${x}`).join(', ')}), ${where}`);
+    const said = () => on.map((x, j) => `level ${flight.here[j].level}: ${x} (distance ${d[j]})`).join(', ');
+    assert.ok(on.every((x) => x < 0) || on.some((x) => x > 0), `the ray is handed over to none just past its end (${said()}), ${where}`);
+    // (And the distances agree: where every level says the ray stops, each
+    // is solid there; where one says it goes on, that one is in air.)
+    if (on.every((x) => x < 0)) assert.ok(d.every((x) => x > 0), `just past its end the rays say solid, but a distance says air (${said()}), ${where}`);
+    else assert.ok(on.every((x, j) => !(x > 0) || d[j] <= 0), `just past its end a level's ray goes on, but its distance says solid (${said()}), ${where}`);
   }
   return { known: true, inAir: true };
 }
