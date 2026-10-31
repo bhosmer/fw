@@ -30,6 +30,45 @@ export function trace(ctx, dir, steps = 60, finest = Infinity) {
   flight.sense();
   return log;
 }
+// A ray from where the flight is along dir, through the air of the levels
+// recs (by default every level around us: the world as it is), each asked
+// how far the ray goes in its air, exactly and unfaded, and stepped as the
+// shader's march steps it: to the furthest way out any of them gives, and on
+// from just past it. And, if given, through outer: a half-space of air
+// ({ normal, dist }, as the view's outer plane: see outerAir in view.js).
+// Over the sky's plane a ray going up is gone, and one coming down has a
+// clear run to the ground. No further than far; a level whose cells are less
+// than a ten-millionth of the way gone is left out (past its numbers there,
+// and too small to matter). Returns how far the ray went (t), and whether it
+// met a surface there (hit). In level-F cells.
+export function rayThrough(flight, dir, far, recs = flight.airs.map((a) => a.rec), outer = null) {
+  const R = flight.R, ray = { dir };
+  let t = 0;
+  for (let k = 0; k < 400; k++) {
+    const v = dir.map((x) => x * t);
+    let best = -1;
+    if (outer) {
+      const above = outer.normal.reduce((s, n, a) => s + n * v[a], 0) + outer.dist;
+      const fall = -outer.normal.reduce((s, n, a) => s + n * dir[a], 0);
+      if (above > 0) best = fall > 0 ? above / fall : Infinity;
+    }
+    const high = flight.sky + v[1];
+    if (high > 0) {
+      if (dir[1] >= 0) return { t: Infinity, hit: false };
+      best = Math.max(best, high / -dir[1]);
+    }
+    for (const r of recs) {
+      if (R / r.sig < 1e-7 * t) continue;
+      flight.airAt(r, v, ray);
+      if (ray.known && ray.reach >= 0) best = Math.max(best, ray.reach / r.sig);
+    }
+    if (best < 0) return { t, hit: true };
+    t += best + 1e-9 * t + 1e-12;
+    if (t > far) return { t: far, hit: false };
+  }
+  return { t, hit: true };
+}
+
 // Compare the JavaScript cell function with the shader's along a random
 // flight, at the camera and at points round it out to a few cells away
 // (where cells, diagonals and slants are found from the camera's): returns
