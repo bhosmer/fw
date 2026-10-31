@@ -333,6 +333,7 @@ test('with every piece cut in two halves that overlap, rays end where they did, 
 // (on a seam) are what the cover is for, and are counted.
 test('where pieces of air meet, one holds the point: no sheet at either level, nor between them', () => {
   const rnd = rand(12), phys = pieces.map((p, i) => i).filter((i) => !pieces[i].cover);
+  const byText = (p) => p.planes.map((q, k) => [JSON.stringify(q), k]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, k]) => k);
   // (Whether Y is in a physical piece at one of the levels lvs, as its cell
   // lists them; and not inside a solid without relief, where the city's
   // air is clipped (bareIn in arcology.js).)
@@ -344,7 +345,9 @@ test('where pieces of air meet, one holds the point: no sheet at either level, n
   const fields = { city: [0], finer: [1], both: [0, 1] }, out = {};
   for (const [name, lvs] of Object.entries(fields)) out[name] = { asked: 0, seam: 0, sheets: 0, ex: [] };
   for (let s = 0; s < 40000; s++) {
-    const p = pieces[phys[Math.floor(rnd() * phys.length)]], j = Math.floor(rnd() * p.planes.length), q = p.planes[j], len = Math.hypot(...q.a);
+    // (Its planes in an order of their own, not the rows': the points asked
+    // are the same however the builder orders a piece's planes.)
+    const p = pieces[phys[Math.floor(rnd() * phys.length)]], j = byText(p)[Math.floor(rnd() * p.planes.length)], q = p.planes[j], len = Math.hypot(...q.a);
     // (A point of the piece's side on plane j: one in its bounds, onto the plane, within the rest.)
     const Y0 = p.bb.map(([lo, hi]) => lo + rnd() * (hi - lo)), s0 = (q.a[0] * Y0[0] + q.a[1] * Y0[1] + q.a[2] * Y0[2] - q.b) / (len * len);
     const X = Y0.map((x, a) => x - s0 * q.a[a]);

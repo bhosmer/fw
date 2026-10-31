@@ -370,6 +370,35 @@ export function buildRelief(ctx) {
     const sc = c.lv === 0 ? R : 1, faces = c.members.reduce((m, id) => m | (rows[id].lv === c.lv ? 1 << faceOf(rows[id]) : 0), 0);
     list({ b: { lv: c.lv, k: -1, faces }, pl, fp: pl.map((pi) => floatOf(pi, c.lv)), bb: c.box.map(([a, d]) => [a * sc, d * sc]), src: COVER_SRC + i, seams, cross: c.cross });
   });
+  // Each piece's planes in the order that ends its asking soonest (carve
+  // stops at the first plane the point is past by the clearance found so
+  // far): of the points of a grid over its bounds (4 to a side) outside
+  // it, first the plane most are past, then the one most of the rest are
+  // past, and so on; the rest as they were. (The same air, and the same
+  // answers but where two planes tie for a ray's way out.)
+  // (The grid's 64 points as two words of bits.)
+  const bits = (x) => { x -= (x >>> 1) & 0x55555555; x = (x & 0x33333333) + ((x >>> 2) & 0x33333333); return (((x + (x >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24; };
+  for (const r of rows) {
+    const n = r.pl.length, lo = new Uint32Array(n), hi = new Uint32Array(n);
+    const [[x0, x1], [y0, y1], [z0, z1]] = r.bb;
+    for (let m = 0; m < n; m++) {
+      const { a, b } = floatOf(r.pl[m], r.lv);
+      for (let g = 0; g < 64; g++) {
+        const x = x0 + (((g & 3) + 0.5) / 4) * (x1 - x0), y = y0 + ((((g >> 2) & 3) + 0.5) / 4) * (y1 - y0), z = z0 + (((g >> 4) + 0.5) / 4) * (z1 - z0);
+        if (a[0] * x + a[1] * y + a[2] * z > b) g < 32 ? (lo[m] |= 1 << g) : (hi[m] |= 1 << (g - 32));
+      }
+    }
+    let leftLo = 0, leftHi = 0;
+    for (let m = 0; m < n; m++) (leftLo |= lo[m]), (leftHi |= hi[m]);
+    const order = [], taken = new Uint8Array(n);
+    while (leftLo || leftHi) {
+      let best = -1, most = 0;
+      for (let m = 0; m < n; m++) { const c = taken[m] ? 0 : bits(lo[m] & leftLo) + bits(hi[m] & leftHi); if (c > most) (best = m), (most = c); }
+      order.push(best), (taken[best] = 1), (leftLo &= ~lo[best]), (leftHi &= ~hi[best]);
+    }
+    for (let m = 0; m < n; m++) if (!taken[m]) order.push(m);
+    r.pl = order.map((m) => r.pl[m]);
+  }
   // (Each list in a stable order: by source.)
   for (const ls of lists) for (const l of ls) l.sort((i, j) => rows[i].src - rows[j].src || i - j);
   const { data, size, at } = writeRows({ lists, rows, planeRows, size: vsz });
