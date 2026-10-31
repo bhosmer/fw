@@ -28,6 +28,7 @@ import { makeHalls, HALLS, R, M, STANDING, ancestorDigit as hallsDigit } from '.
 import { hash32, hashCell, hsv, levelSeed, wrapId as wrapIdR, glf, hexu, define, frozen } from '../util.js';
 import { hexahedron, HEXAHEDRON, GROUND } from './hexahedron.js';
 import { townShapeJs, townShapeGlsl, townShapes, TOWN_TYPES } from './town.js';
+import { reliefDirections, buildRelief } from './relief.js';
 
 const wrapId = (id) => wrapIdR(id, R);
 const C = R / 2;
@@ -2988,10 +2989,23 @@ ${CELL_GLSL.cell}
   // the rest), RS.
   const RS = { U0: 0, U1: 0, Y0: 0, Y1: 0, Depth: 0, RY0: 0, RY1: 0, RT: 0, RTC: 0, RCY0: 0, RCY1: 0, Pu: 0, Py: 0, PYi: 0, Pni: 0, Pfu: 0, Pfy: 0, PYf: 0, Pnf: 0, Cter: false, Cyin: 0, Cdn: 0, Cyb: 0, Cback: 0, Cap: 0, EdgeBox: { on: false }, Far: 1e9 };
   const RELIEF_JS = reliefPieces(true);
-  const { ridgeRow: ridgeRowAt, depthN, carve, cityFaces } = new Function(
+  const RFN = new Function(
     'P', 'RS', 'SL', 'SLANT', 'FOUR', 'openLo', 'openHi', 'CELL', 'lowBit', 'TILE_SALT', 'NF', 'BAND_IN', 'BAND_OUT', 'ORIGIN', 'R', 'hashCell', 'fdiv', 'ND', 'ROW_SALT', 'POCKET_SALT', 'DEPTH_SALT', 'RR_FROM', 'RR_N', 'RR_W', 'RR_DATA', ...Object.keys(RELIEF_ROWS),
     `'use strict';\nconst { S: PS, beyond, h01, airPiece, airPlane, airSpan } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max, floor = Math.floor, round = Math.round, sqrt = Math.sqrt, clamp = (x, a, b) => Math.min(Math.max(x, a), b), normalize = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };\n${RELIEF_JS.rect}\n${RELIEF_JS.decide}\n${RELIEF_JS.face}\n${RELIEF_JS.heights}\n${RELIEF_JS.cut}\n${RELIEF_JS.notch}\n${RELIEF_JS.pocket}\n${RELIEF_JS.carve}\n${RELIEF_JS.cityFaces}\nreturn { rectangle, ridgeRow, rectDepth, faceAt, depthN, depthOut, heights, cutOf, notchBox, facePocket, carve, cityFaces };\n//# sourceURL=reliefPieces.gen.js`,
   )(P, RS, SL, SLANTS, FOUR.k, openLo, openHi, CELL, lowBit, TILE_SALT, FACES.length, BAND_IN, BAND_OUT, ORIGIN, R, hashCell, fdiv, ND, ROW_SALT, POCKET_SALT, DEPTH_SALT, RR_FROM, RR_N, RIDGE_ROWS.size[0], RIDGE_ROWS.data, ...Object.values(RELIEF_ROWS));
+  const { ridgeRow: ridgeRowAt, depthN, carve, cityFaces } = RFN;
+  // The relief as listed pieces of air (see relief.js), from the decisions
+  // above: built when first asked for. (Nothing draws from it yet: the
+  // checks compare it with the decisions themselves.)
+  const RELIEF_DIRS = reliefDirections({ FACES, T: RELIEF_ROWS, R });
+  let LISTED = null;
+  const listed = () =>
+    (LISTED ??= buildRelief({
+      R, ORIGIN, FACES, T: RELIEF_ROWS, VOLUME, RS, hashCell, TILE_SALT, DIRS: RELIEF_DIRS,
+      BITS: { SKIN, FACE_AT, OPEN_AT, CROSS_AT },
+      decide: { rectangle: RFN.rectangle, rectDepth: RFN.rectDepth, cutOf: RFN.cutOf, ridgeRow: RFN.ridgeRow, depthN },
+    }));
+  Object.assign(_V2, { listed, reliefCarve: (lv, L, f, base, faces) => carve(lv, L, f, base, faces, P.NONE, null), reliefFaces: (L, f, o) => cityFaces(L, f, o), setPoint, CELL });
   // (Every face's shallowest cuts one level finer, 1 to 3 twelfths, at least
   // a whole number of its measure deep: else one would not be cut at all.)
   if (FACES.some((F, k) => [1, 2, 3].some((t) => !(depthN(k, R, [Math.floor(t / 3), t % 3]) > 0)))) throw new Error('arcology: a cut too shallow for its face');
