@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import arcology, { makeArcology, ARCOLOGY, CITY, ROW_ID, ROWS, VOLUME, _V2 } from '../../src/spaces/arcology.js';
 import { levelSeed, wrapId as wrapIdR, hashCell } from '../../src/util.js';
 import { rand } from './rand.js';
-import { Flight } from '../../src/flight.js';
+import { Flight, UP, DOWN } from '../../src/flight.js';
+import { airAt } from '../../src/air.js';
+import { INSIDE } from './inside.js';
 import { rayHolds } from './rays.js';
 import { clippedRays } from './clipped.js';
 import { M } from '../../src/spaces/halls.js';
@@ -429,8 +431,8 @@ test('what the openings and the town say of a ray holds', () => {
 // Rays at the city's level (see city and cell in the shader): from points
 // in the plaza's air round the buildings (both rows), along the axes and
 // diagonals and toward the buildings' middle; in the city's pockets in the
-// faces; down the light wells into the halls under them; and up from the
-// top row into the sky. What a level says of a ray holds (see rayHolds).
+// faces; and up from the top row into the sky. (The light wells are under
+// the ground: no air.) What a level says of a ray holds (see rayHolds).
 // (Where the plaza does not fade, too: its pieces are then the whole height
 // of the city's rows, and far out one piece: see plaza.)
 for (const fades of [true, false]) {
@@ -450,7 +452,7 @@ for (const fades of [true, false]) {
       const r = flight.pos.levels(CITY, Math.max(CITY, flight.pos.F)).find((q) => q.level === CITY);
       return es.reduce((n, e) => n + rayHolds(flight, r, [0, 0, 0], e.map((u) => u / Math.hypot(...e)), `city point ${x}`).inAir, 0);
     };
-    const count = { plaza: 0, pockets: 0, bare: 0, clipped: 0, wells: 0, sky: 0 };
+    const count = { plaza: 0, pockets: 0, bare: 0, clipped: 0, sky: 0 };
     // (The plaza's air round the buildings, both rows.)
     for (const key of _V2.NEAR.keys()) {
       const [a, b, c] = key.split(',').map(Number);
@@ -482,22 +484,12 @@ for (const fades of [true, false]) {
     // found.)
     const stopped = clippedRays(rnd, 6000);
     for (const [x, e] of stopped) count.clipped += ask(x, [e]);
-    // (The wells, of the cells round the middle one on the bottom row: down
-    // into the halls, and up.)
-    for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) {
-      const id = [_V2.MID + a, ROW_ID, _V2.MID + c], w = _V2.wellOf(id, seed);
-      if (!w) continue;
-      for (let k = 0; k < 30; k++) {
-        const x = [a * R + R / 2 + (2 * rnd() - 1) * (w.w - 0.5), rnd() * (M + 1), c * R + R / 2 + (2 * rnd() - 1) * (w.w - 0.5)];
-        count.wells += ask(x, [[rnd() - 0.5, -1, rnd() - 0.5], [rnd() - 0.5, 1, rnd() - 0.5]]);
-      }
-    }
     // (Up from the top row, into the sky.)
     for (let k = 0; k < 300; k++) {
       const x = [middle[0] + (2 * rnd() - 1) * 2 * R, (ROWS - rnd() * 0.5) * R, middle[2] + (2 * rnd() - 1) * 2 * R];
       count.sky += ask(x, [[rnd() - 0.5, 1, rnd() - 0.5]]);
     }
-    assert.ok(count.plaza > 1000 && count.pockets > 500 && count.bare > 300 && count.clipped >= 10 && count.wells > 50 && count.sky > 200, `rays in air: ${JSON.stringify(count)}: the test reaches what it means to`);
+    assert.ok(count.plaza > 1000 && count.pockets > 500 && count.bare > 300 && count.clipped >= 10 && count.sky > 200, `rays in air: ${JSON.stringify(count)}: the test reaches what it means to`);
   });
 }
 
@@ -643,4 +635,128 @@ test('where the plaza does not fade, its far cells are its air as one piece', ()
     if (ray.reach > 10 * R) far++;
   }
   assert.ok(rays > 600 && far > 100, `rays in air: ${rays}, ${far} of them far: the test reaches what it means to`);
+});
+
+// Under the ground (the plaza's floor) there is only solid, at every level
+// (see ground in worlds.js): over every cell of the building's table's
+// bottom row and the ring round it, on a grid, rays from just over the floor
+// going down end at it, and just under it no level of the halls has air. (Before
+// the ground: pits under the open cells by the building, ledger F2.)
+test('no ray goes down past the floor by the building, and under it there is no air', () => {
+  const flight = new Flight(arcology), { lo, size } = VOLUME, G = lo[1];
+  const city = (c) => Math.floor(c / R), own = (c) => ((c % R) + R) % R;
+  const grid = [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95], dirs = [[0, -1, 0], [0.6, -0.8, 0], [0, -0.8, 0.6]];
+  let rays = 0, points = 0;
+  for (let z = -1; z <= size[2]; z++) for (let x = -1; x <= size[0]; x++) {
+    const c = [x + lo[0], G, z + lo[2]];
+    for (const fx of grid) for (const fz of grid) {
+      Object.assign(flight.pos, { F: CITY + 1, frac: [fx, 0.02, fz], digits: new Map([[CITY, [city(c[0]) + R / 2, ROW_ID % R, city(c[2]) + R / 2]], [CITY + 1, [own(c[0]), c[1], own(c[2])]]]) });
+      const r = flight.pos.levels(CITY, CITY + 1).find((q) => q.level === CITY + 1);
+      for (const dir of dirs) {
+        const ray = { dir };
+        flight.airAt(r, [0, 0, 0], ray);
+        if (ray.known && ray.reach >= 0) rays++;
+        assert.ok(!(ray.known && ray.reach * -dir[1] > 0.02 * R + 1e-9), `a ray down from over the floor goes ${ray.reach * -dir[1] - 0.02 * R} units under it, at ${c} (${fx}, ${fz})`);
+      }
+      assert.ok(flight.airAt(r, [0, -0.03, 0]) > 0, `air under the floor at ${c} (${fx}, ${fz})`);
+      points++;
+    }
+  }
+  assert.ok(points > 50000 && rays > 1000, `${points} points, ${rays} rays in air`);
+});
+
+// And at every level around us, flying at any scale close over the floor,
+// near the building and far from it: at points under the floor, no air; and
+// a ray from us going down ends at the floor. (Before the ground: rooms of
+// level 0 and finer under the whole plaza, their openings up through the
+// floor.)
+test('under the ground there is no air, at any level', () => {
+  const flight = new Flight(arcology), rnd = rand(41), dirs = [];
+  for (let k = 0; k < 6; k++) {
+    const d = [rnd() - 0.5, -0.2 - rnd(), rnd() - 0.5], l = Math.hypot(...d);
+    dirs.push(d.map((x) => x / l));
+  }
+  // (And over the light wells there were, by the building: city cells across
+  // from the middle one, each well a square of 3 units each way round its
+  // cell's middle.)
+  const WELLS = [[-2, 0], [-2, 1], [2, -1]];
+  for (const [a, c] of WELLS) assert.ok(_V2.wellOf([_V2.MID + a, ROW_ID, _V2.MID + c], seed), `no well at ${a}, ${c}`);
+  let asked = 0, rays = 0, wells = 0;
+  for (let n = 0; n < 390; n++) {
+    const well = n >= 300 ? WELLS[n % 3] : null, F = well ? CITY + (n % 3) : CITY + (n % 6), far = n % 3 === 0;
+    const across = () => (far ? Math.floor(rnd() * R) : R / 2 - 4 + Math.floor(rnd() * 8)), mid = () => R / 2 - 1 + Math.floor(rnd() * 2);
+    const digits = new Map(well
+      ? [[CITY, [R / 2 + well[0], ROW_ID % R, R / 2 + well[1]]], [CITY + 1, [mid(), 3, mid()]]]
+      : [[CITY, [across(), ROW_ID % R, across()]], [CITY + 1, [Math.floor(rnd() * R), 3, Math.floor(rnd() * R)]]]);
+    for (let j = CITY + 2; j <= F; j++) digits.set(j, [Math.floor(rnd() * R), 0, Math.floor(rnd() * R)]);
+    // (Points round us, across: within the well, over one; else half a cell.)
+    const half = well ? Math.pow(R, F - CITY - 1) : 0.5;
+    // (Our cell's bottom on the floor: at the city's level, the floor is G up its cell.)
+    Object.assign(flight.pos, { F, frac: [rnd(), (F === CITY ? (VOLUME.lo[1] + 0.02) / R : 0.02) + 0.5 * rnd(), rnd()], digits });
+    const g = flight.pos.groundHeight();
+    assert.ok(g > 0 && g < 1, `the floor is ${g} under us`);
+    for (const r of flight.pos.levels(F - UP, F + DOWN)) {
+      for (let k = 0; k < 4; k++) {
+        const v = [(2 * rnd() - 1) * half, -g - 10 ** (-4 + 4 * rnd()) * (well ? 2 * half : 1), (2 * rnd() - 1) * half];
+        assert.ok(flight.airAt(r, v) > 0, `air at level ${r.level}, ${-g - v[1]} under the floor (F ${F}${well ? `, the well at ${well}` : ''})`);
+        asked++;
+        wells += !!well;
+      }
+      for (const dir of dirs) {
+        const ray = { dir };
+        flight.airAt(r, [0, 0, 0], ray);
+        if (!(ray.known && ray.reach >= 0)) continue;
+        rays++;
+        assert.ok((ray.reach / r.sig) * -dir[1] <= g * (1 + 1e-9) + 1e-12, `level ${r.level}: a ray goes ${(ray.reach / r.sig) * -dir[1] - g} under the floor (F ${F})`);
+      }
+    }
+  }
+  assert.ok(asked > 10000 && rays > 1000 && wells > 2000, `${asked} points (${wells} in the wells), ${rays} rays in air`);
+});
+
+// Inside the building, far over the ground, the ground changes nothing: at
+// every level around us, distances and rays are the cells' own, to the bit;
+// and deeper than its height can be said in a number (see Position.groundHeight), there
+// is none to cut by.
+test('far over the ground, the ground changes nothing', () => {
+  const flight = new Flight(arcology), rnd = rand(43);
+  let compared = 0, none = 0;
+  for (const F of [0, 2, 5, 9, 14, 19, 24, 30]) {
+    for (let n = 0; n < 6; n++) {
+      const digits = new Map(INSIDE.map(([j, d]) => [j, d.slice()]));
+      for (let j = CITY + 2; j <= F; j++) digits.set(j, [Math.floor(rnd() * R), Math.floor(rnd() * R), Math.floor(rnd() * R)]);
+      Object.assign(flight.pos, { F, frac: [rnd(), rnd(), rnd()], digits });
+      const g = flight.pos.groundHeight();
+      if (g === Infinity) none++;
+      else assert.ok(g > Math.pow(R, F + 1), `the ground ${g} under us at F ${F}, inside the building`);
+      for (const r of flight.pos.levels(F - UP, F + DOWN)) {
+        for (let k = 0; k < 6; k++) {
+          const v = [0, 1, 2].map(() => (rnd() - 0.5) * 4), d = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5], l = Math.hypot(...d);
+          const mine = { dir: d.map((x) => x / l) }, theirs = { dir: mine.dir };
+          const a = flight.airAt(r, v, mine), b = airAt(arcology, r, v, theirs);
+          assert.ok(Object.is(a, b) && Object.is(mine.reach, theirs.reach) && Object.is(mine.ny, theirs.ny), `level ${r.level} at F ${F}: ${a} and ${b}, reach ${mine.reach} and ${theirs.reach}`);
+          compared++;
+        }
+      }
+    }
+  }
+  assert.ok(compared > 4000 && none >= 12, `${compared} compared, ${none} places with no ground in reach`);
+});
+
+// Pressed onto the plaza's floor at any scale, the space we are in is the
+// plaza (the city's level): the ground cuts every level's air off at the
+// floor, so the finer levels over it say the same room as the plaza but
+// for rounding, and the coarser's is the space we are in (see roomier in
+// flight.js). (Without the rule, one start in ten came out in a finer
+// level's room.)
+test('pressed onto the floor, the room we are in is the plaza', () => {
+  const flight = new Flight(arcology), rnd = rand(51);
+  for (let k = 0; k < 200; k++) {
+    const F = 2 + (k % 20);
+    const digits = new Map([[CITY, [Math.floor(rnd() * R), ROW_ID % R, Math.floor(rnd() * R)]], [CITY + 1, [Math.floor(rnd() * R), VOLUME.lo[1], Math.floor(rnd() * R)]]]);
+    for (let j = CITY + 2; j <= F; j++) digits.set(j, [Math.floor(rnd() * R), 0, Math.floor(rnd() * R)]);
+    Object.assign(flight.pos, { F, frac: [rnd(), 0.02 + 0.2 * rnd(), rnd()], digits });
+    flight.begin();
+    assert.equal(flight.room, CITY, `at F ${flight.pos.F}, ${flight.pos.groundHeight()} over the floor`);
+  }
 });

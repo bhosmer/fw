@@ -3043,15 +3043,13 @@ ${CELL_GLSL.cell}
     // any surface there: drawn where they open, once sharp, and further off
     // as their average tone) and its openings (in its plain cells, only where the
     // surface is upright, as the faces with them are), in the surface's own
-    // shade; elsewhere there, none (and so nothing finer).
+    // shade; elsewhere there, none (and so nothing finer). (And in the ground,
+    // nothing at any level: see main.)
     openAreaGlsl: `float openAreaAt(int level, ivec3 id, ivec3 up, vec3 n) {
   gOwnInk = false;
   if (level != ${CITY + 1}) return OPEN_AREA;
   uvec4 m = relief(id, up);
   uint kind = m.x & 3u;
-  // (Nothing of this level opens in the ground away from the building (see
-  // groundCell), but finer levels do: -1.)
-  if (m.x == 0u && groundCell(${ownGlsl('id')}, up)) return -1.0;
   if (m.x == 0u || kind == ${DEEP}u) return OPEN_AREA;
   gOwnInk = true;
   return kind == ${SKIN}u || (m.z != 0u && abs(n.y) < 0.5) ? OPEN_AREA : 0.0;
@@ -3104,8 +3102,9 @@ ${CELL_GLSL.cell}
     entrances: { level: CITY + 1, list: ENTRANCES },
     // Nothing stands higher than the building (in level-0 cells).
     skyClear: (ROWS * R - TOP) * Math.pow(R, -1 - CITY),
-    // Sunlight comes down into it as far as the plaza (in level-0 cells).
-    sunReach: (ROWS * R - G) * Math.pow(R, -1 - CITY),
+    // The ground is the plaza's floor (in level-0 cells under the sky's
+    // plane): under it, nothing but solid, at every level.
+    ground: (ROWS * R - G) * Math.pow(R, -1 - CITY),
 
     // Each level gets its own colour so that scale is legible: hue steps by the
     // golden angle, so neighbouring levels always contrast.

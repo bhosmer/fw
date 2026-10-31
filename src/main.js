@@ -127,12 +127,14 @@ function draw() {
   return made;
 }
 
-// Where we are, for the tour: our level, clearance, height above the sky's plane
-// and the size of the space we are in (level-F cells).
+// Where we are, for the tour: our level, clearance, height above the sky's
+// plane and above the ground, and the size of the space we are in (level-F
+// cells).
 const whereNow = () => ({
   F: pos.F,
   scale: flight.scale,
   sky: flight.sky,
+  ground: pos.groundHeight(),
   room: flight.room === null ? Infinity : Math.pow(R, pos.F - flight.room),
   out: pilot.way === 'out' ? outward(flight) : null,
 });

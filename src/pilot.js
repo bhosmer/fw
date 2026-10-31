@@ -305,10 +305,11 @@ export class Pilot {
   // A new look (from Renderer.seen): a grid of distances in level-lookF cells,
   // -1 for nothing, taken with camera basis b and half-height tan, every
   // stride-th pixel of a canvas res pixels in size. F, scale (our clearance),
-  // sky (how high we are above the sky's plane) and room (how big the space we
-  // are in is, if we are in one) are as of now, in level-F cells; out is
-  // which way is out (see Flight.outward), going out.
-  see(look, b, lookF, tan, res, stride, { F, scale, sky, room = Infinity, out = null }) {
+  // sky (how high we are above the sky's plane), ground (how high above the
+  // ground) and room (how big the space we are in is, if we are in one) are
+  // as of now, in level-F cells; out is which way is out (see
+  // Flight.outward), going out.
+  see(look, b, lookF, tan, res, stride, { F, scale, sky, ground = Infinity, room = Infinity, out = null }) {
     const { w, h, dist } = look;
     const k = Math.pow(this.R, F - lookF);
     // How big the space in view is: the median distance to what is in it
@@ -412,9 +413,11 @@ export class Pilot {
         s = base + toward * Math.log(far / scale);
         aim = 0.6 * far;
         kind = 'open';
-      } else if (dist[m0] >= 0) {
+      } else if (dist[m0] >= 0 && !(Math.abs(ground + dy * dist[m0] * k) < 0.02 * dist[m0] * k)) {
         // Diving: at a surface, failing anything better (coming close to
         // one, finer openings show; but one already in sight is better).
+        // Not at the ground: nothing opens in it, at any level. (Where it is
+        // seen, as far as it is, not as far as counts: see D.)
         s = base - 0.5;
         aim = 0.85 * d;
         kind = 'surface';

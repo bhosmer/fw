@@ -72,6 +72,11 @@ ${space.tables.map((t) => `// The space's table ${t.name} (see tables in worlds.
 uniform uint uSeed[NLEV];
 uniform int uLevel[NLEV];
 uniform float uSig[NLEV];
+// How far the camera is above the ground (see ground in worlds.js), in
+// level-F cells (negative: under it), as the levels' records say it (see
+// Position.levels); 1e30: none (or none nearer than any ray goes: see
+// groundHeight in position.js).
+uniform float uGroundH;
 // The same split for the sum (p) and difference (m) of each pair of axes
 // (x, y), (z, y), (x, z): see Position.levels.
 uniform ivec3 uLp[NLEV];
@@ -250,7 +255,24 @@ ${space.slants?.length ? '  gSi = i;\n  gSv = v;\n  gSc = c;' : ''}
   // into the parent's neighbours as c goes past them.)
   ivec3 id = levelId(i, c);
   gSkin = false;
-  return cell(I - c * R, f, id, uSeed[i], uLevel[i], reach, nrm);
+  float a = cell(I - c * R, f, id, uSeed[i], uLevel[i], reach, nrm);
+  // Under the ground there is only solid, at every level: the level's air is
+  // cut off at it (h: how high v is over it, in the level's lattice units).
+  // The ground never fades: its distance is less gO, as the spaces' unfading
+  // pieces' are, which is taken off the whole level again where it fades
+  // (see map), so that the ground stays where it is.
+  if (uGroundH < 1e30) {
+    float h = (v.y + uGroundH) * uSig[i];
+    a = max(a, -h - gO);
+    if (gRay) {
+      if (h < 0.0) reach = -1.0;
+      else if (reach >= 0.0 && gDir.y < 0.0 && h < -reach * gDir.y) {
+        reach = h / -gDir.y;
+        nrm = vec3(0.0, 1.0, 0.0);
+      }
+    }
+  }
+  return a;
 }
 
 // (o: how far the level's air is shrunk there, for the spaces that fade
@@ -351,9 +373,6 @@ uniform float uValid;
 // How far the camera is above the plane over which there is only sky
 // (negative: below it).
 uniform float uSkyH;
-// How far under that plane sunlight can come in whatever we see from (see
-// sunReach in worlds.js).
-uniform float uSunReach;
 // The scheme's lights (see SCHEME in schemes.js): uSun, the sun's strength;
 // uSunDir, toward it.
 ${lightGlsl()}
@@ -388,9 +407,7 @@ float lean(vec3 n, vec3 dir) { return sqrt(max(abs(dot(n, dir)), 1e-6)); }
 // the surface shows in profile, not foreshortened: looking up a ridge, its
 // relief would otherwise be left out until one was nearly upon it.)
 const float LEAN_MIN = 0.6;
-// A sun ray is tried only from at most this many fog lengths under the
-// sky's plane, and gets at most this many steps to come out.
-const float SUN_DEPTH = 1.0;
+// A sun ray gets at most this many steps to come out.
 const int SUN_STEPS = 48;
 
 // Per ray: for each level, how far along the ray it is known to stay solid.
@@ -675,7 +692,7 @@ void main() {
   const int ASK_FOG = 0, ASK_SHADE = 1, ASK_DETAIL = 5, ASKS = 6; // 1 to 4: occlusion's points
   vec3 p = vec3(0.0), base = vec3(0.0);
   float foot = 0.0, seenFoot = 0.0, ao = 0.0, sunlit = 0.0;
-  bool sunTried = false;
+  bool sunTried = false, onGround = false;
   int phases = 1;
   for (int ph = 0; ph < phases; ph++) {
     float h = max(2.0 * foot, 0.004 * uScale), wt = 0.4;
@@ -720,8 +737,8 @@ void main() {
           // as it says, wherever the surface is and however near, never by
           // the way the ray came.) (The average is what the space says opens
           // there, at that level: see openAreaAt; none (0), and nothing finer
-          // opens there either; less than 0, nothing of that level, but finer
-          // levels may.)
+          // opens there either.) Nothing opens in the ground, at any level.
+          if (onGround) break;
           float px = float(R) / uSig[i] / seenFoot;
           if (px < 0.5) break;
           wgt = (1.0 - smoothstep(0.75, 1.0, smoothstep(LOD_LO, LOD_HI, px))) * smoothstep(0.5, 4.0, px);
@@ -730,7 +747,6 @@ void main() {
           vec3 f;
           ivec3 id = levelId(i, levelCell(i, v, I, f));
           hole = openAreaAt(uLevel[i], id, gUp, n);
-          if (hole < 0.0) continue;
           if (hole == 0.0) break;
           sharp = smoothstep(2.0, 8.0, px);
           ink = gOwnInk ? base * 0.55 : mix(uWall[i] * 0.5, uWall[i], uInlay);
@@ -825,12 +841,9 @@ void main() {
 #endif
     seenFoot = foot / lean(n, rd); // (what is carved or drawn here goes by this)
     base = surfaceColour(slot, n);
-    // (The sun's ray is not tried from too far below the sky's plane for any
-    // to come in: further than the space lets sunlight reach, and further
-    // than we see from here. Going by how far we see alone, where the space
-    // is open well under the plane, shadows came and went as that changed.)
-    float key = max(dot(n, uSunDir), 0.0), below = -(p.y + uSkyH);
-    sunTried = uSun > 0.0 && key > 0.0 && below < max(SUN_DEPTH * uFogLen, uSunReach);
+    // (Whether the surface is the ground's: on its plane, facing up.)
+    onGround = abs(p.y + uGroundH) <= foot && n.y > 0.5;
+    sunTried = uSun > 0.0 && dot(n, uSunDir) > 0.0;
     phases = 2;
   }
 

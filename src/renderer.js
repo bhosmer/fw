@@ -159,6 +159,9 @@ export class Renderer {
     gl.uniform3fv(p.u.uFp, fp);
     gl.uniform3iv(p.u.uLm, Lm);
     gl.uniform3fv(p.u.uFm, fm);
+    // (How far we are above the ground, as the levels' records say it (the same
+    // in each: see Position.levels); 1e30, none.)
+    gl.uniform1f(p.u.uGroundH, Math.min(recs[0]?.ground ?? Infinity, 1e30));
     const k4 = slantCount4(this.space);
     if (k4) {
       const Ls = new Int32Array(n * k4 * 4), Fs = new Float32Array(n * k4 * 4);
@@ -176,7 +179,10 @@ export class Renderer {
   // per point of one per level. With dir, for a ray from each along it: of
   // each, { a: the distance, reach: how far it goes in that level's air
   // (lattice units; less than 0, none), n: the surface it meets there }.
-  probe(recs, points = [[0, 0, 0]], dir = null) {
+  // Each level's air is cut off at the ground as its record says, as the
+  // JavaScript's is (see airAt in air.js); ground: false asks the cells as
+  // they are.
+  probe(recs, points = [[0, 0, 0]], dir = null, { ground = true } = {}) {
     const gl = this.gl;
     const p = (this.entry.probeProg ??= this.entry.makeProbe());
     const n = this.nProbe, b = this.probeBuf;
@@ -186,6 +192,7 @@ export class Renderer {
     this.setLevels(p, recs, n);
     gl.uniform3fv(p.u.uProbeV, new Float32Array(points.flat()));
     gl.uniform3fv(p.u.uProbeDir, dir ?? [0, 0, 0]);
+    if (!ground) gl.uniform1f(p.u.uGroundH, 1e30);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.readPixels(0, 0, 2 * n, points.length, gl.RGBA, gl.FLOAT, b);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -295,7 +302,6 @@ export class Renderer {
     gl.uniform1f(p.u.uMaxT, view.maxT);
     gl.uniform1f(p.u.uFogK, view.fogK);
     gl.uniform1f(p.u.uSkyH, view.sky);
-    gl.uniform1f(p.u.uSunReach, view.sunReach);
     // (The scheme's lights, as SCHEME has them.)
     for (const l of LIGHTS) {
       const v = lightOf(sc, l.name, this.space);

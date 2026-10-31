@@ -8,7 +8,9 @@ import { levelSeed, wrapId } from './util.js';
 
 // One level's air distance at the point v from the camera (level-F cells),
 // in that level's lattice units. And if ray is given ({ dir }), what the
-// world says of a ray from there along dir (see cellAir in worlds.js).
+// world says of a ray from there along dir (see cellAir in worlds.js). Cut
+// off at the ground, as far under us as the record says (see
+// Position.levels).
 export function airAt(space, rec, v = [0, 0, 0], ray = null) {
   if (ray) ray.known = false; // (a world that does not say, does not know)
   const R = space.R;
@@ -45,7 +47,19 @@ export function airAt(space, rec, v = [0, 0, 0], ray = null) {
   });
   // (And the id of the cell's parent: see gUp in shaders.js.)
   const up = rec.pid.map((p, a) => p + Math.floor((rec.id[a] - R * Math.floor(rec.id[a] / R) + cell[a]) / R));
-  return space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level, wrapId(up, R), ray);
+  const a = space.cellAir(L, f, wrapId(id, R), levelSeed(rec.level), dg, rec.level, wrapId(up, R), ray);
+  if (!(rec.ground < Infinity)) return a;
+  // Under the ground there is only solid, at every level, as levelRay in
+  // shaders.js has it (h: how high v is over it, in the level's lattice units).
+  const h = (v[1] + rec.ground) * rec.sig;
+  if (ray && ray.known) {
+    if (h < 0) ray.reach = -1;
+    else if (ray.reach >= 0 && ray.dir[1] < 0 && h < -ray.reach * ray.dir[1]) {
+      ray.reach = h / -ray.dir[1];
+      [ray.nx, ray.ny, ray.nz] = [0, 1, 0];
+    }
+  }
+  return Math.max(a, -h);
 }
 
 // How f changes about the camera, along each axis: f h either way, the

@@ -75,8 +75,10 @@
 //                  coarser than any we have been elsewhere at must cancel
 //   skyClear       optionally, how far under the plane, in level-0 cells, it
 //                  is open air everywhere
-//   sunReach       optionally, how far under the plane, in level-0 cells,
-//                  there can be open air the sun shines into
+//   ground         optionally, how far under the plane, in level-0 cells,
+//                  the ground is: under it there is nothing but solid, at
+//                  every level. Each level's air is cut off at it where it is
+//                  asked (see levelRay in shaders.js and airAt in air.js)
 //   palette, sky, zenith, roof, fogK
 //                  its look: each level's colours (palette(level): { wall,
 //                  floor }), the haze, the sky's colour overhead, the colour

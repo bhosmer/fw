@@ -21,11 +21,15 @@ export const DIAGONALS = [[0, 1], [2, 1], [0, 2]];
 
 export class Position {
   // slants: whole-number directions (other than the axes and DIAGONALS) whose
-  // planes a space needs exactly, at any depth: see levels.
-  constructor(R, defaultDigit, frac = [0.5, 0.5, 0.5], slants = []) {
+  // planes a space needs exactly, at any depth: see levels. ground: where the
+  // space's ground is, if it has one ({ plane, under }: the sky's plane, as
+  // a space's skyPlane gives it, and how far under it the ground is, in
+  // level-0 cells): see groundHeight.
+  constructor(R, defaultDigit, frac = [0.5, 0.5, 0.5], slants = [], ground = null) {
     this.R = R;
     this.defaultDigit = defaultDigit;
     this.slants = slants;
+    this.ground = ground;
     this.F = 0;
     this.frac = frac.slice();
     this.digits = new Map();
@@ -90,6 +94,39 @@ export class Position {
     this.F--;
   }
 
+  // How far we are above a horizontal plane (plane(j): its height as a digit
+  // at each level j <= 0, in the cells of level j, as a space's skyPlane
+  // gives the sky's), in level-F cells, negative below it. Our height and the
+  // plane's are compared digit by digit from the coarsest level at which we
+  // have ever been anywhere but the default, so that close to the plane what
+  // is left is a small whole number plus our offset in the cell. under: count
+  // from this far under the plane instead (level-0 cells, added at level 0 so
+  // that it stays whole where it is).
+  over(plane, under = 0) {
+    const R = this.R;
+    let acc = 0;
+    for (let j = Math.min(0, this.F, ...this.digits.keys()); j <= this.F; j++) {
+      acc = acc * R + this.digit(j)[1] - plane(j) + (j === 0 ? under : 0);
+      // (So far from the plane, finer digits cannot take us across it; and
+      // deep down the height in level-F cells would soon be more than a number
+      // holds: stop while it is still one.)
+      if (Math.abs(acc) > 1e30) return acc > 0 ? 1e30 : -1e30;
+    }
+    // (Working coarser than level 0, the plane is part of the way up our cell.)
+    for (let j = this.F + 1; j <= 0; j++) acc -= (plane(j) - (j === 0 ? under : 0)) * Math.pow(R, this.F - j);
+    return Math.max(acc + this.frac[1], -1e30);
+  }
+
+  // How far we are above the ground (see ground in worlds.js), in level-F
+  // cells; Infinity where there is none, or where it is further than over
+  // can say (1e30 level-F cells: further than any ray goes, see uValid in
+  // shaders.js).
+  groundHeight() {
+    if (!this.ground) return Infinity;
+    const h = this.over(this.ground.plane, this.ground.under);
+    return h >= 1e30 ? Infinity : h;
+  }
+
   // Describe where we are relative to each level in [lo, hi], in the form the
   // shaders need. For level k, lengths are measured in "lattice units" = the
   // size of a level-(k+1) cell, so a level-k cell spans 0..R.
@@ -99,6 +136,9 @@ export class Position {
   //   id   which cell this is, as far as variation is concerned: its index in
   //        its parent plus R times the parent's index in the grandparent
   //   sig  lattice units of this level per level-F cell
+  //   ground  how far we are above the ground, in level-F cells (see
+  //        groundHeight): the same at every level, where each level's air is
+  //        cut off (see airAt in air.js, levelRay in shaders.js)
   //
   // The split into L and f is what keeps everything exact. All architecture is
   // anchored at lattice points, so a distance to a nearby feature is
@@ -137,7 +177,7 @@ export class Position {
       cu.set(j, [0, 1, 2].map((a) => (R - 1 - d[a] + cn[a]) / R));
     }
 
-    const out = [];
+    const out = [], ground = this.groundHeight();
     for (let k = lo; k <= hi; k++) {
       const d = dg.get(k + 1);
       const uu = u.get(k + 1);
@@ -156,7 +196,7 @@ export class Position {
         id[a] = own[a] + R * par[a];
         pid[a] = par[a] + R * gpar[a];
       }
-      out.push({ level: k, L, f, id, pid, sig: Math.pow(R, k + 1 - F) });
+      out.push({ level: k, L, f, id, pid, sig: Math.pow(R, k + 1 - F), ground });
     }
 
     // Diagonal surfaces need the same care. How far we are from the plane

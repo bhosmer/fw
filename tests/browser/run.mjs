@@ -223,6 +223,63 @@ check('over a terrace\'s floor and under its ceiling, the shader keeps the JavaS
   }
 });
 
+// On the ground (the plaza's floor, see ground in worlds.js), the shader cuts
+// each level's air off where the JavaScript does: far from the building, by
+// it, and over a light well that was (ledger F2), at points just over and
+// just under the floor and rays down to it (ending at it, the surface they
+// meet there the floor, facing up; from under it, none). The ground's height
+// is a single precision number in the shader and a double here, so they may
+// differ by what single precision holds of it: 2^-22 of our height and the
+// point's way off, which here is less than 1e-6 of the camera's cell. (In
+// the camera's cells.)
+check('on the ground, the shader cuts each level off at the floor where the JavaScript does', async () => {
+  const places = {
+    far: at({ F: 0, frac: [0.5, 0.3, 0.5], digits: [[-2, [3, 12, 3]], [-1, [5, 3, 7]], [0, [11, 0, 11]]], yaw: 0.3, pitch: -0.45 }),
+    near: at({ F: 0, frac: [0.5, 0.3, 0.5], digits: [[-2, [12, 12, 10]], [-1, [12, 3, 20]], [0, [12, 0, 12]]], yaw: 3.14159, pitch: -0.25 }),
+    well: at({ F: -1, frac: [0.5, 0.2, 0.5], digits: [[-2, [14, 12, 11]], [-1, [12, 3, 12]]], yaw: 0, pitch: -0.5 }),
+  };
+  for (const [name, hash] of Object.entries(places)) {
+    await page.goto(`${base}index.html?${++loads}#${hash}`, setup('alhambra'));
+    const r = await page.eval(`(() => {
+      const F = fw.pos.F, recs = fw.pos.levels(F - 12, F + 3), g = fw.pos.groundHeight();
+      let seed = 3;
+      const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+      const points = [[0, 0, 0]];
+      for (let k = 0; k < 40; k++) points.push([rnd() - 0.5, -g + (k % 2 ? 1 : -1) * Math.pow(10, -4 + 3 * rnd()), rnd() - 0.5]);
+      const out = { F, g, d: 0, reach: 0, rays: 0, under: 0, air: 0, cut: 0, normal: 0 };
+      fw.renderer.probe(recs, points).forEach((gpu, k) => recs.forEach((rec, j) => {
+        const cpu = fw.flight.airAt(rec, points[k]);
+        if (points[k][1] < -g) (out.under++, (out.air += !(cpu > 0 && gpu[j] > 0)));
+        out.d = Math.max(out.d, Math.abs(gpu[j] - cpu) / rec.sig);
+      }));
+      for (let e = 0; e < 6; e++) {
+        const d = [rnd() - 0.5, -0.3 - rnd(), rnd() - 0.5], dir = d.map((x) => x / Math.hypot(...d));
+        fw.renderer.probe(recs, points, dir).forEach((gpu, k) => recs.forEach((rec, j) => {
+          const ray = { dir };
+          fw.flight.airAt(rec, points[k], ray);
+          if (points[k][1] < -g) {
+            out.under++;
+            out.air += !(ray.known && ray.reach < 0 && gpu[j].reach < 0);
+            return;
+          }
+          if (!ray.known || ray.reach < 0) return;
+          out.rays++;
+          const end = (ray.reach / rec.sig) * -dir[1] - (g + points[k][1]);
+          if (Math.abs(end) < 1e-9) {
+            out.cut++;
+            out.normal += !(ray.nx === 0 && ray.ny === 1 && ray.nz === 0 && gpu[j].n[0] === 0 && gpu[j].n[1] === 1 && gpu[j].n[2] === 0);
+          }
+          out.reach = Math.max(out.reach, (Math.abs(gpu[j].reach - ray.reach) / rec.sig) * -dir[1]);
+        }));
+      }
+      return out;
+    })()`);
+    assert(!page.errors.length, page.errors.join('\n'));
+    assert(r.g > 0 && r.g < 1 && r.under > 200 && r.rays > 100 && r.cut > 50, `${name}: the place or the test is not what it was (${JSON.stringify(r)})`);
+    assert(r.air === 0 && r.normal === 0 && r.d < 1e-6 && r.reach < 1e-6, `${name}: the shader and the JavaScript differ on the ground by ${JSON.stringify(r)}`);
+  }
+});
+
 // In the arcology's skin, where the buildings' relief is (fw.check flies
 // from the start and seldom gets there): at points in and around the skin
 // cells, the camera put there, every level asked about; and about rays, there
@@ -314,11 +371,11 @@ async function agreeInSkin(world, { VOLUME, _V2 }, n, keep = () => true) {
 
 // At the city's level (fw.check seldom flies there): in the plaza's air
 // round the buildings, in the city's pockets in their faces, near the solids
-// without relief, in the light wells, and at the top of the city's rows:
-// the distances and rays of every level, the camera put there.
+// without relief, near the floor where the light wells were (a quarter of a
+// unit over it and more: rays up, and down to it), and at the top of the
+// city's rows: the distances and rays of every level, the camera put there.
 check('the shader and the JavaScript agree at the city\'s level', async () => {
-  const { VOLUME, _V2, ROW_ID } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
-  const { levelSeed } = await import(join(ROOT, 'src', 'util.js'));
+  const { VOLUME, _V2 } = await import(join(ROOT, 'src', 'spaces', 'arcology.js'));
   const { lo, size, kind, at: cellAt } = VOLUME, R = 24;
   let seed = 11;
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
@@ -336,16 +393,17 @@ check('the shader and the JavaScript agree at the city\'s level', async () => {
       const [l, h] = _V2.BARE_BOX[Math.floor(rnd() * _V2.BARE_BOX.length)].map((b) => b.map((x, a) => x + _V2.ORIGIN[a]));
       return [[0, 1, 2].map((a) => (a === 1 ? l[a] + rnd() * (h[a] - l[a]) : l[a] - 6 + rnd() * (h[a] - l[a] + 12))), [0, 1, 2].map((a) => (l[a] + h[a]) / 2)];
     }).map(([x, m]) => [x, m.map((v, i) => v - x[i])]),
-    wells: [],
+    floor: [],
     // (Rays the pockets take that the solids without relief stop: few, found
     // among many in the JavaScript.)
     stopped: (await import(join(ROOT, 'tests', 'unit', 'clipped.js'))).clippedRays(rnd, 6000),
     sky: many(200, () => [middle[0] + (2 * rnd() - 1) * 2 * R, (2 - rnd() * 0.5) * R, middle[2] + (2 * rnd() - 1) * 2 * R]).map((x) => [x, [rnd() - 0.5, 1, rnd() - 0.5]]),
   };
-  for (let a = -3; a <= 3; a++) for (let c = -3; c <= 3; c++) {
-    const w = _V2.wellOf([_V2.MID + a, ROW_ID, _V2.MID + c], levelSeed(-2));
-    if (w) for (let k = 0; k < 40; k++) sets.wells.push([[(a + 0.5) * R + (2 * rnd() - 1) * (w.w - 0.5), rnd() * 4, (c + 0.5) * R + (2 * rnd() - 1) * (w.w - 0.5)], [rnd() - 0.5, k % 2 ? 1 : -1, rnd() - 0.5]]);
-  }
+  // (The city cells, across from the middle one, of the light wells there
+  // were: each a square of 3 units each way round its cell's middle; the
+  // floor 3 units up the cell.)
+  for (const [a, c] of [[-2, 0], [-2, 1], [2, -1]])
+    for (let k = 0; k < 40; k++) sets.floor.push([[(a + 0.5) * R + (2 * rnd() - 1) * 2.5, 3.25 + 2 * rnd(), (c + 0.5) * R + (2 * rnd() - 1) * 2.5], [rnd() - 0.5, k % 2 ? 1 : -1, rnd() - 0.5]]);
   await load('start');
   for (const [name, at] of Object.entries(sets)) {
     const r = await page.eval(`(() => {

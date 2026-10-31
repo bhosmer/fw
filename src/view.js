@@ -3,7 +3,7 @@
 // the camera, the view as drawn (makeView) and when it would be drawn
 // differently (viewKey). The flight knows where we are and which way we
 // face; this, what of it to show.
-import { UP } from './flight.js';
+import { UP, roomier } from './flight.js';
 import { zoomed } from './position.js';
 import { gradient } from './air.js';
 import { SLACK } from './shaders.js';
@@ -123,15 +123,16 @@ function mostVisible(flight, recs, n) {
 // The air of a level coarser than those looked at as a rule (UP) whose air we
 // are in, as the shader is to see it where that level is not drawn: the
 // plane of its nearest surface. Of such levels, the one that gives us the
-// most room; if it is drawn (one of recs), none. A stand-in that keeps one
-// wall of a room and loses the rest, left only where the level cannot be
-// drawn (see visible). all and recs: as visible gives them.
+// most room (see roomier in flight.js); if it is drawn (one of recs), none.
+// A stand-in that keeps one wall of a room and loses the rest, left only
+// where the level cannot be drawn (see visible). all and recs: as visible
+// gives them.
 export function outerAir(flight, all, recs) {
   let best = null;
   for (const { rec: r, air } of all) {
     if (r.level >= flight.pos.F - UP) break;
     const dist = -air / r.sig;
-    if (dist > 0 && (!best || dist > best.dist)) best = { r, dist };
+    if (dist > 0 && (!best || roomier(dist, best.dist))) best = { r, dist };
   }
   if (!best || recs.some((r) => r.level === best.r.level)) return null;
   const { r, dist } = best;
@@ -189,8 +190,6 @@ export function makeView(flight, s) {
     // does (see visible): no ray goes further. Infinity: as far as any goes.)
     valid,
     sky: flight.skyHeight(),
-    // (Deep down R^F is Infinity, and none times that no number at all.)
-    sunReach: space.sunReach ? space.sunReach * Math.pow(R, pos.F) : 0,
   };
   return { recs, view };
 }

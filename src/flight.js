@@ -92,6 +92,18 @@ export function builtClearance(levels, air, finest = Infinity) {
   return most;
 }
 
+// Whether a finer level gives us more room than a coarser one does (each:
+// how far its air reaches round us, level-F cells): clearly more, by more
+// than the numbers' rounding. Where levels' air ends on one plane (an
+// opening flush with the wall it is in; the ground, which cuts every level
+// off at it), they say the same but for rounding, and the space we are in
+// is the coarser's.
+export const roomier = (finer, coarser) => finer > coarser * (1 + 1e-12);
+
+// Where a space's ground is, for a position (see Position.groundHeight):
+// under its sky's plane by its ground; none if it has none.
+const groundOf = (space) => (space.ground == null ? null : { plane: space.skyPlane, under: space.ground });
+
 export const PITCH_MAX = 1.55; // the furthest up or down we can face
 
 export class Flight {
@@ -104,7 +116,7 @@ export class Flight {
     // from level (turned, no further either way than PITCH_MAX).
     this.yaw = 0;
     this.pitch = 0;
-    this.pos = new Position(this.R, space.ancestorDigit, space.start, space.slants ?? []);
+    this.pos = new Position(this.R, space.ancestorDigit, space.start, space.slants ?? [], groundOf(space));
     this.here = []; // the levels around us, as sense() last found them
     this.sensed = []; // per level: the clearance it alone gives us
     // Every level around us (see around), as sense() last found them, each
@@ -151,6 +163,7 @@ export class Flight {
     this.space = space;
     this.pos.defaultDigit = space.ancestorDigit;
     this.pos.slants = space.slants ?? [];
+    this.pos.ground = groundOf(space);
     this.airs = this.around().map((rec) => ({ rec, air: this.airAt(rec) }));
     this.due = true;
   }
@@ -172,31 +185,17 @@ export class Flight {
   }
 
   // One level's air distance at the point v from the camera (see airAt in
-  // air.js), in the space we are in.
+  // air.js), in the space we are in: cut off at its ground.
   airAt(rec, v = [0, 0, 0], ray = null) {
     return airAt(this.space, rec, v, ray);
   }
 
   // How far we are above the sky's plane: the one plane over which there is
-  // only sky (see the space's skyPlane). In level-F cells, negative below it.
-  // Our height and the plane's are compared digit by digit from the coarsest
-  // level at which we have ever been anywhere but the default, so that close
-  // to the plane what is left is a small whole number plus our offset in the
-  // cell. under: count from this far under the plane instead (level-0 cells,
-  // added at level 0 so that it stays whole where it is).
+  // only sky (see the space's skyPlane). In level-F cells, negative below it
+  // (see Position.over). under: count from this far under the plane instead
+  // (level-0 cells).
   skyHeight(under = 0) {
-    const { pos, space, R } = this;
-    let acc = 0;
-    for (let j = Math.min(0, pos.F, ...pos.digits.keys()); j <= pos.F; j++) {
-      acc = acc * R + pos.digit(j)[1] - space.skyPlane(j) + (j === 0 ? under : 0);
-      // (So far from the plane, finer digits cannot take us across it; and
-      // deep down the height in level-F cells would soon be more than a number
-      // holds: stop while it is still one.)
-      if (Math.abs(acc) > 1e30) return acc > 0 ? 1e30 : -1e30;
-    }
-    // (Working coarser than level 0, the plane is part of the way up our cell.)
-    for (let j = pos.F + 1; j <= 0; j++) acc -= (space.skyPlane(j) - (j === 0 ? under : 0)) * Math.pow(R, pos.F - j);
-    return Math.max(acc + pos.frac[1], -1e30);
+    return this.pos.over(this.space.skyPlane, under);
   }
 
   // The clearance at v (an offset from us, in level-F cells): how far from
@@ -323,9 +322,9 @@ export class Flight {
         this.sensed.unshift(...far.map((r) => ({ level: r.level, air: ask(r), sig: r.sig })));
       }
       // (Finer levels' air can be here too, but it is the most room any
-      // level gives us that is the space we are in.)
+      // level gives us that is the space we are in: see roomier.)
       let most = 0;
-      for (const s of this.sensed) if (-s.air / s.sig > most) (most = -s.air / s.sig), (this.room = s.level);
+      for (const s of this.sensed) if (roomier(-s.air / s.sig, most)) (most = -s.air / s.sig), (this.room = s.level);
       this.clearance = this.clearanceAt(ORIGIN, builtClearance(this.sensed, (s) => s.air));
       // (In a room too far up to ask, there is more room than we can say:
       // enough to work our way up toward it.)
