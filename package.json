@@ -4,7 +4,8 @@
   "type": "module",
   "description": "No build and no dependencies: these only run the tests.",
   "scripts": {
-    "test": "node --test 'tests/unit/*.test.js' && node tests/browser/run.mjs",
+    "test": "npm run test:track && node --test 'tests/unit/*.test.js' && node tests/browser/run.mjs",
+    "test:track": "[ ! -f .claude/track/track.mjs ] || node .claude/track/track.mjs check",
     "test:unit": "node --test 'tests/unit/*.test.js'",
     "test:browser": "node tests/browser/run.mjs",
     "test:pictures": "node tests/browser/run.mjs --update 'look as they did'"
