@@ -3,9 +3,18 @@
 A world without a size, in the browser: WebGL2, ray-marched, nested without end (every level is real geometry). No build step, no dependencies. One world: the arcology (a building after Soleri's Hexahedron, standing in a city plaza, made of halls: a lattice of rooms at every scale). Free flight; a tour.
 
 ## Where things are
-- The state of the work, as data: `.claude/track/` (its own private repo, bhosmer/fw-track; the rest of `.claude/` is ignored by git, and this repo is public). Its `STATE.md` is loaded at every session start; change the state only with `node .claude/track/track.mjs` (`help` lists its commands), every step as you go. Current design choices, open work and decisions live there, not here. Basil's view of it: http://localhost:8650/ (`node .claude/track/serve.mjs`, kept running).
-- How the code is put together, with its traps and how to check things: `docs/architecture.md`. Design notes: `.claude/design/`. The old ledger, frozen: `.claude/ledger-to-2026-11-03.md` (grep it; don't write to it).
+- The source of truth is a dataset and a doc set; everything else is a view of them, never edited by hand.
+  - The dataset: `.claude/track/` (its own private repo, bhosmer/fw-track; the rest of `.claude/` is ignored by git, and this repo is public): items, decisions, the doc index and the log. Current design choices, open work and decisions live there, not here.
+  - The doc set: this file; `docs/architecture.md` (how the code is put together, its traps, how to check things); the design notes in `.claude/design/`, indexed in the dataset; `.claude/work-M/tools/README.md` (the scratch tools).
+  - The views: `.claude/track/STATE.md`, generated, loaded at every session start, ending with where to look deeper; Basil's tracker, http://localhost:8650/ (`node .claude/track/serve.mjs`, kept running).
+  - Before 2026-11-03: the frozen ledger, `.claude/ledger-to-2026-11-03.md` (grep it; never read it whole; don't write to it).
 - Dev server: `python3 serve.py 8642`. Tests: `npm test` (the tracking's check, unit, headless Chrome).
+
+## Keeping it current
+- Change the dataset only with `node .claude/track/track.mjs` (`help` lists its commands), at each step as it happens: an item found, described, reshaped or closed; a decision made (Basil's in his words); the queue changed; an agent started or finished (`fly`, `landed`); a question for Basil (`wait`, with links to try for any judgement of look or speed). STATE.md and the tracker then follow by themselves.
+- When an item's understanding changes, rewrite its description (`describe`); notes are for history.
+- Update `docs/architecture.md` in the same commit as any change to how the code is put together, and re-read the section whole when you do. A design note is written once: what changes later goes into decisions and items; a new plan replaces it (`doc`, `edit --status superseded`).
+- CLAUDE.md holds only what holds for the project's lifetime; edit it with Basil's OK.
 
 ## Design
 - An engine for exploring sculpted megastructures, not a replica of one building: nothing may depend on one building's particulars.
