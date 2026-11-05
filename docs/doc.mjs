@@ -112,7 +112,7 @@ export function nameFound(name, inFiles, everywhere, repo, tracked) {
 
 // Phrases that tell how things came to be rather than how they are.
 export const HISTORY = [/\bas it was\b/i, /\bas they were\b/i, /\bused to\b/i, /\bpreviously\b/i, /\bno longer\b/i, /\bany ?more\b/i, /\bformerly\b/i,
-  /\bsince \d{4}-\d{2}-\d{2}\b/i, /\bas of\b/i, /\buntil recently\b/i];
+  /\bsince \d{4}-\d{2}-\d{2}\b/i, /\bas of\b/i, /\buntil recently\b/i, /\bsupersed/i, /\bwe tried\b/i];
 
 // Which sections are stale, and why.
 export function stale(repo, doc = parse(readFileSync(join(repo, DOC), 'utf8'))) {
