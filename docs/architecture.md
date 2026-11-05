@@ -1,7 +1,7 @@
 # How fw is put together
 <!-- budget: 15400 -->
 
-One world, the arcology. How its parts came to be: the design notes (`.claude/track/design/`, private), one-world.md among them.
+One world, the arcology. What it should be: the brief (`.claude/track/design/brief.md`, private). How its parts came to be: the design notes beside it, one-world.md among them.
 
 ## Worlds, as definitions
 <!-- files: src/worlds.js,src/util.js,src/spaces/halls.js,src/spaces/arcology.js,src/spaces/hexahedron.js,src/spaces/town.js,src/flight.js,src/view.js  budget: 2850  verified: 02fdb91 -->

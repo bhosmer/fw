@@ -5,7 +5,7 @@ A world without a size, in the browser: WebGL2, ray-marched, nested without end 
 ## Where things are
 - The source of truth is a dataset and a doc set; everything else is a view of them, never edited by hand.
   - The dataset: `.claude/track/` (its own private repo, bhosmer/fw-track; the rest of `.claude/` is ignored by git, and this repo is public): items, decisions, the doc index and the log. Current design choices, open work and decisions live there, not here.
-  - The doc set: this file; `docs/architecture.md` (how the code is put together, its traps, how to check things); the design notes in `.claude/track/design/` (committed in the dataset's repo, indexed there, frozen once built or superseded); `.claude/work-M/tools/README.md` (the scratch tools).
+  - The doc set: this file; `docs/architecture.md` (how the code is put together, its traps, how to check things); the design notes in `.claude/track/design/` (committed in the dataset's repo, indexed there, frozen once built or superseded); the arcology brief, `.claude/track/design/brief.md` (what the arcology should be: living, kept within its budget, describing what is wanted); `.claude/work-M/tools/README.md` (the scratch tools).
   - The views: `.claude/track/STATE.md`, generated, loaded at every session start, ending with where to look deeper; Basil's tracker, http://localhost:8650/ (`node .claude/track/serve.mjs`, kept running).
   - Before 2026-11-03: the frozen ledger, `.claude/ledger-to-2026-11-03.md` (grep it; never read it whole; don't write to it).
 - Dev server: `python3 serve.py 8642`. Tests: `npm test` (the tracking's check, unit, headless Chrome).
@@ -13,7 +13,7 @@ A world without a size, in the browser: WebGL2, ray-marched, nested without end 
 ## Keeping it current
 - Change the dataset only with `node .claude/track/track.mjs` (`help` lists its commands), at each step as it happens: an item found, described, reshaped or closed; a decision made (Basil's in his words); the queue changed; an agent started or finished (`fly`, `landed`); a question for Basil (`wait`, with links to try for any judgement of look or speed). STATE.md and the tracker then follow by themselves.
 - When an item's understanding changes, rewrite its description (`describe`); notes are for history.
-- Update `docs/architecture.md` in the same commit as any change to how the code is put together (`node docs/doc.mjs affected` lists the sections a staged change touches): re-read the section whole, rewrite it to fit its budget rather than insert, describe what is, not what was, then `node docs/doc.mjs verify <section>`. A design note is written once: what changes later goes into decisions and items; a new plan replaces it (`doc`, `edit --status superseded`).
+- Update `docs/architecture.md` in the same commit as any change to how the code is put together (`node docs/doc.mjs affected` lists the sections a staged change touches): re-read the section whole, rewrite it to fit its budget rather than insert, describe what is, not what was, then `node docs/doc.mjs verify <section>`. A design note is written once: what changes later goes into decisions and items; a new plan replaces it (`doc`, `edit --status superseded`). The brief is the exception: when what is wanted changes, rewrite it in place and record the choice as a decision.
 - CLAUDE.md holds only what holds for the project's lifetime; edit it with Basil's OK.
 
 ## Design
