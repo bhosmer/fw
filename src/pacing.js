@@ -49,3 +49,42 @@ export class Pacing {
     }
   }
 }
+
+// Resolution follows frame time while we move (see resize in main.js): the
+// view's share of the pixels each way gives way quickly when frames run long
+// and returns slowly; and the frame rate shown, from the same frames.
+export const MIN_UPSCALE = 0.35;
+const SLOW = 1 / 45, QUICK = 1 / 55; // s a frame: over / under
+const GIVE = 3, TAKE = 90; // how many frames in a row before giving way / returning
+
+export class Resolution {
+  constructor() {
+    this.fps = 0;
+    this.slow = 0; // frames over SLOW in a row
+    this.quick = 0; // frames under QUICK in a row
+  }
+
+  // A frame drawn while moving, raw s after the last, at upscale; the
+  // upscale for the next. (exact: a view drawn at full resolution, as debug
+  // views and references are, which nothing changes.) Every frame counts,
+  // however slow: a GPU that takes far longer than the display allows is the
+  // one that most needs fewer pixels, and a lone hitch (a tab shown again,
+  // a shader built) gives way to nothing, since only frames slow in a row do.
+  frame(raw, upscale, exact = false) {
+    this.fps += (1 / raw - this.fps) * 0.1;
+    if (raw > SLOW) this.slow++;
+    else this.slow = 0;
+    if (raw < QUICK) this.quick++;
+    else this.quick = 0;
+    if (exact) this.slow = this.quick = 0;
+    if (this.slow >= GIVE) {
+      this.slow = this.quick = 0;
+      return Math.max(MIN_UPSCALE, upscale * 0.8);
+    }
+    if (this.quick >= TAKE) {
+      this.quick = 0;
+      return Math.min(1, upscale * 1.1);
+    }
+    return upscale;
+  }
+}

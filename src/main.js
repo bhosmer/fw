@@ -10,7 +10,7 @@ import { elsewhere } from './arrival.js';
 import { readPlace, placeOf, writePlace, applyPlace } from './place.js';
 import { camera, makeView, viewKey, N_VIEW, FOV_TAN } from './view.js';
 import { trace, check, checkRays, compareRays } from './debug.js';
-import { Pacing } from './pacing.js';
+import { Pacing, Resolution, MIN_UPSCALE } from './pacing.js';
 
 const help = document.getElementById('help');
 // (Where the app cannot start, it says why, in place of the legend.)
@@ -160,7 +160,6 @@ function look(now, drawn) {
 // does not follow it (review21): detail is sized by the picture's pixels
 // (lodH, their number down it), so that fewer pixels only sample the same
 // geometry less densely, and coming to rest changes no geometry.
-const MIN_UPSCALE = 0.35;
 function resize() {
   const h = Math.max(1, Math.round(canvas.clientHeight * PIXEL_RATIO));
   showing.lodH = h;
@@ -360,7 +359,8 @@ function present() {
   return drawn;
 }
 let last = performance.now();
-let slow = 0, quick = 0, fps = 0, levelsDrawn = 0;
+let levelsDrawn = 0;
+const resolution = new Resolution();
 const pacing = new Pacing(last);
 // A frame of the loop, and the next asked for. (Should a frame fail, say so
 // rather than stop without a word.)
@@ -401,25 +401,9 @@ function tick(now) {
   const drew = present();
   if (drew) document.getElementById('loading')?.remove();
   if (pilot.on) look(now, drew);
-  if (drew && moved && raw < 0.25) {
-    // Resolution gives way quickly when frames run long and returns slowly
-    // while we move (at rest it is full: see present).
-    fps += (1 / raw - fps) * 0.1;
-    if (raw > 1 / 45) slow++;
-    else slow = 0;
-    if (raw < 1 / 55) quick++;
-    else quick = 0;
-    // (Not for debug views or references, which are drawn at full
-    // resolution, to be exact: see Renderer.drawFrame.)
-    if (showing.debug || showing.reference) slow = quick = 0;
-    if (slow >= 3) {
-      showing.upscale = Math.max(MIN_UPSCALE, showing.upscale * 0.8);
-      slow = quick = 0;
-    } else if (quick >= 90) {
-      showing.upscale = Math.min(1, showing.upscale * 1.1);
-      quick = 0;
-    }
-  }
+  // (At rest the resolution is full: see present. Debug views and references
+  // are drawn at full resolution, to be exact: see Renderer.drawFrame.)
+  if (drew && moved) showing.upscale = resolution.frame(raw, showing.upscale, !!(showing.debug || showing.reference));
   // Where we are, in the link and now and then in the history (see saveLocation).
   // (How far we moved, in cells of the level we moved at: here, in ours now.)
   if (moved) travel += (moved * Math.pow(R, pos.F - F0)) / Math.max(flight.clearance, 1e-6);
@@ -430,7 +414,7 @@ function tick(now) {
 // What the legend (the HUD) says at time now: where we are, how fast it
 // draws, and for a moment what has just changed.
 function legend(now) {
-  const notes = [`level ${pos.F > 0 ? '+' : ''}${pos.F}`, `scale ${scaleLabel(pos.F)}`, `${fps.toFixed(0)} fps`];
+  const notes = [`level ${pos.F > 0 ? '+' : ''}${pos.F}`, `scale ${scaleLabel(pos.F)}`, `${resolution.fps.toFixed(0)} fps`];
   if (showing.reference) notes.push('old stepping');
   if (now - said.scheme < 2000) notes.push(`scheme: ${SCHEMES[showing.scheme].name}`);
   if (other) notes.push(showing.side ? 'B' : 'A');
@@ -512,7 +496,7 @@ window.fw = {
   },
   get state() {
     const { sky, clearance, scale, pace, opened, fog, sensed } = flight;
-    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale: showing.upscale, every: pacing.every, fps, gpuMs: pacing.gpuMs.slice(-8), gpuDropped: renderer.dropped, levelsDrawn, sensed };
+    return { F: pos.F, frac: pos.frac.slice(), sky, clearance, scale, pace, opened, fog, upscale: showing.upscale, every: pacing.every, fps: resolution.fps, gpuMs: pacing.gpuMs.slice(-8), gpuDropped: renderer.dropped, levelsDrawn, sensed };
   },
   fly(seconds, { f = 0, r = 0, u = 0 } = {}) {
     const { fwd, right } = flight.basis();
