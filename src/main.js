@@ -185,9 +185,10 @@ function scaleLabel(F) {
 // then where we are is kept as an entry of its own, so that back and forward
 // go through where we have been: once we have gone a noticeable way from the
 // place last kept (SNAP_TRAVEL times the room round us, summed as we go, or to
-// another level) and at least SNAP_EVERY after it; and before and after a jump
-// somewhere new. The entry we leave then holds the place it was kept for.
-const SAVE_EVERY = 1000, SNAP_EVERY = 10000, SNAP_TRAVEL = 5;
+// another level) and at least SNAP_EVERY after it (SNAP_TOURING on the tour,
+// whose long flights would otherwise crowd out the browser's history); and
+// before and after a jump somewhere new. The entry we leave then holds the place it was kept for.
+const SAVE_EVERY = 1000, SNAP_EVERY = 10000, SNAP_TOURING = 30000, SNAP_TRAVEL = 5;
 // (Times are the frame loop's, as tick has them: see clock.)
 let savedAt = -Infinity, saved = '', refused = false, clock = performance.now();
 let kept = { at: -Infinity, link: null, F: 0 }, travel = 0;
@@ -422,7 +423,7 @@ function tick(now) {
   // Where we are, in the link and now and then in the history (see saveLocation).
   // (How far we moved, in cells of the level we moved at: here, in ours now.)
   if (moved) travel += (moved * Math.pow(R, pos.F - F0)) / Math.max(flight.clearance, 1e-6);
-  if ((travel >= SNAP_TRAVEL || pos.F !== kept.F) && now - kept.at >= SNAP_EVERY) keepPlace();
+  if ((travel >= SNAP_TRAVEL || pos.F !== kept.F) && now - kept.at >= (pilot.on ? SNAP_TOURING : SNAP_EVERY)) keepPlace();
   else if (now - savedAt >= SAVE_EVERY) saveLocation();
   hud.textContent = legend(now);
 }
