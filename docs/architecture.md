@@ -42,9 +42,9 @@ Two planes are the world's, not any level's, and are handled where levels are as
 `src/pilot.js` (with what the tour asks of the flight: `awayFrom`, `outward`) and `src/planner.js`: to be redesigned (F13).
 
 ## The app
-<!-- files: src/main.js  budget: 150  verified: f78846c -->
+<!-- files: src/main.js  budget: 150  verified: edcca46 -->
 
-`src/main.js`: wiring, the frame loop, keys and buttons (their legend: `index.html`), links, the HUD, and the `fw` console object.
+`src/main.js`: wiring, the frame loop, keys, the HUD, `fw`; the place in the URL, kept now and then in the history.
 
 ## Checks and tools
 <!-- files: tests/,bench/  budget: 800  verified: 05bc585 -->
@@ -54,7 +54,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 - `bench/`: `cold.mjs` (a first visit's shader build), `warm.mjs` (build a link's shaders before it is opened), `bench.mjs` (with `timing.mjs`: GPU timings from fw.bench, those the GPU does not give taken again and counted), `views.mjs`, `shoot.mjs`.
 
 ## Traps, and how to look
-<!-- files: src/twin.js,src/shaders.js,src/debug.js,src/main.js,tests/,bench/  budget: 4400  verified: eb72ec5 -->
+<!-- files: src/twin.js,src/shaders.js,src/debug.js,src/main.js,tests/,bench/  budget: 4400  verified: edcca46 -->
 
 **GLSL.** Chrome on macOS compiles through ANGLE to Metal, and its compiler has a fault (B20): a value shifted right by exactly 16 (or divided by 65536), then taken `%` or `/` a constant that is not a power of two, comes out as garbage when the shift and the modulo meet only once a function is inlined; a `min()` around it is then dropped. Written inline, through a temporary, or with a divisor the compiler cannot know, it is right; so the writers keep shifts and modulos inline (`glsl` in `src/twin.js`), and a browser check compares the town's shapes in both languages. `P` is a macro; `out` and `half` are reserved words. Compile time, not speed, is what loops and arrays cost: loops the compiler can bound are unrolled, and returns inside loops and dynamically indexed local arrays blow it up; so where the openings' windows are asked, the shader loops over the set bits of a mask (`lowBit`).
 

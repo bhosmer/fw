@@ -88,9 +88,10 @@ const showing = {
   history: world.settings.view.history, // (the side shown's view.history: set again at each flip)
   fit: world.settings.view.fit, // (and its view.fit)
 };
-// When the scheme last changed, and the link's place was found unreadable
-// (and why): the legend names each for a moment after (see legend).
-const said = { scheme: 0, unread: { at: -Infinity, why: null } };
+// When the scheme last changed, the link's place was found unreadable, and
+// the place could not be kept in the link (and why): the legend names each
+// for a moment after (see legend).
+const said = { scheme: 0, unread: { at: -Infinity, why: null }, unsaved: { at: -Infinity, why: null } };
 // Whether the legend is hidden is remembered (H shows and hides it).
 const HELP_KEY = 'fw.help';
 try {
@@ -177,14 +178,54 @@ function scaleLabel(F) {
 }
 
 // Where we are and which way we face live in the URL, so a place can be
-// bookmarked or sent to someone (see place.js).
-function saveLocation() {
-  const at = writePlace(placeOf(flight, showing.side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
-  // (Where the page is framed, this may not be allowed: then it is not kept.)
+// bookmarked or sent to someone (see place.js). The entry of the browser's
+// history we are on follows us: written whenever the link would change, at most
+// once a SAVE_EVERY (some browsers refuse a page that rewrites its URL too
+// often), and when the page is hidden, whether anything is being drawn or not. And now and
+// then where we are is kept as an entry of its own, so that back and forward
+// go through where we have been: once we have gone a noticeable way from the
+// place last kept (SNAP_TRAVEL times the room round us, summed as we go, or to
+// another level) and at least SNAP_EVERY after it; and before and after a jump
+// somewhere new. The entry we leave then holds the place it was kept for.
+const SAVE_EVERY = 1000, SNAP_EVERY = 10000, SNAP_TRAVEL = 5;
+// (Times are the frame loop's, as tick has them: see clock.)
+let savedAt = -Infinity, saved = '', refused = false, clock = performance.now();
+let kept = { at: -Infinity, link: null, F: 0 }, travel = 0;
+const linkHere = () => writePlace(placeOf(flight, showing.side ? 'B' : 'A'), [world, other].filter(Boolean).map((w) => w.space));
+// (Where the page is framed, or the browser will not have it, the URL may not
+// be changed: then it is not, nor tried again, and the legend says why for a
+// moment.)
+function rewrite(how, link) {
+  if (refused) return false;
   try {
-    history.replaceState(null, '', at);
-  } catch {}
+    history[how](null, '', link);
+    return true;
+  } catch (err) {
+    refused = true;
+    said.unsaved = { at: clock, why: err.message };
+    return false;
+  }
 }
+function saveLocation() {
+  const at = linkHere();
+  savedAt = clock;
+  if (at !== saved && rewrite('replaceState', at)) saved = at;
+}
+// Keep where we are as an entry of the history (none, if it is where the
+// entry we are on was kept for).
+function keepPlace() {
+  const at = linkHere();
+  if (at !== kept.link) {
+    if (kept.link && saved !== kept.link && rewrite('replaceState', kept.link)) saved = kept.link;
+    if (!rewrite(kept.link ? 'pushState' : 'replaceState', at)) return;
+    saved = at;
+  }
+  kept = { at: clock, link: at, F: pos.F };
+  travel = 0;
+  savedAt = clock;
+}
+addEventListener('visibilitychange', () => document.hidden && saveLocation());
+addEventListener('pagehide', saveLocation);
 // Go to the place in the link, if it has one we can be at: whether it did.
 // (One that cannot be read is passed over whole, and why said for a moment.)
 function loadLocation() {
@@ -219,11 +260,18 @@ function flip() {
 
 // Off to somewhere new (the tour, if on, starts afresh).
 function respawn() {
+  keepPlace();
   elsewhere(flight, Math.random);
+  jumped();
+  keepPlace();
+}
+// After a jump to another place (somewhere new, back or forward, a link):
+// drawn afresh, and the tour, if on, starts afresh from there (where it was
+// going was from where we were).
+function jumped() {
   renderer.reset();
   if (pilot.on) pilot.start(pos.F);
   controls.drop();
-  saveLocation();
 }
 function toggleTour() {
   if (pilot.on) pilot.stop();
@@ -266,15 +314,24 @@ for (const [name, act] of Object.entries(BUTTONS)) {
   });
 }
 
-// (A link changed to no place we can be at leaves us where we are, and says
-// so: back to where that is.)
-addEventListener('hashchange', () => {
-  if (loadLocation()) renderer.reset();
-  else saveLocation();
-});
+// Back and forward, or a link changed by hand: to its place, which is then
+// the place this entry was kept for; a link with no place we can be at leaves
+// us where we are, and says so. (A step through entries kept here can be told
+// twice, as a popstate and a hashchange: the second finds us there.)
+function arrived() {
+  if (location.hash === saved) return;
+  if (loadLocation()) jumped();
+  else rewrite('replaceState', linkHere());
+  saved = location.hash;
+  kept = { at: clock, link: location.hash, F: pos.F };
+  travel = 0;
+}
+addEventListener('hashchange', arrived);
+addEventListener('popstate', arrived);
 // (A first visit, a link with no place we can be at, opens where the world
 // says one does: see first in worlds.js.)
 if (!loadLocation()) applyPlace(flight, world.space.first);
+keepPlace();
 
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
@@ -302,7 +359,7 @@ function present() {
   return drawn;
 }
 let last = performance.now();
-let slow = 0, quick = 0, fps = 0, levelsDrawn = 0, unsaved = 0;
+let slow = 0, quick = 0, fps = 0, levelsDrawn = 0;
 const pacing = new Pacing(last);
 // A frame of the loop, and the next asked for. (Should a frame fail, say so
 // rather than stop without a word.)
@@ -319,6 +376,7 @@ function frame(now) {
 }
 // What a frame of the loop does, at time now (ms).
 function tick(now) {
+  clock = now;
   if (!pacing.refresh(now, renderer.timed())) return;
   const raw = (now - last) / 1000;
   last = now;
@@ -326,6 +384,7 @@ function tick(now) {
   controls.update(dt);
   const way = controls.retracing();
   if (way) controls.drop();
+  const F0 = pos.F;
   let moved;
   if (way) moved = flight.retrace(dt, way, controls.boost());
   else if (pilot.on) {
@@ -360,12 +419,11 @@ function tick(now) {
       quick = 0;
     }
   }
-  // Once we have been still for a moment, note where.
-  if (drew) unsaved = now;
-  else if (unsaved && now - unsaved > 400) {
-    saveLocation();
-    unsaved = 0;
-  }
+  // Where we are, in the link and now and then in the history (see saveLocation).
+  // (How far we moved, in cells of the level we moved at: here, in ours now.)
+  if (moved) travel += (moved * Math.pow(R, pos.F - F0)) / Math.max(flight.clearance, 1e-6);
+  if ((travel >= SNAP_TRAVEL || pos.F !== kept.F) && now - kept.at >= SNAP_EVERY) keepPlace();
+  else if (now - savedAt >= SAVE_EVERY) saveLocation();
   hud.textContent = legend(now);
 }
 // What the legend (the HUD) says at time now: where we are, how fast it
@@ -377,6 +435,7 @@ function legend(now) {
   if (other) notes.push(showing.side ? 'B' : 'A');
   if (pilot.on) notes.push(`touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})`);
   if (now - said.unread.at < 4000) notes.push(`the link's place: ${said.unread.why}`);
+  if (now - said.unsaved.at < 4000) notes.push(`the place could not be kept in the link: ${said.unsaved.why}`);
   return notes.join('   ');
 }
 // Where two worlds are compared, the one not shown drawn once before the

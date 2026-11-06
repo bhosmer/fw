@@ -1199,6 +1199,24 @@ check('N goes somewhere new, with room to stand', async () => {
   assert(now !== was && clear >= 0.08, `still at ${was === now ? 'the same place' : now}, clearance ${clear}`);
 });
 
+// Somewhere new is a new entry of the browser's history, the place we left
+// kept in the one before it: back goes to where we were, forward to where N
+// took us (see keepPlace in main.js).
+check('after N, back goes to where we were and forward to where N took us', async () => {
+  await load('inside');
+  const was = await page.eval('fw.where');
+  await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyN' }))`);
+  const there = await page.eval('fw.where');
+  await page.eval('history.back()');
+  await new Promise((r) => setTimeout(r, 300));
+  const back = await page.eval('fw.where');
+  await page.eval('history.forward()');
+  await new Promise((r) => setTimeout(r, 300));
+  const forward = await page.eval('fw.where');
+  // (Not by history.length: Chrome stops counting at 50.)
+  assert(there !== was && back === was && forward === there, `back ${back === was ? 'to where we were' : back}; forward ${forward === there ? 'to where N went' : forward}`);
+});
+
 check('a place survives a reload', async () => {
   await load('inside');
   await page.eval(`(fw.flight.yaw += 0.3, fw.fly(0.7, { f: 1 }))`);
