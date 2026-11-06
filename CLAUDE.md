@@ -13,6 +13,7 @@ A world without a size, in the browser: WebGL2, ray-marched, nested without end 
 ## Keeping it current
 - Change the dataset only with `node .claude/track/track.mjs` (`help` lists its commands), at each step as it happens: an item found, described, reshaped or closed; a decision made (Basil's in his words); the queue changed; an agent started or finished (`fly`, `landed`); a question for Basil (`wait`, with links to try for any judgement of look or speed). STATE.md and the tracker then follow by themselves.
 - When an item's understanding changes, rewrite its description (`describe`); notes are for history.
+- A goal or priority Basil states becomes its own item (linked to related ones), never only a note on another. Its rank and horizon are his: change them only with a stated reason, which he sees.
 - Update `docs/architecture.md` in the same commit as any change to how the code is put together (`node docs/doc.mjs affected` lists the sections a staged change touches): re-read the section whole, rewrite it to fit its budget rather than insert, describe what is, not what was, then `node docs/doc.mjs verify <section>`. A design note is written once: what changes later goes into decisions and items; a new plan replaces it (`doc`, `edit --status superseded`). The brief is the exception: when what is wanted changes, rewrite it in place and record the choice as a decision.
 - CLAUDE.md holds only what holds for the project's lifetime; edit it with Basil's OK.
 
