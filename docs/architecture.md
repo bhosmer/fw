@@ -18,7 +18,7 @@ The world answers, for a point at a level, its distance to that level's air, and
 Two planes are the world's, not any level's, and are handled where levels are asked, written by hand in each language as the engine's own (the levels' split into cells, diagonals and slants is too): over the sky's plane there is only sky (the march and map in `src/shaders.js`, `clearanceAt` and `ahead` in `src/flight.js`); under the ground (the space's `ground`: the arcology's plaza floor) there is only solid, at every level, each level's air cut off at it where it is asked (`levelRay` in `src/shaders.js`, `airAt` in `src/air.js`), as far under us as each level's record says (`ground`, from `groundHeight` in `src/position.js`). A browser check holds the two cuts together on the floor.
 
 ## Flying
-<!-- files: src/flight.js,src/arrival.js,src/place.js,src/position.js,src/air.js,src/view.js,src/controls.js,src/pacing.js  budget: 1400  verified: e2e8c7d -->
+<!-- files: src/flight.js,src/arrival.js,src/place.js,src/position.js,src/air.js,src/view.js,src/controls.js,src/pacing.js  budget: 1400  verified: 977f7fb -->
 
 - `src/flight.js`: sensing (what is around us at every scale, after every move: what the view is drawn from) and motion (how far the way ahead is open, each step, the trail), and which way we face.
 - `src/arrival.js`: somewhere new (where N takes us).
@@ -26,7 +26,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 - `src/position.js`: where we are, as digits at every level; each level's record (`levels`).
 - `src/air.js`: asking the world what the shader asks of it, in JavaScript (`airAt`), and a gradient of such answers.
 - `src/view.js`: from the flight and how the view is shown: which levels to draw (those the flight looks at as a rule, and coarser ones whose air is in sight, as far up as `view.fit`, and further up the room we are in, zoomed about the corner of it we are near: `zoomed` in `src/position.js`; but not those the space draws only near the level we work at, `nearOnly`), the outer plane (for such a level that cannot be drawn), the camera (how the screen maps to rays), the view as drawn (`makeView`) and its redraw key (`viewKey`).
-- `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing.
+- `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing: how often to draw, and the resolution while we move (`Resolution`: fewer pixels after slow frames in a row, however slow, more after quick ones).
 
 ## Drawing
 <!-- files: src/renderer.js,src/frame.js,src/look.js,src/gl.js,src/shaders.js,src/schemes.js  budget: 1100  verified: eb72ec5 -->
