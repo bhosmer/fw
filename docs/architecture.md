@@ -29,7 +29,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 - `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing.
 
 ## Drawing
-<!-- files: src/renderer.js,src/frame.js,src/look.js,src/gl.js,src/shaders.js,src/schemes.js  budget: 1100  verified: 02fdb91 -->
+<!-- files: src/renderer.js,src/frame.js,src/look.js,src/gl.js,src/shaders.js,src/schemes.js  budget: 1100  verified: eb72ec5 -->
 
 - `src/renderer.js`: the programs of the world drawn, and of one compared with it (the view; the older way and the probe, made when asked for), and their tables; the levels and the view given to them; each frame drawn and timed; the probe.
 - `src/frame.js`: what each frame is drawn into, its gathering into the history (temporal antialiasing and upscaling) and its showing, smoothed; with their shaders. History cannot mend boil at a low upscale: the samples are too sparse to gather. The lever there is the shader's speed.
@@ -54,7 +54,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 - `bench/`: `cold.mjs` (a first visit's shader build), `warm.mjs` (build a link's shaders before it is opened), `bench.mjs` (with `timing.mjs`: GPU timings from fw.bench, those the GPU does not give taken again and counted), `views.mjs`, `shoot.mjs`.
 
 ## Traps, and how to look
-<!-- files: src/twin.js,src/shaders.js,src/debug.js,src/main.js,tests/,bench/  budget: 4400  verified: 02fdb91 -->
+<!-- files: src/twin.js,src/shaders.js,src/debug.js,src/main.js,tests/,bench/  budget: 4400  verified: eb72ec5 -->
 
 **GLSL.** Chrome on macOS compiles through ANGLE to Metal, and its compiler has a fault (B20): a value shifted right by exactly 16 (or divided by 65536), then taken `%` or `/` a constant that is not a power of two, comes out as garbage when the shift and the modulo meet only once a function is inlined; a `min()` around it is then dropped. Written inline, through a temporary, or with a divisor the compiler cannot know, it is right; so the writers keep shifts and modulos inline (`glsl` in `src/twin.js`), and a browser check compares the town's shapes in both languages. `P` is a macro; `out` and `half` are reserved words. Compile time, not speed, is what loops and arrays cost: loops the compiler can bound are unrolled, and returns inside loops and dynamically indexed local arrays blow it up; so where the openings' windows are asked, the shader loops over the set bits of a mask (`lowBit`).
 
