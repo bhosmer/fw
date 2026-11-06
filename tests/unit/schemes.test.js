@@ -12,8 +12,8 @@ test('schemes have distinct names', () => {
   assert.equal(new Set(names).size, names.length);
 });
 
-test('a first visit starts in alhambra', () => {
-  assert.equal(SCHEMES[loadScheme()].name, 'alhambra');
+test('a first visit starts in de chirico', () => {
+  assert.equal(SCHEMES[loadScheme()].name, 'de chirico');
 });
 
 test('a chosen scheme is remembered', () => {
@@ -23,5 +23,5 @@ test('a chosen scheme is remembered', () => {
 
 test('a remembered scheme that no longer exists falls back to the first', () => {
   store.set('fw.scheme', 'blueprint');
-  assert.equal(SCHEMES[loadScheme()].name, 'alhambra');
+  assert.equal(SCHEMES[loadScheme()].name, 'de chirico');
 });

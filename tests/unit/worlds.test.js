@@ -16,7 +16,7 @@ import { M } from '../../src/spaces/halls.js';
 const MADE = await Promise.all([makeWorld('arcology'), makeWorld('arcology', { plaza: { fades: true } })]);
 // (Each test asks the places of each half, and holds each to reaching what
 // it means to.)
-const HALVES = [[false, 'first visits'], [true, 'inside']];
+const HALVES = [[false, 'somewhere new'], [true, 'inside']];
 for (const { space, set } of MADE) {
   const label = space.name + (set ? '&plaza.fades=true' : '');
   // A distance that never overstates mostly changes no faster than the

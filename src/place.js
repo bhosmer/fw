@@ -27,7 +27,7 @@ export const LEVEL_MOST = 1e4;
 
 // The place in a link, checked against the lattice it is to be in (R cells
 // a side): { place }, or { why } it is no place. A place without yaw and
-// pitch has facing null: it is faced as a new visit would be (see
+// pitch has facing null: it is faced as somewhere new is (see
 // applyPlace).
 export function readPlace(hash, R) {
   let at;
@@ -94,6 +94,6 @@ export function applyPlace(flight, { F, frac, digits, facing, shown }, show = ()
     flight.pitch = facing.pitch;
   }
   flight.begin();
-  // (Without a facing, the way a new visit faces: the most open.)
+  // (Without a facing, the way somewhere new is faced: the most open.)
   if (!facing) faceOpen(flight);
 }

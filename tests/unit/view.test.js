@@ -67,7 +67,7 @@ test('close to a far coarser room\'s walls and corners, what is drawn never lets
 });
 
 // Flying straight at whatever is ahead, from inside the building and from
-// first visits: at walls that do not open for many levels, the room ends up
+// somewhere new: at walls that do not open for many levels, the room ends up
 // far coarser than the levels looked at as a rule. Every 20th step there, as
 // the view is drawn: the states, each with its flight's numbers.
 let flown = null;

@@ -61,7 +61,8 @@ test('the building in other shapes: built, and holding what it must', () => {
 });
 
 // Three of them flown through: what a level says of a ray holds (see
-// rayHolds), at first visits and where short flights from them lead.
+// rayHolds), somewhere new (see elsewhere) and where short flights from
+// there lead.
 test('the building in other shapes: rays hold in it', () => {
   for (const set of [SHAPES[0], SHAPES[1], SHAPES[4]]) {
     const space = makeArcology({ building: set }).arcology, rnd = rand(29);

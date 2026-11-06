@@ -26,7 +26,11 @@ const PLACES = {
   // Out on the plaza near the building, its floor's detail running off to
   // the horizon.
   plaza: at({ F: -1, frac: [0.5625, 0.1796875, 0.6458333333333334], digits: [[-1, [0, 3, 0]]], yaw: 0.5, pitch: -0.06 }),
-  // Wherever a first visit starts.
+  // The same, looking level: the plaza's floor running off to the horizon,
+  // the building out of sight.
+  level: at({ F: -1, frac: [0.5625, 0.1796875, 0.6458333333333334], digits: [[-1, [0, 3, 0]]], yaw: 0, pitch: 0 }),
+  // Where a first visit opens (the world's first place: see first in
+  // worlds.js).
   start: '',
   // In a small room inside the building, looking through a doorway into a
   // great hall on the left.
@@ -118,7 +122,7 @@ check('every scheme compiles and draws something', async () => {
   }
 });
 
-// (Where a first visit starts, out on the plaza; and inside the building,
+// (Where a first visit opens, out on the plaza; and inside the building,
 // among its halls.)
 check('the shader and the JavaScript agree about the world', async () => {
   for (const place of ['start', 'inside']) {
@@ -499,8 +503,8 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
   // inside the building where they are.)
   for (const [variant, place = 'start'] of [['arcology/cornice&town.density=[30,60,90]&halls.solid=0.5'], ['arcology&building.slopes.upper=[3,80]'], ['arcology&building.bands.storey=2.5'], ['arcology&halls.byLevel.-1.solid=0.8&halls.byLevel.-1.furniture.none.share=0.1&halls.byLevel.0.walls.door.share=0.4'], ['arcology&halls.solid=0.4&halls.rooms.low.share=0.3&halls.walls.none.share=0.1&halls.walls.door.share=0.42&halls.slabs.solid.share=0.4&halls.slabs.oculus.share=0.48&halls.furniture.none.share=0.1&halls.furniture.piers.share=0.52', 'inside']]) {
     await load(place, 'alhambra', false, variant);
-    const shown = await page.eval(`document.querySelector('.world')?.textContent ?? ''`);
-    assert(shown.startsWith(variant.split('&')[0]), `the legend says ${shown}`);
+    const shown = await page.eval('fw.label');
+    assert(shown.startsWith(variant.split('&')[0]), `the world is called ${shown}`);
     const worst = await page.eval('fw.check(150)');
     assert(worst.diff < 1e-3 && worst.more.diff < 1e-3 && worst.compared > 5000, `${variant}: they differ by ${JSON.stringify({ ...worst, more: worst.more })}`);
     const r = await page.eval('fw.checkRays(80)');
@@ -512,14 +516,14 @@ check('a variant in a link is made, and the shader and the JavaScript agree in i
   await load('inside');
   const opens = await page.eval('fw.pos.F');
   await page.goto(`${base}index.html?${++loads}&arcology/cornice#${PLACES.inside}`, setup('alhambra'));
-  const there = await page.eval(`({ world: fw.space.name, shown: document.querySelector('.world').textContent, F: fw.pos.F })`);
+  const there = await page.eval(`({ world: fw.space.name, shown: fw.label, F: fw.pos.F })`);
   assert(there.world === 'arcology' && there.shown === 'arcology/cornice' && there.F === opens, `a variant's link with a place: ${JSON.stringify(there)}, not at ${opens}`);
   // (Reloaded, a variant is the same variant, in the same place.)
   await page.eval(`(fw.fly(0.4, { f: 1 }), fw.saveLocation())`);
   const before = await page.eval(`({ href: location.href, F: fw.pos.F, frac: fw.pos.frac })`);
   // (A link changed only in its hash would not reload the page: its number is made new.)
   await page.goto(before.href.replace(/\?\d+/, `?${++loads}`), setup('alhambra'));
-  const after = await page.eval(`({ shown: document.querySelector('.world').textContent, F: fw.pos.F, frac: fw.pos.frac })`);
+  const after = await page.eval(`({ shown: fw.label, F: fw.pos.F, frac: fw.pos.frac })`);
   assert(after.shown === 'arcology/cornice' && after.F === before.F && JSON.stringify(after.frac) === JSON.stringify(before.frac), `reloaded: ${JSON.stringify({ before, after })}`);
   for (const [link, said] of [['arcology&town.nope=1', /there is no town\.nope/], ['arcology/nope', /there is no world arcology\/nope/], ['halls', /there is no world halls \(there are arcology, arcology\//], ['arcology&vs=halls', /vs: there is no world halls/], ['arcology&town.density=[30,60', /not one/], ['arcology&vs=nope', /vs: there is no world nope/], ['arcology/cornice&vs=arcology&building.edge="cornice"', /vs: arcology is the same world/]]) {
     await page.goto(`${base}index.html?${++loads}&${link}`, setup('alhambra'));
@@ -763,7 +767,7 @@ check('from above, the world is stepped through truly', async () => {
   // (Flown as flight first went, in proportion to the way open (curve 1)
   // and nothing else (rise and reach 0), so that 4 s up and on is where
   // this has always looked from.)
-  await load('start', 'alhambra', false, 'arcology&flight.curve=1&flight.rise=0&flight.reach=0');
+  await load('level', 'alhambra', false, 'arcology&flight.curve=1&flight.rise=0&flight.reach=0');
   await page.eval('(fw.flight.pitch = -0.4, fw.fly(4, { u: 1, f: 0.5 }))');
   const above = await page.eval('fw.compare(320, 180, 0.02)');
   assert(above.newNearer < 0.002, `the exact way sees nearer at ${(above.newNearer * 100).toFixed(2)}% of pixels`);
@@ -786,14 +790,15 @@ check('from above, the world is stepped through truly', async () => {
 // arcology's long faces badly, there as elsewhere in it, and runs out of
 // steps in its pockets, short of the rooms the exact way sees in them:
 // there the exact way sees further, never nearer.)
-// (Out on the plaza, from a first visit or elsewhere, sphere tracing runs
-// out of steps over the open floor far off, short of where the exact way
-// meets it: measured 37% and 38% of pixels, 2026-10-30. Inside, the place
-// opens at F -1 since the relief's cover (it opened at F 1 before, held two
-// levels finer by a camera on a seam's zero sheet): there 0.89% of pixels
-// disagree, and the exact way sees nearer at 1.96%, all of it ledger B34
-// (the exact way fades the hall's finer level by the slant of the face the
-// ray last crossed: with the slant held at 1, 0.00%), measured 2026-10-31.)
+// (Out on the plaza, from a first visit or elsewhere, sphere tracing runs out
+// of steps over the open floor far off, short of where the exact way meets it:
+// measured 37% of pixels at plaza, 2026-10-30, and 25% from a first visit,
+// 2026-11-05. Inside, the place opens at F -1 since the relief's cover (it
+// opened at F 1 before, held two levels finer by a camera on a seam's zero
+// sheet): there 0.89% of pixels disagree, and the exact way sees nearer at
+// 1.96%, all of it ledger B34 (the exact way fades the hall's finer level by
+// the slant of the face the ray last crossed: with the slant held at 1,
+// 0.00%), measured 2026-10-31.)
 const STEPPING = { inside: [0.025, 0.03], plaza: [0.002, 0.42], start: [0.002, 0.42], relief: [0.015, 0.12] };
 check('the two ways of stepping rays agree', async () => {
   for (const [place, [nearer, most]] of Object.entries(STEPPING)) {
@@ -1088,7 +1093,7 @@ check('a room drawn zoomed is the room drawn as it is', async () => {
 // view.js), forced here nearer than it is: not the camera's, nor the older
 // way's (fw.reference), nor the sun's (which can only take light away).
 check('no ray goes further than what is drawn holds', async () => {
-  await load('start');
+  await load('level');
   const got = await page.eval(`(async () => {
     const V = await import('/src/view.js'), W = 320, H = 180, STRIDE = 4, orig = fw.renderer.setView;
     // (Drawn holding only so far, or as it is (null); the older way or not. The tour's look draws the newer way: here, either.)
@@ -1144,7 +1149,7 @@ check('no ray goes further than what is drawn holds', async () => {
 // coarser than the first drawn: what a level that colours its surfaces as the
 // one coarser than it (gSkin, the shader's slot i - 1) takes when that one is
 // not drawn. Where it is on (only for a room of the levels the space draws
-// only near F: nearOnly), its own level's: flying from a first visit straight
+// only near F: nearOnly), its own level's: flying from somewhere new straight
 // at a wall until the room we are in is such a level, out of those drawn.
 check('the colours before the first level drawn are the level just coarser\'s, or the outer plane\'s', async () => {
   const got = [];
@@ -1204,10 +1209,35 @@ check('a place survives a reload', async () => {
   assert(here === there, `${here} became ${there}`);
 });
 
+// A first visit (no place in the link, no scheme kept) opens at the world's
+// first place (see first in worlds.js), in de chirico. The legend is the
+// keys' where there is a mouse to hover with, and the touch one on a touch
+// screen (as one is emulated: coarse, without hover).
+check('a first visit opens at the world\'s first place, with the legend for its screen', async () => {
+  const shown = () => page.eval(`[...document.querySelectorAll('#help dl')].filter((d) => getComputedStyle(d).display !== 'none').map((d) => d.className).join()`);
+  const legends = [];
+  try {
+    for (const touch of [false, true]) {
+      await page.send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 5 });
+      await page.goto(`${base}index.html?${++loads}`, 'window.requestAnimationFrame = () => 0; localStorage.clear();');
+      const got = await page.eval(`(async () => {
+        const { writePlace, placeOf } = await import('/src/place.js');
+        return { at: writePlace(placeOf(fw.flight), [fw.space]), first: writePlace(fw.space.first, [fw.space]), scheme: document.querySelector('.scheme').textContent };
+      })()`);
+      assert(!page.errors.length, page.errors.join('\n'));
+      assert(got.at === got.first && got.scheme === 'de chirico', `a first visit: ${JSON.stringify(got)}`);
+      legends.push(await shown());
+    }
+  } finally {
+    await page.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  }
+  assert(legends.join() === 'keys,touch', `the legends shown: ${legends}`);
+});
+
 // A link whose place cannot be read (see place.js) starts where a first
 // visit would, draws, and says why for a moment; one changed to such a place
-// leaves us where we are. One without a facing faces the most open way, as a
-// first visit does.
+// leaves us where we are. One without a facing faces the most open way, as
+// somewhere new does.
 check('a link whose place cannot be read still opens somewhere', async () => {
   const state = 'JSON.stringify([fw.pos.F, fw.pos.frac, fw.flight.yaw, fw.flight.pitch])';
   await load('start');
@@ -1279,8 +1309,8 @@ check('a link changed only in its digits is drawn', async () => {
   assert(r.drawn === 1, `a link changed only in its digits drew ${r.drawn} frames`);
 });
 
-// N at rest goes somewhere new, and it is drawn there every time, though a
-// first visit is often at the same level, offset and facing as the last
+// N at rest goes somewhere new, and it is drawn there every time, though
+// somewhere new is often at the same level, offset and facing as the last
 // (only its digits differ: see viewKey in view.js).
 check('N at rest is drawn somewhere new every time', async () => {
   await load('start');

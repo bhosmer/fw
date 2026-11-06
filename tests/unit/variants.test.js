@@ -162,7 +162,7 @@ test('a variant must be one the definition has', () => {
 });
 
 // A variant is held to what every world must be: here, what its levels say
-// of rays, from places a short flight from first visits.
+// of rays, from places a short flight from somewhere new.
 test('a variant keeps what a world must', () => {
   const { arcology: space } = makeArcology({
     building: { edge: 'cornice', townH: 0.75 },

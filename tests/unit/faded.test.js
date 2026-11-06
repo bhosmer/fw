@@ -41,7 +41,7 @@ for (const { space, set } of MADE) {
           inAir += said.inAir;
         }
       }
-      assert.ok(rays > 2000 && inAir > 120, `${within ? 'inside' : 'first visits'}: ${rays} rays, ${inAir} in air: the test reaches what it means to`);
+      assert.ok(rays > 2000 && inAir > 120, `${within ? 'inside' : 'somewhere new'}: ${rays} rays, ${inAir} in air: the test reaches what it means to`);
     }
   });
 }

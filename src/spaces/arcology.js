@@ -2614,8 +2614,9 @@ ${CELL_GLSL.cell}
     `'use strict';\nconst { S, airPiece, airPlane, aim, through, NONE, LOD_HI, LOD_K } = P;\n${twin.AS_GLSL}\n${twin.AS_GLSL_VEC}\nconst min = Math.min, max = Math.max;\nconst NO_ENTRY = [0, 0, 0, 0];\nconst texelFetch = (t, v) => { if (!t.within(v)) return [0, 0, 0, 0]; const i = t.words * t.at(v); return [t.data[i], t.data[i + 1], t.data[i + 2], t.data[i + 3]]; };\n${CELL_JS.relief}\n${CELL_JS.bareNear}\n${CELL_JS.reliefCell}\n${CELL_JS.city}\n${CELL_JS.cell}\nreturn { relief, cellAir };\n//# sourceURL=cellPieces.gen.js`,
   )(P, SEEN, RS, setPoint, plaza, farAxis, tableAt, groundCell, groundAir, hallsAir, carve, bareIn, openings, townAir, OPEN_AT, CROSS_AT, TOWN_AT, CELL, R, fromMiddle, ownOf, BARE.length, BARE_BOX.map((b) => b[0]), BARE_BOX.map((b) => b[1]), VOLUME.lo, VOLUME.size, ORIGIN, VOLUME);
 
-  // Where a first visit starts, in the middle city cell (lattice units): on
-  // the plaza, near the building, wherever nothing stands.
+  // Where in the middle city cell we stand where nothing says otherwise (its
+  // digit at the next level, lattice units: see ancestorDigit): on the plaza,
+  // near the building, wherever nothing stands.
   const START = (() => {
     const free = (x, z) => SOLIDS.every((s) => [G, G + 1, G + 2].every((y) => cellOut(s, [x, y, z])));
     for (let r = 0; r < R; r++)
@@ -2684,8 +2685,12 @@ ${CELL_GLSL.cell}
     // otherwise (see openAreaGlsl).
     openArea: 0.07,
 
-    // Where a visit starts in its cell: standing in the middle of a room.
+    // Where somewhere new starts in its cell: standing in the middle of a room.
     start: STANDING,
+    // Where a first visit opens (a place, as a link names one: see place.js):
+    // out on the plaza, the whole building before us across it, looking a
+    // little down. (Basil's choice, 2026-11-05.)
+    first: frozen({ F: -2, frac: [0.5199652777777778, 0.8833228096854393, 0.7916715066187822], digits: [[-2, [12, 12, 13]]], facing: { yaw: 0, pitch: -0.18447999999999892 } }),
     // On the plaza, in the city's row; coarser than that, all is solid, so
     // anywhere does; finer than level 0, as in the halls.
     ancestorDigit(level) {

@@ -19,7 +19,7 @@ function where(flight, top = -100) {
   return JSON.stringify({ F: pos.F, frac: pos.frac, digits, yaw: flight.yaw, pitch: flight.pitch });
 }
 
-// Places a visit might be: first visits, flown on from a little way.
+// Places a visit might be: somewhere new, flown on from a little way.
 function visits(space, seed, n = 12) {
   const rnd = rand(seed);
   const out = [];
@@ -89,7 +89,7 @@ test('a place shown on the other side of a comparison is there again', () => {
   }
 });
 
-test('a place without a facing faces the most open way, as a new visit does', () => {
+test('a place without a facing faces the most open way, as somewhere new does', () => {
   for (const flight of visits(space, 5, 6)) {
     const at = JSON.parse(atob(writePlace(placeOf(flight), [space]).slice(1)));
     for (const facing of [{ yaw: undefined, pitch: undefined }, { yaw: null, pitch: null }, { yaw: 1, pitch: undefined }]) {
@@ -104,6 +104,20 @@ test('a place without a facing faces the most open way, as a new visit does', ()
       assert.equal(there.pos.F, flight.pos.F);
     }
   }
+});
+
+// The world's first place, where a first visit opens (see first in
+// worlds.js): one a link may name, gone to as it is, with room to stand.
+test('the world\'s first place is one a link may name, with room to stand', () => {
+  const { first } = space;
+  const text = writePlace(first, [space]);
+  const { place, why } = readPlace(text, R);
+  assert.ok(place, `refused (${why}): ${text}`);
+  const there = new Flight(space);
+  applyPlace(there, first);
+  assert.equal(writePlace(placeOf(there), [space]), text);
+  assert.equal(there.pos.F, first.F);
+  assert.ok(there.clearance >= 0.08, `clearance ${there.clearance}`);
 });
 
 test('what may be left out of a place', () => {

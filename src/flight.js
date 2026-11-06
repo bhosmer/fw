@@ -3,8 +3,8 @@
 // (motion), which go by what sensing finds. Nothing here draws or waits on
 // the GPU, so all of it can run anywhere (main.js shows it; the tests fly it
 // in Node). What it asks of the world is in air.js; where a visit starts, in
-// arrival.js; what of it to draw, in view.js; what the tour asks of it, in
-// pilot.js.
+// place.js and arrival.js; what of it to draw, in view.js; what the tour asks
+// of it, in pilot.js.
 import { Position } from './position.js';
 import { airAt } from './air.js';
 import { define, frozen } from './util.js';

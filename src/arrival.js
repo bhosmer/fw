@@ -1,10 +1,11 @@
-// Where a visit starts: somewhere new in a world (see Flight.begin for
-// starting from wherever the flight now is, as a link does).
+// Somewhere new in a world, where N takes us (a first visit opens at the
+// world's first place, as a link does: see first in worlds.js, and
+// Flight.begin for starting from wherever the flight now is).
 
-// Start somewhere new: a first visit is somewhere different each time, in
-// the same world. Across, not up or down (which would take us under the
-// plaza, or up into the sky): our cell and its parent are anywhere across
-// theirs, at the same height. rand() gives numbers in [0, 1).
+// Start somewhere new: somewhere different each time, in the same world.
+// Across, not up or down (which would take us under the plaza, or up into
+// the sky): our cell and its parent are anywhere across theirs, at the same
+// height. rand() gives numbers in [0, 1).
 export function elsewhere(flight, rand) {
   const { pos, R } = flight;
   const reset = () => {
@@ -27,7 +28,7 @@ export function elsewhere(flight, rand) {
     flight.begin();
     if (pos.F >= picked[0] && flight.clearance >= 0.08) return faceOpen(flight);
   }
-  // (Failing that, where a first visit always began.)
+  // (Failing that, the space's start, walked on from until there is room.)
   reset();
   flight.begin(true);
 }

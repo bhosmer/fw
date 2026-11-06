@@ -10,23 +10,29 @@
       html, body { margin: 0; height: 100%; background: #111; overflow: hidden; }
       #view { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
       #hud, #help {
-        position: fixed; left: 16px; margin: 0; pointer-events: none; white-space: pre;
+        position: fixed; left: 16px; margin: 0; pointer-events: none;
         font: 12px/1.5 ui-monospace, Menlo, monospace; color: #fff;
         text-shadow: 0 0 3px rgba(0, 0, 0, 0.9), 0 0 1px #000;
       }
-      #hud { bottom: 14px; opacity: 0.8; }
-      #help { top: 14px; opacity: 0.8; }
+      #hud { bottom: 14px; opacity: 0.8; white-space: pre; }
+      #help { top: 14px; right: 16px; opacity: 0.8; }
       #help.error { color: #f88; white-space: pre-wrap; }
       #help.hidden { display: none; }
-      #help pre { margin: 0; font: inherit; }
+      /* The legend: a key (or a touch) and what it does, a row each, the keys in a column. */
+      #help dl { margin: 0; grid-template-columns: max-content 1fr; column-gap: 2ch; }
+      #help dt { white-space: nowrap; }
+      #help dd { margin: 0; }
       #loading {
         position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
         font: 14px ui-monospace, Menlo, monospace; color: #fff; opacity: 0.8;
       }
+      /* The keys' legend where there is a mouse to hover with; the touch legend and its buttons where there is
+         not (either test alone misses some touch screens). */
+      .keys { display: grid; }
       .touch, #buttons { display: none; }
-      @media (pointer: coarse) {
+      @media (pointer: coarse), (hover: none) {
         .keys { display: none; }
-        .touch { display: block; }
+        .touch { display: grid; }
         #buttons { display: flex; }
         #hud { bottom: 64px; }
       }
@@ -42,24 +48,33 @@
     <canvas id="view"></canvas>
     <!-- Shown until the first picture: the app's tables and shaders take a second or two to build. -->
     <div id="loading">loading…</div>
-    <div id="help"><pre class="keys">drag         look            W A S D     fly
-right-drag   slide           space / C   up / down
-wheel        forward / back  shift       faster
-R / F        rewind / replay             - / =   travel speed
-N            somewhere new
-L / shift-L  scheme: <span class="scheme"></span> (next / previous)
-P            tour (fly as usual to steer it)
-world: <span class="world"></span>
-<span class="vs" hidden>V            the other of the two compared (shown: <span class="world"></span>)
-</span>H            hide this</pre><pre class="touch">one finger    look
-two fingers   slide
-pinch         forward / back
-new           somewhere new
-world: <span class="world"></span>
-tour          start / stop the tour
-scheme        <span class="scheme"></span> (next)
-<span class="vs" hidden>A / B         the other of the two compared
-</span>?             hide this</pre></div>
+    <div id="help">
+      <dl class="keys">
+        <dt>drag</dt><dd>look</dd>
+        <dt>right-drag</dt><dd>slide</dd>
+        <dt>W A S D</dt><dd>fly</dd>
+        <dt>space / C</dt><dd>up / down</dd>
+        <dt>wheel</dt><dd>forward / back</dd>
+        <dt>shift</dt><dd>faster</dd>
+        <dt>- / =</dt><dd>travel speed</dd>
+        <dt>R / F</dt><dd>rewind / replay</dd>
+        <dt>N</dt><dd>somewhere new</dd>
+        <dt>L</dt><dd>next scheme (now <span class="scheme"></span>)</dd>
+        <dt>P</dt><dd>tour (fly as usual to steer it)</dd>
+        <dt class="vs" hidden>V</dt><dd class="vs" hidden>the other of the two compared (shown: <span class="world"></span>)</dd>
+        <dt>H</dt><dd>hide this</dd>
+      </dl>
+      <dl class="touch">
+        <dt>one finger</dt><dd>look</dd>
+        <dt>two fingers</dt><dd>slide</dd>
+        <dt>pinch</dt><dd>forward / back</dd>
+        <dt>new</dt><dd>somewhere new</dd>
+        <dt>tour</dt><dd>start / stop the tour</dd>
+        <dt>scheme</dt><dd>next scheme (now <span class="scheme"></span>)</dd>
+        <dt class="vs" hidden>A / B</dt><dd class="vs" hidden>the other of the two compared</dd>
+        <dt>?</dt><dd>hide this</dd>
+      </dl>
+    </div>
     <div id="buttons">
       <button id="tour-button">tour</button>
       <button id="new-button">new</button>

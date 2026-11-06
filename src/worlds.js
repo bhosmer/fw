@@ -72,8 +72,10 @@
 //                  one plane stands in for it (see outerAir)
 //   ancestorDigit  where a cell sits inside its parent when nothing says
 //                  otherwise (must be somewhere solid in the parent)
-//   start          where in its level-0 cell a visit starts (see elsewhere in
-//                  arrival.js)
+//   start          where in its level-0 cell somewhere new starts (see
+//                  elsewhere in arrival.js)
+//   first          where a first visit opens (a link with no place in it):
+//                  a place, as place.js has one ({ F, frac, digits, facing })
 //   skyPlane       the world has a top: above one horizontal plane there is
 //                  only open sky. This says where: skyPlane(j), the plane's
 //                  height as a digit at each level j <= 0 (in the cells of

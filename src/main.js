@@ -65,7 +65,8 @@ const labels = [
   [world.name, ...changed.filter((x) => !x.startsWith('vs.'))].join(' '),
   other ? [link.vs.name, ...changed.filter((x) => !x.startsWith('vs.')), ...changed.filter((x) => x.startsWith('vs.')).map((x) => x.slice(3))].join(' ') : '',
 ];
-const worldLabel = () => (other ? `${showing.side ? 'B' : 'A'}: ${labels[showing.side]}` : labels[0]);
+// (Where two are compared, the legend names the one shown.)
+const worldLabel = () => `${showing.side ? 'B' : 'A'}: ${labels[showing.side]}`;
 const R = world.space.R;
 
 const PIXEL_RATIO = 1; // canvas pixels per CSS pixel
@@ -87,11 +88,9 @@ const showing = {
   history: world.settings.view.history, // (the side shown's view.history: set again at each flip)
   fit: world.settings.view.fit, // (and its view.fit)
 };
-// When the scheme last changed, the worlds compared were last flipped, and
-// the link's place was found unreadable (and why): the legend names each for
-// a moment after (see legend). (The world is also named for the first 4 s,
-// whether or not there was a flip.)
-const said = { scheme: 0, world: -Infinity, unread: { at: -Infinity, why: null } };
+// When the scheme last changed, and the link's place was found unreadable
+// (and why): the legend names each for a moment after (see legend).
+const said = { scheme: 0, unread: { at: -Infinity, why: null } };
 // Whether the legend is hidden is remembered (H shows and hides it).
 const HELP_KEY = 'fw.help';
 try {
@@ -113,9 +112,6 @@ try {
   cannot(err);
 }
 const flight = new Flight(world.space, world.settings.flight);
-// (Facing, until a link or a first visit says which way: a little to the
-// side and down. A first visit that finds no room keeps it: see elsewhere.)
-flight.turn(0.6, -0.05);
 const controls = new Controls(canvas, 2 * Math.atan(FOV_TAN), flight);
 const pos = flight.pos;
 const pilot = new Pilot(R);
@@ -199,9 +195,9 @@ function loadLocation() {
   return true;
 }
 
-// L switches between schemes (shift-L back); P starts and stops the tour; N
-// goes somewhere new; H hides and shows the legend. (The old way of stepping
-// rays, to compare by eye: fw.reference.)
+// L goes on to the next scheme; P starts and stops the tour; N goes
+// somewhere new; H hides and shows the legend. (The old way of stepping rays,
+// to compare by eye: fw.reference.)
 
 // The other world compared, where we are, as we are (see Flight.setSpace),
 // with its link's settings (how we fly, and how frames are drawn): nothing
@@ -218,11 +214,10 @@ function flip() {
   showing.fit = settings.view.fit;
   lookAt = null;
   if (pilot.on) pilot.start(pos.F);
-  said.world = performance.now();
   showScheme();
 }
 
-// Off to somewhere new, as on a first visit (the tour, if on, starts afresh).
+// Off to somewhere new (the tour, if on, starts afresh).
 function respawn() {
   elsewhere(flight, Math.random);
   renderer.reset();
@@ -235,8 +230,8 @@ function toggleTour() {
   else pilot.start(pos.F);
   controls.drop();
 }
-function nextScheme(by) {
-  showing.scheme = (showing.scheme + by + SCHEMES.length) % SCHEMES.length;
+function nextScheme() {
+  showing.scheme = (showing.scheme + 1) % SCHEMES.length;
   renderer.reset();
   saveScheme(showing.scheme);
   said.scheme = performance.now();
@@ -251,7 +246,7 @@ showScheme();
 addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'KeyP') toggleTour();
-  if (e.code === 'KeyL') nextScheme(e.shiftKey ? -1 : 1);
+  if (e.code === 'KeyL') nextScheme();
   if (e.code === 'KeyH') toggleHelp();
   if (e.code === 'KeyN') respawn();
   if (e.code === 'KeyV') flip();
@@ -259,7 +254,7 @@ addEventListener('keydown', (e) => {
 // The same, by buttons, for touch screens.
 const BUTTONS = {
   tour: toggleTour,
-  scheme: () => nextScheme(1),
+  scheme: nextScheme,
   help: toggleHelp,
   new: respawn,
   vs: flip,
@@ -277,7 +272,9 @@ addEventListener('hashchange', () => {
   if (loadLocation()) renderer.reset();
   else saveLocation();
 });
-if (!loadLocation()) elsewhere(flight, Math.random);
+// (A first visit, a link with no place we can be at, opens where the world
+// says one does: see first in worlds.js.)
+if (!loadLocation()) applyPlace(flight, world.space.first);
 
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
@@ -377,8 +374,7 @@ function legend(now) {
   const notes = [`level ${pos.F > 0 ? '+' : ''}${pos.F}`, `scale ${scaleLabel(pos.F)}`, `${fps.toFixed(0)} fps`];
   if (showing.reference) notes.push('old stepping');
   if (now - said.scheme < 2000) notes.push(`scheme: ${SCHEMES[showing.scheme].name}`);
-  if (now < 4000 || now - said.world < 2000) notes.push(`world: ${worldLabel()}`);
-  else if (other) notes.push(showing.side ? 'B' : 'A');
+  if (other) notes.push(showing.side ? 'B' : 'A');
   if (pilot.on) notes.push(`touring (${pilot.phase === 'dive' ? 'diving' : 'surfacing'})`);
   if (now - said.unread.at < 4000) notes.push(`the link's place: ${said.unread.why}`);
   return notes.join('   ');
@@ -415,6 +411,10 @@ window.fw = {
   // (Which world compared is shown: 'A' or 'B'; null if none is compared.)
   get shown() {
     return other ? (showing.side ? 'B' : 'A') : null;
+  },
+  // (What the world shown is called, with the changes its link makes.)
+  get label() {
+    return labels[showing.side];
   },
   saveLocation,
   set debug(v) {

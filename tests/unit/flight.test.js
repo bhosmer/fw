@@ -29,7 +29,7 @@ function wander(flight, n, each, seed = 1, dt = 1 / 60, boost = 1) {
   }
 }
 
-test('a first visit begins somewhere with room to stand', () => {
+test('a flight begun afresh finds somewhere with room to stand', () => {
   const flight = new Flight(arcology);
   flight.begin(true);
   assert.ok(flight.clearance > 0.05, `clearance ${flight.clearance}`);
@@ -175,7 +175,7 @@ test('however deep, where the sky is stays a number', () => {
   assert.ok(flight.pos.F < 100, `still working at level ${flight.pos.F}`);
 });
 
-test('a first visit begins somewhere different each time, with room ahead', () => {
+test('somewhere new is somewhere different each time, with room ahead', () => {
   const rnd = rand(9);
   const places = new Set();
   for (let i = 0; i < 30; i++) {
@@ -276,7 +276,7 @@ test('a wall however thin is never flown through', () => {
 
 // However far the way ahead is found open, all of it is air: along rays every
 // which way from places on a wander, nothing solid comes before it.
-// (From a first visit, out on the plaza; and from inside the building, in
+// (From somewhere new, out on the plaza; and from inside the building, in
 // its halls, for longer.)
 test('the way found open is air all the way', () => {
   for (const within of [false, true]) {
@@ -295,7 +295,7 @@ test('the way found open is air all the way', () => {
         const t = (open * j) / 200;
         // (The clearance worked out here, not by Flight.clearanceAt: kept
         // apart from the code it checks.)
-        assert.ok(Math.max(f.sky + dir[1] * t, ...f.here.map((r) => -f.airAt(r, dir.map((x) => x * t)) / r.sig)) > -1e-9 * open, `${within ? 'inside' : 'a first visit'}: solid at ${t} of ${open} open`);
+        assert.ok(Math.max(f.sky + dir[1] * t, ...f.here.map((r) => -f.airAt(r, dir.map((x) => x * t)) / r.sig)) > -1e-9 * open, `${within ? 'inside' : 'somewhere new'}: solid at ${t} of ${open} open`);
       }
     }
   }, 1);
@@ -361,7 +361,7 @@ test('a flight flies as its settings say', () => {
 // level, what is carried is taken to the new level's cells.
 test('the tour\'s travel is carried, not paced: the same at any flight.speed and flight.ease, as far as it asks, capped at half the way open', () => {
   const opened = (f) => f.opened * Math.pow(R, f.lastMove.F - f.pos.F); // (in the cells of the level the move was made at)
-  // (From a first visit, out on the plaza, where the tour goes by looking;
+  // (From somewhere new, out on the plaza, where the tour goes by looking;
   // and from inside the building, where it plans its way through the halls.)
   const tour = (settings, within) => {
     const flight = new Flight(arcology, settings);
@@ -395,7 +395,7 @@ test('the tour\'s travel is carried, not paced: the same at any flight.speed and
     }
   };
   for (const within of [false, true]) {
-    const one = tour(undefined, within), where = within ? 'inside' : 'a first visit';
+    const one = tour(undefined, within), where = within ? 'inside' : 'somewhere new';
     assert.ok(one.went > 1, `${where}: the tour went ${one.went} clearances in 10 s`);
     assert.ok(!within || one.planned > 60, `inside: the tour followed a plan on ${one.planned} steps`);
     for (const settings of [{ speed: 2 }, { speed: 0.5 }, { ease: 0 }, { ease: 3 }, { speed: 2, ease: 0.2 }]) assert.deepEqual(tour(settings, within).out, one.out, `${where}: ${JSON.stringify(settings)}`);
