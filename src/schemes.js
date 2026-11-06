@@ -118,7 +118,7 @@ export const SCHEMES = [
 const KEY = 'fw.scheme';
 
 // The scheme a first visit starts in.
-const FIRST = SCHEMES.findIndex((s) => s.name === 'de chirico');
+const FIRST = SCHEMES.findIndex((s) => s.name === 'nocturne');
 
 export function loadScheme() {
   try {

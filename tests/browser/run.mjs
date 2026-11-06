@@ -1210,7 +1210,7 @@ check('a place survives a reload', async () => {
 });
 
 // A first visit (no place in the link, no scheme kept) opens at the world's
-// first place (see first in worlds.js), in de chirico. The legend is the
+// first place (see first in worlds.js), in nocturne. The legend is the
 // keys' where there is a mouse to hover with, and the touch one on a touch
 // screen (as one is emulated: coarse, without hover).
 check('a first visit opens at the world\'s first place, with the legend for its screen', async () => {
@@ -1225,7 +1225,7 @@ check('a first visit opens at the world\'s first place, with the legend for its 
         return { at: writePlace(placeOf(fw.flight), [fw.space]), first: writePlace(fw.space.first, [fw.space]), scheme: document.querySelector('.scheme').textContent };
       })()`);
       assert(!page.errors.length, page.errors.join('\n'));
-      assert(got.at === got.first && got.scheme === 'de chirico', `a first visit: ${JSON.stringify(got)}`);
+      assert(got.at === got.first && got.scheme === 'nocturne', `a first visit: ${JSON.stringify(got)}`);
       legends.push(await shown());
     }
   } finally {

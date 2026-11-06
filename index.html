@@ -14,8 +14,10 @@
         font: 12px/1.5 ui-monospace, Menlo, monospace; color: #fff;
         text-shadow: 0 0 3px rgba(0, 0, 0, 0.9), 0 0 1px #000;
       }
-      #hud { bottom: 14px; opacity: 0.8; white-space: pre; }
-      #help { top: 14px; right: 16px; opacity: 0.8; }
+      #hud { bottom: 14px; opacity: 0.9; white-space: pre; }
+      #help { top: 14px; width: max-content; max-width: calc(100vw - 50px); opacity: 0.9; }
+      /* (Light text over a light scheme's sky needs a ground of its own.) */
+      #hud:not(:empty), #help { background: rgba(0, 0, 0, 0.45); padding: 6px 9px; border-radius: 6px; }
       #help.error { color: #f88; white-space: pre-wrap; }
       #help.hidden { display: none; }
       /* The legend: a key (or a touch) and what it does, a row each, the keys in a column. */
