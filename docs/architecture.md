@@ -18,7 +18,7 @@ The world answers, for a point at a level, its distance to that level's air, and
 Two planes are the world's, not any level's, and are handled where levels are asked, written by hand in each language as the engine's own (the levels' split into cells, diagonals and slants is too): over the sky's plane there is only sky (the march and map in `src/shaders.js`, `clearanceAt` and `ahead` in `src/flight.js`); under the ground (the space's `ground`: the arcology's plaza floor) there is only solid, at every level, each level's air cut off at it where it is asked (`levelRay` in `src/shaders.js`, `airAt` in `src/air.js`), as far under us as each level's record says (`ground`, from `groundHeight` in `src/position.js`). A browser check holds the two cuts together on the floor.
 
 ## Flying
-<!-- files: src/flight.js,src/arrival.js,src/place.js,src/position.js,src/air.js,src/view.js,src/controls.js,src/pacing.js  budget: 1400  verified: 3be2b4f -->
+<!-- files: src/flight.js,src/arrival.js,src/place.js,src/position.js,src/air.js,src/view.js,src/controls.js,src/pacing.js  budget: 1400  verified: 5e40296 -->
 
 - `src/flight.js`: sensing (what is around us at every scale, after every move: what the view is drawn from) and motion (how far the way ahead is open, each step, the trail), and which way we face.
 - `src/arrival.js`: somewhere new (where N takes us).
@@ -26,7 +26,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 - `src/position.js`: where we are, as digits at every level; each level's record (`levels`).
 - `src/air.js`: asking the world what the shader asks of it, in JavaScript (`airAt`), and a gradient of such answers.
 - `src/view.js`: from the flight and how the view is shown: which levels to draw (those the flight looks at as a rule, and coarser ones whose air is in sight, as far up as `view.fit`, and further up the room we are in, zoomed about the corner of it we are near: `zoomed` in `src/position.js`; but not those the space draws only near the level we work at, `nearOnly`), the outer plane (for such a level that cannot be drawn), the camera (how the screen maps to rays), the view as drawn (`makeView`) and its redraw key (`viewKey`).
-- `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing: how often to draw, and the resolution in motion (`Resolution`: fewer pixels after slow frames in a row, however slow, more after quick ones).
+- `src/controls.js`, `src/pacing.js`: input (which turns the flight), and frame pacing: how often to draw, and at what resolution (`Resolution`: one in motion, one at rest, each by frame time, learned and kept between visits).
 
 ## Drawing
 <!-- files: src/renderer.js,src/frame.js,src/look.js,src/gl.js,src/shaders.js,src/schemes.js  budget: 1100  verified: eb72ec5 -->
@@ -42,7 +42,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 `src/pilot.js` (with what the tour asks of the flight: `awayFrom`, `outward`) and `src/planner.js`: to be redesigned (F13).
 
 ## The app
-<!-- files: src/main.js  budget: 150  verified: edcca46 -->
+<!-- files: src/main.js  budget: 150  verified: 5e40296 -->
 
 `src/main.js`: wiring, the frame loop, keys, the HUD, `fw`; the place in the URL, kept now and then in the history.
 
@@ -54,7 +54,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 - `bench/`: `cold.mjs` (a first visit's shader build), `warm.mjs` (build a link's shaders before it is opened), `bench.mjs` (with `timing.mjs`: GPU timings from fw.bench, those the GPU does not give taken again and counted), `views.mjs`, `shoot.mjs`.
 
 ## Traps, and how to look
-<!-- files: src/twin.js,src/shaders.js,src/debug.js,src/main.js,tests/,bench/  budget: 4400  verified: edcca46 -->
+<!-- files: src/twin.js,src/shaders.js,src/debug.js,src/main.js,tests/,bench/  budget: 4400  verified: 5e40296 -->
 
 **GLSL.** Chrome on macOS compiles through ANGLE to Metal, and its compiler has a fault (B20): a value shifted right by exactly 16 (or divided by 65536), then taken `%` or `/` a constant that is not a power of two, comes out as garbage when the shift and the modulo meet only once a function is inlined; a `min()` around it is then dropped. Written inline, through a temporary, or with a divisor the compiler cannot know, it is right; so the writers keep shifts and modulos inline (`glsl` in `src/twin.js`), and a browser check compares the town's shapes in both languages. `P` is a macro; `out` and `half` are reserved words. Compile time, not speed, is what loops and arrays cost: loops the compiler can bound are unrolled, and returns inside loops and dynamically indexed local arrays blow it up; so where the openings' windows are asked, the shader loops over the set bits of a mask (`lowBit`).
 
@@ -62,7 +62,7 @@ Two planes are the world's, not any level's, and are handled where levels are as
 
 **Reloading.** Going to the same URL with a new hash is a same-document navigation and keeps the old code: reload for real. A picture judged in a browser that has not been hard-refreshed may be of the old build.
 
-**Timing on the GPU.** The GPU is shared with whatever else the machine draws, Basil's browser included, so a timing is provisional until it is repeated on an idle machine. Prove a difference with paired runs, an A/A pair as a control (the scratch tool gpupair in .claude/work-M/tools does this), and a cold build, and bench frozen copies against frozen copies, never the live checkout as one side. Per-pass timer queries on ANGLE's Metal time the whole frame, so they say nothing about a pass. What the viewer feels is the resolution held through a scripted flight. `fw.snap` sets `lodH` to its picture's own height, so a picture smaller than the canvas is drawn with coarser detail than the app's: patch it for a fair comparison.
+**Timing on the GPU.** The GPU is shared with whatever else the machine draws, Basil's browser included, so a timing is provisional until it is repeated on an idle machine. Prove a difference with paired runs, an A/A pair as a control (the scratch tool gpupair in .claude/work-M/tools does this), and a cold build, and bench frozen copies against frozen copies, never the live checkout as one side. Per-pass timer queries on ANGLE's Metal time the whole frame, so they say nothing about a pass. What the viewer feels is the resolution held through a scripted flight. The app keeps the resolutions it learned in localStorage (`fw.resolution`): a script loading it more than once at one origin carries them over, so clears it, as the browser suite does. `fw.snap` sets `lodH` to its picture's own height, so a picture smaller than the canvas is drawn with coarser detail than the app's: patch it for a fair comparison.
 
 **Looking at an artefact.** `bench/shoot.mjs` draws in the alhambra scheme unless `SCHEME` says otherwise (the app's HUD names the scheme for 2 s after a change), at `W` x `H`, and draws another tree when `FW_ROOT` names it (a scratch copy with one mechanism switched off). To find what an artefact is, compare what the rays of pixels on it and beside it meet (level, normal, distance, the lighting's terms). Before calling a pixel geometry, compare the exact stepping with the old one there (`fw.compare`; `fw.reference = true` draws with the old). A true reference draws every level whatever its size: the grazing skip off (`fw.debug = 2`, skip nothing) and the fading off (there is no switch for it: a scratch copy). Measure an artefact as it is described, frame to frame, not as an average over the frame.
 

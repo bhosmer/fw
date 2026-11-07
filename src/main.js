@@ -155,8 +155,9 @@ function look(now, drawn) {
 
 // Resolution follows frame time, by temporal upscaling (see TAAU_FRAG in
 // frame.js): the canvas stays at full resolution and only the view is drawn
-// at fewer pixels, `upscale` of them each way, while we move (at rest, all
-// of them); the history, at full resolution, gathers them. What is carved
+// at fewer pixels, `upscale` of them each way, as frames in motion and at
+// rest can afford (see Resolution); the history, at full resolution, gathers
+// them. What is carved
 // does not follow it (review21): detail is sized by the picture's pixels
 // (lodH, their number down it), so that fewer pixels only sample the same
 // geometry less densely, and coming to rest changes no geometry.
@@ -270,6 +271,7 @@ function respawn() {
 // going was from where we were).
 function jumped() {
   renderer.reset();
+  faced = null;
   if (pilot.on) pilot.start(pos.F);
   controls.drop();
 }
@@ -335,20 +337,17 @@ keepPlace();
 
 // Draw only when the picture would differ from the one already showing;
 // and, once it has stopped changing, as many times more as temporal
-// antialiasing takes to gather all its samples of it (see TAA_N). Once still,
-// drawn at full resolution again, whatever motion took it down to: the
-// history carries on, so the picture sharpens over those frames.
+// antialiasing takes to gather all its samples of it (see TAA_N). In motion
+// (moving: the flight moved, turned or is still easing to where it stopped)
+// drawn at the resolution of motion;
+// else at the resolution of rest (see Resolution): the history carries on,
+// so the picture sharpens over those frames.
 let shown = '', settled = 0;
 // Returns what was drawn, if anything (see draw).
-function present() {
+function present(moving) {
   resize();
-  let key = viewKey(flight, showing);
-  if (key === shown && showing.upscale < 1) {
-    showing.upscale = 1;
-    key = viewKey(flight, showing);
-    shown = key;
-    settled = 0;
-  }
+  showing.upscale = resolution.upscale(moving, canvas.width * canvas.height);
+  const key = viewKey(flight, showing);
   if (key === shown) {
     if (settled >= TAA_N) return null;
     settled++;
@@ -360,7 +359,22 @@ function present() {
 }
 let last = performance.now();
 let levelsDrawn = 0;
-const resolution = new Resolution();
+// (The resolutions learned are kept between visits, in this browser.)
+const RESOLUTION_KEY = 'fw.resolution';
+const resolution = new Resolution(TAA_N);
+try {
+  resolution.restore(localStorage.getItem(RESOLUTION_KEY));
+} catch {}
+const saveResolution = () => {
+  try {
+    localStorage.setItem(RESOLUTION_KEY, resolution.saved);
+  } catch {}
+};
+addEventListener('visibilitychange', () => document.hidden && saveResolution());
+addEventListener('pagehide', saveResolution);
+// (Which way we faced at the last frame, a turn being motion too; none on
+// the first, nor after a jump, which are not.)
+let faced = null;
 const pacing = new Pacing(last);
 // A frame of the loop, and the next asked for. (Should a frame fail, say so
 // rather than stop without a word.)
@@ -398,12 +412,15 @@ function tick(now) {
     pilot.moved(flight.lastMove, pos.F);
   } else moved = flight.step(dt, controls.wish(), controls.nudge(dt));
 
-  const drew = present();
+  const facing = `${flight.yaw},${flight.pitch}`;
+  const moving = !!moved || (faced !== null && facing !== faced) || !flight.settled();
+  faced = facing;
+  const drew = present(moving);
   if (drew) document.getElementById('loading')?.remove();
   if (pilot.on) look(now, drew);
-  // (At rest the resolution is full: see present. Debug views and references
-  // are drawn at full resolution, to be exact: see Renderer.drawFrame.)
-  if (drew && moved) showing.upscale = resolution.frame(raw, showing.upscale, !!(showing.debug || showing.reference));
+  // (Debug views and references are drawn at full resolution, to be exact:
+  // see Renderer.drawFrame.)
+  resolution.frame(raw, drew && (moving ? 'moving' : 'still'), showing.upscale, canvas.width * canvas.height, !!(showing.debug || showing.reference));
   // Where we are, in the link and now and then in the history (see saveLocation).
   // (How far we moved, in cells of the level we moved at: here, in ours now.)
   if (moved) travel += (moved * Math.pow(R, pos.F - F0)) / Math.max(flight.clearance, 1e-6);
@@ -560,7 +577,8 @@ window.fw = {
   check: (...a) => check(window.fw, ...a),
   checkRays: (...a) => checkRays(window.fw, ...a),
   compareRays: (...a) => compareRays(window.fw, ...a),
-  // (Testing upscaling: the fraction of pixels drawn, as the frame time would set it.)
+  // (Testing upscaling: the fraction of pixels drawn by snap, as the frame
+  // time would set it; the loop sets its own at every frame: see present.)
   set upscale(v) { showing.upscale = Math.min(1, Math.max(MIN_UPSCALE, v)); },
   get upscale() { return showing.upscale; },
   rewind(seconds) {

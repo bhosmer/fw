@@ -57,10 +57,12 @@ const PLACES = {
 
 // Run before the app's own code on every load: the frame loop never runs (so
 // nothing moves or settles between checks), the scheme is the one asked for,
-// and random numbers come out the same every time.
+// no resolution learned before is kept, and random numbers come out the same
+// every time.
 const setup = (scheme, live = false) => `
   ${live ? '' : 'window.requestAnimationFrame = () => 0;'}
   localStorage.setItem('fw.scheme', ${JSON.stringify(scheme)});
+  localStorage.removeItem('fw.resolution');
   { let s = 12345; Math.random = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }`;
 
 // In the page: the current view drawn at w x h, top row first (live: as the
